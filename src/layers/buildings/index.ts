@@ -1,5 +1,5 @@
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core";
-import { OSM_ATTRIBUTION, OSM_TILEJSON } from "./basemaps";
+import { OSM_ATTRIBUTION, OSM_TILEJSON } from "../basemaps";
 
 export const BUILDINGS_LAYER_ID = "osm-buildings";
 

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapLibreMap, config as maplibreConfig, type ErrorEvent } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { createLayerSync, installMapTransformCompat, type LayerSync } from "@geolibre/map";
-import { anchorUnderLabels, hideBasemapBuildings, type Basemap } from "./basemaps";
-import { BUILDINGS_STYLE_LAYER_IDS, buildingsLayer, type BuildingSettings } from "./buildings";
+import { anchorUnderLabels, hideBasemapBuildings, type Basemap } from "../layers/basemaps";
+import { BUILDINGS_STYLE_LAYER_IDS, buildingsLayer, type BuildingSettings } from "../layers/buildings";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker

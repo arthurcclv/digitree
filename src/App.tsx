@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { BASEMAPS, OSM_ATTRIBUTION } from "./lib/basemaps";
+import { BASEMAPS, OSM_ATTRIBUTION } from "./layers/basemaps";
 import {
   DEFAULT_BUILDING_SETTINGS,
   PALETTES,
   type BuildingSettings,
-} from "./lib/buildings";
+} from "./layers/buildings";
 import { useMapEngine } from "./lib/useMapEngine";
 import { VIEWPOINTS } from "./lib/viewpoints";
 import { Compass } from "./ui/Compass";
