@@ -15,9 +15,11 @@ export interface Basemap {
   id: string;
   label: string;
   styleUrl: string;
-  /** Tint the custom chrome picks up so the UI tracks the map. */
-  accent: string;
-  /** Default building colour that reads well against this basemap. */
+  /**
+   * Default building colour that reads well against this basemap. This is the
+   * only place a basemap's colour identity reaches the app — the interface
+   * chrome has one fixed accent and does not re-tint per basemap.
+   */
   buildingColor: string;
   light: boolean;
 }
@@ -27,7 +29,6 @@ export const BASEMAPS: Basemap[] = [
     id: "dark",
     label: "Midnight",
     styleUrl: "https://tiles.openfreemap.org/styles/dark",
-    accent: "#f5a524",
     buildingColor: "#3d4658",
     light: false,
   },
@@ -35,7 +36,6 @@ export const BASEMAPS: Basemap[] = [
     id: "fiord",
     label: "Fiord",
     styleUrl: "https://tiles.openfreemap.org/styles/fiord",
-    accent: "#4fd1c5",
     buildingColor: "#3b4a63",
     light: false,
   },
@@ -43,7 +43,6 @@ export const BASEMAPS: Basemap[] = [
     id: "liberty",
     label: "Liberty",
     styleUrl: "https://tiles.openfreemap.org/styles/liberty",
-    accent: "#e2622c",
     buildingColor: "#c9c3b6",
     light: true,
   },
@@ -51,7 +50,6 @@ export const BASEMAPS: Basemap[] = [
     id: "positron",
     label: "Paper",
     styleUrl: "https://tiles.openfreemap.org/styles/positron",
-    accent: "#7c5cff",
     buildingColor: "#d6d3cd",
     light: true,
   },

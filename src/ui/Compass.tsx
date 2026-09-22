@@ -1,42 +1,23 @@
-/** Hand-drawn compass rose; the needle tracks the map bearing. Click = north. */
+/**
+ * Bearing rose, sized onto the icon-button grid. The needle tracks the map
+ * bearing and a click resets to north; the bearing is *also* stated numerically
+ * in the Camera card, so rotation is never the only cue.
+ */
 export function Compass({ bearing, onReset }: { bearing: number; onReset: () => void }) {
+  const degrees = Math.round(((bearing % 360) + 360) % 360);
   return (
     <button
-      className="pad compass"
+      className="icon-btn compass"
       onClick={onReset}
-      title="Reset bearing to north"
-      aria-label={`Bearing ${Math.round(((bearing % 360) + 360) % 360)} degrees. Reset to north.`}
+      title={`Bearing ${degrees}° — reset to north`}
+      aria-label={`Bearing ${degrees} degrees. Reset to north.`}
     >
-      <svg viewBox="0 0 44 52" width="44" height="52" fill="none">
-        <g transform={`rotate(${-bearing} 22 27)`}>
-          <circle cx="22" cy="27" r="13.5" stroke="currentColor" strokeOpacity="0.28" />
-          {Array.from({ length: 12 }, (_, i) => (
-            <line
-              key={i}
-              x1="22"
-              y1="14.5"
-              x2="22"
-              y2={i % 3 === 0 ? "11" : "12.6"}
-              stroke="currentColor"
-              strokeOpacity={i % 3 === 0 ? 0.6 : 0.3}
-              transform={`rotate(${i * 30} 22 27)`}
-            />
-          ))}
-          <path d="M22 16.5 L26 29 L22 26.5 L18 29 Z" fill="var(--accent)" />
-          <path d="M22 37.5 L26 29 L22 26.5 L18 29 Z" fill="currentColor" fillOpacity="0.35" />
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none">
+        <circle cx="10" cy="10" r="8" stroke="currentColor" strokeOpacity="0.35" />
+        <g transform={`rotate(${-bearing} 10 10)`}>
+          <path d="M10 3 L13 12 L10 10.2 L7 12 Z" fill="var(--accent-text)" />
+          <path d="M10 17 L13 12 L10 10.2 L7 12 Z" fill="currentColor" fillOpacity="0.4" />
         </g>
-        <text
-          x="22"
-          y="49"
-          textAnchor="middle"
-          fontFamily="var(--mono)"
-          fontSize="8"
-          letterSpacing="1.4"
-          fill="currentColor"
-          fillOpacity="0.55"
-        >
-          N
-        </text>
       </svg>
     </button>
   );
