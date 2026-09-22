@@ -1,5 +1,6 @@
 import type { Viewpoint } from "./useMapEngine";
 import { HOME } from "./useMapEngine";
+import { TREE_LOCATION } from "../layers/tree";
 
 export const VIEWPOINTS: Viewpoint[] = [
   HOME,
@@ -47,6 +48,16 @@ export const VIEWPOINTS: Viewpoint[] = [
     zoom: 15.3,
     pitch: 60,
     bearing: 8,
+  },
+  {
+    // A 13 m tree in Taipei is unfindable without a way to fly to it.
+    id: "tree",
+    label: "The Tree",
+    sub: "three.js · 大安",
+    center: TREE_LOCATION,
+    zoom: 18.6,
+    pitch: 72,
+    bearing: -24,
   },
   {
     id: "overview",

@@ -5,6 +5,12 @@ import {
   PALETTES,
   type BuildingSettings,
 } from "./layers/buildings";
+import {
+  DEFAULT_TREE_SETTINGS,
+  TREE_BASE_HEIGHT_M,
+  TREE_LOCATION,
+  type TreeSettings,
+} from "./layers/tree";
 import { useMapEngine } from "./lib/useMapEngine";
 import { VIEWPOINTS } from "./lib/viewpoints";
 import { Compass } from "./ui/Compass";
@@ -32,15 +38,19 @@ const basemapItems: SegmentedItem[] = BASEMAPS.map((b) => ({ id: b.id, label: b.
 export default function App() {
   const [basemapId, setBasemapId] = useState(BASEMAPS[0].id);
   const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
+  const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
   const [activeView, setActiveView] = useState(VIEWPOINTS[0].id);
   const [collapsed, setCollapsed] = useState(false);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
   const { containerRef, camera, ready, error, flyTo, zoomBy, setPitch, resetNorth } =
-    useMapEngine(basemap, settings);
+    useMapEngine(basemap, settings, tree);
 
   const patch = (next: Partial<BuildingSettings>) =>
     setSettings((prev) => ({ ...prev, ...next }));
+
+  const patchTree = (next: Partial<TreeSettings>) =>
+    setTree((prev) => ({ ...prev, ...next }));
 
   const chooseBasemap = (id: string) => {
     const next = BASEMAPS.find((b) => b.id === id);
@@ -169,6 +179,38 @@ export default function App() {
               changes what a colour means.
             </p>
           </Panel>
+
+          <Panel title="Trees">
+            <CheckboxRow
+              label="Tree mesh"
+              checked={tree.visible}
+              onChange={(visible) => patchTree({ visible })}
+            />
+            <Slider
+              label="Opacity"
+              value={Math.round(tree.opacity * 100)}
+              min={10}
+              max={100}
+              step={2}
+              unit="%"
+              onChange={(v) => patchTree({ opacity: v / 100 })}
+            />
+            <Slider
+              label="Height"
+              value={tree.height}
+              min={4}
+              max={60}
+              step={1}
+              unit="m"
+              onChange={(height) => patchTree({ height })}
+            />
+            <div className="panel__rule" />
+            <StatLine
+              k="Location"
+              v={`${TREE_LOCATION[1].toFixed(4)}° N · ${TREE_LOCATION[0].toFixed(4)}° E`}
+            />
+            <StatLine k="Modelled height" v={`${TREE_BASE_HEIGHT_M} m`} />
+          </Panel>
         </div>
 
         <div className="viewport">
@@ -197,6 +239,12 @@ export default function App() {
                     label: "Buildings",
                     checked: settings.visible,
                     onChange: (visible) => patch({ visible }),
+                  },
+                  {
+                    id: "tree",
+                    label: "Tree",
+                    checked: tree.visible,
+                    onChange: (visible) => patchTree({ visible }),
                   },
                   {
                     id: "labels",

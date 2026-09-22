@@ -2,8 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapLibreMap, config as maplibreConfig, type ErrorEvent } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { createLayerSync, installMapTransformCompat, type LayerSync } from "@geolibre/map";
+import {
+  clearExternalNativePaintBridge,
+  setExternalNativePaintBridge,
+} from "@geolibre/core";
 import { anchorUnderLabels, hideBasemapBuildings, type Basemap } from "../layers/basemaps";
 import { BUILDINGS_STYLE_LAYER_IDS, buildingsLayer, type BuildingSettings } from "../layers/buildings";
+import {
+  ThreeTreeLayer,
+  TREE_LAYER_ID,
+  TREE_NATIVE_LAYER_ID,
+  treeLayerRecord,
+  type TreeSettings,
+} from "../layers/tree";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker
@@ -42,12 +53,19 @@ export const HOME: Viewpoint = {
   bearing: -28,
 };
 
-export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
+export function useMapEngine(
+  basemap: Basemap,
+  settings: BuildingSettings,
+  treeSettings: TreeSettings,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const syncRef = useRef<LayerSync | null>(null);
+  const treeRef = useRef<ThreeTreeLayer | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const treeSettingsRef = useRef(treeSettings);
+  treeSettingsRef.current = treeSettings;
   // `map.isStyleLoaded()` is false until every source settles, which is long
   // after the style itself is usable; track the style.load event instead.
   const styleReadyRef = useRef(false);
@@ -67,7 +85,11 @@ export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
     const map = mapRef.current;
     const sync = syncRef.current;
     if (!map || !sync || !styleReadyRef.current) return;
-    sync.sync([buildingsLayer(settingsRef.current)]);
+    // The three.js layer rides in the same sync call as the buildings: its
+    // record is marked as an external custom layer, so GeoLibre moves and shows
+    // the native layer we added rather than trying to create or paint it.
+    // Later entries end up higher in the stack, so the tree sits above.
+    sync.sync([buildingsLayer(settingsRef.current), treeLayerRecord(treeSettingsRef.current)]);
     // `createLayerSync` always appends on top, which is what we want by
     // default; only drop below the labels when the user asks for it.
     if (settingsRef.current.labelsOnTop) {
@@ -92,6 +114,14 @@ export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
     });
     mapRef.current = map;
     syncRef.current = createLayerSync(map);
+
+    const tree = new ThreeTreeLayer();
+    treeRef.current = tree;
+    // Route GeoLibre's generic opacity and visibility controls into three.js.
+    setExternalNativePaintBridge(TREE_LAYER_ID, {
+      setOpacity: (opacity) => tree.setOpacity(opacity),
+      setVisibility: (visible) => tree.setVisibility(visible),
+    });
     if (import.meta.env.DEV) {
       (window as unknown as { __map?: MapLibreMap }).__map = map;
     }
@@ -99,6 +129,11 @@ export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
     const onStyleLoad = () => {
       styleReadyRef.current = true;
       hideBasemapBuildings(map);
+      // setStyle destroys custom layers, and GeoLibre's sync only moves native
+      // layers that already exist — so re-add ours before every sync.
+      if (!map.getLayer(TREE_NATIVE_LAYER_ID) && treeRef.current) {
+        map.addLayer(treeRef.current);
+      }
       try {
         map.setLight({
           anchor: "viewport",
@@ -134,6 +169,9 @@ export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
     return () => {
       syncRef.current?.dispose();
       syncRef.current = null;
+      clearExternalNativePaintBridge(TREE_LAYER_ID);
+      tree.dispose();
+      treeRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -153,10 +191,15 @@ export function useMapEngine(basemap: Basemap, settings: BuildingSettings) {
     map.setStyle(basemapUrl);
   }, [basemapUrl]);
 
-  // Any control change re-describes the layer and diff-syncs it.
+  // Any control change re-describes the layers and diff-syncs them.
   useEffect(() => {
     applyLayers();
-  }, [applyLayers, settings]);
+  }, [applyLayers, settings, treeSettings]);
+
+  // Height is the app's own control, not something GeoLibre models.
+  useEffect(() => {
+    treeRef.current?.setHeight(treeSettings.height);
+  }, [treeSettings.height]);
 
   const flyTo = useCallback((view: Viewpoint) => {
     mapRef.current?.flyTo({
