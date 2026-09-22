@@ -1,0 +1,97 @@
+# OSM Buildings layer — spec
+
+Source of truth for the extruded-building layer. Behaviour changes here require
+this file to change first.
+
+Module: `src/layers/buildings/index.ts`
+
+## Purpose
+
+Describes OSM building footprints to GeoLibre as a plain `GeoLibreLayer` record.
+`createLayerSync` reads that description and materialises the MapLibre
+`fill-extrusion` style layer, its paint properties and its filters.
+
+**The app never calls `map.addLayer` or `map.setPaintProperty` for buildings.**
+Every control works by re-describing the layer and re-syncing. A change that
+reaches for MapLibre directly violates this spec.
+
+## Identity
+
+- `BUILDINGS_LAYER_ID` = `osm-buildings` — the record id passed to `sync()`.
+- `BUILDINGS_STYLE_LAYER_IDS` = the style-layer ids GeoLibre derives:
+  `layer-osm-buildings-vector-extrusion` and `layer-osm-buildings-vector`.
+
+These derived ids are needed to re-anchor the layer under the basemap labels.
+They follow `@geolibre/map`'s naming for a single-source-layer vector-tile
+extrusion; if GeoLibre's naming changes, this list must change with it.
+
+## Source
+
+- `url` — `OSM_TILEJSON` (see the basemaps spec)
+- `sourceLayer` — `building`
+- `attribution` — `OSM_ATTRIBUTION`
+- Zoom range: `minZoom: 13`, `maxZoom: 24`
+
+The `building` source layer carries `render_height` (drives extrusion height) and
+`hide_3d` (features OSM marks as unsuitable for 3D).
+
+## Settings
+
+`BuildingSettings`, with `DEFAULT_BUILDING_SETTINGS`:
+
+| field | default | meaning |
+| --- | --- | --- |
+| `visible` | `true` | layer on/off |
+| `heightScale` | `1` | vertical exaggeration applied to `render_height` |
+| `opacity` | `0.94` | extrusion opacity |
+| `paletteId` | `"ember"` | height ramp; `null` = flat colour |
+| `flatColor` | `"#3d4658"` | the one colour used when `paletteId` is `null` |
+| `minHeight` | `0` | hide buildings shorter than this, in real metres |
+| `labelsOnTop` | `false` | draw basemap labels above the extrusions |
+
+## Colour
+
+Three ramps in `PALETTES`, each six stops keyed to height in metres
+(`0, 12, 30, 70, 140, 260`):
+
+- `ember` — slate → amber → cream
+- `jade` — deep teal → green → pale
+- `neon` — indigo → violet → magenta → pink
+
+A ramp compiles to a MapLibre `interpolate`/`linear` expression over
+`["to-number", ["get", "render_height"], 0]`, set on `extrusionColorExpression`
+with `extrusionAdvancedStyleEnabled: true`.
+
+**Colour always uses the true, unexaggerated height** — `heightScale` must not
+enter the colour expression, so the legend stays honest when exaggeration is on.
+
+When `paletteId` is `null` (or matches no palette), advanced styling is disabled
+and `extrusionColor: flatColor` paints every building one colour.
+
+## Filtering
+
+`filterExpression` is built from:
+
+1. Always: `["!=", ["get", "hide_3d"], true]`
+2. When `minHeight > 0`: `[">=", ["to-number", ["get", "render_height"], 0], minHeight]`
+
+One clause is emitted bare; two or more are wrapped in `["all", ...]`. Like
+colour, the minimum-height filter compares against **real** metres, not scaled.
+
+## Stacking
+
+Buildings draw **above** the basemap labels by default: labels styled for a dark
+ground are unreadable over lit building faces. `labelsOnTop: true` calls
+`anchorUnderLabels` after each sync to put them back underneath.
+
+## Opacity
+
+The record's own `opacity` is fixed at `1`; the user-facing opacity is
+`style.extrusionOpacity`. The two are distinct in GeoLibre and must not be
+conflated.
+
+## Invariants
+
+1. No direct MapLibre calls for this layer — only the record plus `sync()`.
+2. Colour and the minimum-height filter read unexaggerated `render_height`.
+3. `hide_3d` features are never drawn.
