@@ -1,0 +1,60 @@
+import type { Viewpoint } from "./useMapEngine";
+import { HOME } from "./useMapEngine";
+
+export const VIEWPOINTS: Viewpoint[] = [
+  HOME,
+  {
+    id: "station",
+    label: "Main Station",
+    sub: "臺北車站 · 中正",
+    center: [121.5173, 25.0476],
+    zoom: 15.6,
+    pitch: 62,
+    bearing: 18,
+  },
+  {
+    id: "ximen",
+    label: "Ximending",
+    sub: "西門町 · 萬華",
+    center: [121.5065, 25.0424],
+    zoom: 16.2,
+    pitch: 70,
+    bearing: -12,
+  },
+  {
+    id: "dadaocheng",
+    label: "Dadaocheng",
+    sub: "大稻埕 · 迪化街",
+    center: [121.5095, 25.0565],
+    zoom: 16.4,
+    pitch: 68,
+    bearing: 42,
+  },
+  {
+    id: "songshan",
+    label: "Songshan",
+    sub: "松山 · 南京東路",
+    center: [121.5512, 25.0512],
+    zoom: 15.5,
+    pitch: 64,
+    bearing: -40,
+  },
+  {
+    id: "nangang",
+    label: "Nangang",
+    sub: "南港 · 經貿園區",
+    center: [121.6165, 25.0545],
+    zoom: 15.3,
+    pitch: 60,
+    bearing: 8,
+  },
+  {
+    id: "overview",
+    label: "Basin",
+    sub: "臺北盆地 · 全景",
+    center: [121.5400, 25.0450],
+    zoom: 12.6,
+    pitch: 52,
+    bearing: 0,
+  },
+];
