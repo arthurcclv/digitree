@@ -53,8 +53,9 @@ right way to start over.
   above the insert in `02_load.sql`, with the specific values that motivated
   them. Open data is dirty in specific ways and a bare threshold teaches nobody
   why it is there.
-- **Out-of-range values become `NULL`, never clamped.** A tree of unknown height
-  must not render as a 40 m one.
+- **Out-of-range values become `NULL`, never clamped.** A tree of unknown
+  diameter must not render as a 400 cm one. Height is the deliberate exception
+  to having a range at all: any positive value is kept, keying damage included.
 - **Never modify `data/`.** The extracts are treated as read-only inputs; every
   correction belongs in `02_load.sql` so it is reproducible and reviewable. The
   one thing a contributor *adds* there is a drop-in CSV under `data/custom/` —

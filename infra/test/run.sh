@@ -105,13 +105,17 @@ expect_query "drops a row with an empty LAT"      "SELECT count(*) FROM trees WH
 expect_query "drops a row with a non-numeric LAT" "SELECT count(*) FROM trees WHERE tree_id='CUSTOM-0006'" 0
 
 # Cleaning applies to custom rows on the same terms as to the extracts.
-expect_query "nulls an out-of-range custom height" \
+expect_query "nulls a non-positive custom height" \
   "SELECT coalesce(height_m::text,'null')||'/'||coalesce(diameter_cm::text,'null') FROM trees WHERE tree_id='CUSTOM-0003'" \
   "null/120"
-expect_query "keeps an in-range custom height" \
+expect_query "keeps an ordinary custom height" \
   "SELECT height_m::text FROM trees WHERE tree_id='CUSTOM-0001'" "12.5"
-expect_query "nulls the street file's 2023.0 height" \
-  "SELECT coalesce(height_m::text,'null') FROM trees WHERE tree_id='BT0000000002'" "null"
+# Height has no ceiling: both paths into the insert must keep a value that the
+# old (0, 40] rule discarded, keying damage included.
+expect_query "keeps a custom height above the old 40 m ceiling" \
+  "SELECT height_m::text FROM trees WHERE tree_id='CUSTOM-0005'" "999"
+expect_query "keeps the street file's 2023.0 height" \
+  "SELECT coalesce(height_m::text,'null') FROM trees WHERE tree_id='BT0000000002'" "2023"
 expect_query "nulls a zero diameter" \
   "SELECT coalesce(diameter_cm::text,'null') FROM trees WHERE tree_id='BT0000000003'" "null"
 expect_query "empty columns become NULL, not ''" \

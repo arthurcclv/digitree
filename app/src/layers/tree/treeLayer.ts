@@ -19,7 +19,7 @@ export const TREE_NATIVE_LAYER_ID = "threejs-tree-native";
 export const TREE_BASE_HEIGHT_M = 13;
 
 /**
- * The inventory's median height. Used for the ~78 trees whose surveyed
+ * The inventory's median height. Used for the ~56 trees whose surveyed
  * `height_m` was missing or implausible — and nothing else is ever substituted.
  */
 export const TREE_FALLBACK_HEIGHT_M = 9.1;

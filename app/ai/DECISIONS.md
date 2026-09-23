@@ -6,6 +6,37 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-23 — Surveyed height has no upper bound
+
+**Decision.** `trees.height_m` is kept whenever it is positive. The `(0, 40]`
+range that `01_schema.sql` enforced and `02_load.sql` applied is gone; only a
+zero or negative height still becomes `NULL`. Diameter's `(0, 400]` range is
+untouched. This supersedes the cleaning rule introduced with the tree layer.
+
+**Why.** The 40 m cut was calibrated on the two values that are obviously junk —
+2023.0 in the street file, a survey year typed into the height field, and 797.0
+in the park file — but it could not tell those apart from a genuinely tall tree,
+so it took 22 rows with them. Discarding a real height is the more expensive
+error: a `NULL` renders as the 9.1 m median and reads as ordinary, whereas an
+absurd spike reads as bad data at a glance and points at the row that needs
+fixing upstream. The threshold also could not survive contact with drop-in data,
+where the plausible range is whatever the supplier's trees happen to be.
+
+**What it rules out.** The map now draws a 2,023 m and a 797 m tree, and the
+mesh half keeps the **tallest** instances when it exceeds `MAX_INSTANCES`, so
+those two are the rows least likely to be culled — they are permanent fixtures
+of any view that contains them. Anything wanting a bounded height range (a
+colour ramp keyed to height, a height histogram, an auto-fitted camera) must
+clamp for itself rather than trusting the column. Rows with a `NULL` height fall
+from 78 to 56.
+
+**Revisit when.** Per-row provenance exists — a way to say *this* value is a
+keying error without also indicting every tall tree. A confidence column, or a
+correction file under `data/custom/`, would let the junk be nulled by name
+instead of by threshold, which is the thing a threshold was standing in for.
+
+---
+
 ## 2026-09-23 — Custom tree data is a third `kind`, not a second source
 
 **Decision.** Trees that are not the city's open data — anything dropped into

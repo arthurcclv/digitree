@@ -226,8 +226,8 @@ consequences:
 
 Scale is uniform, `height_m / TREE_BASE_HEIGHT_M`. A tree with a `NULL`
 `height_m` uses `TREE_FALLBACK_HEIGHT_M` = **9.1** — the measured median of the
-inventory — and the layer MUST NOT substitute anything else: not zero, not the
-clamp ceiling, not a random value.
+inventory — and the layer MUST NOT substitute anything else: not zero, not a
+neighbouring tree's height, not a random value.
 
 `diameter_cm` is carried as a property and used by the points record, but does
 **not** drive mesh geometry. Nine thousand park rows record a diameter of zero,

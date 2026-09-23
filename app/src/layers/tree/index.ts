@@ -124,7 +124,7 @@ export function treePointsLayer(settings: TreeSettings): GeoLibreLayer {
       minZoom: TREES_MIN_ZOOM,
       maxZoom: 24,
       extrusionEnabled: false,
-      // Radius tracks the surveyed height. `height_m` is null for the ~78 trees
+      // Radius tracks the surveyed height. `height_m` is null for the ~56 trees
       // whose survey value was missing or implausible; GeoLibre's interpolate
       // falls those back to the range minimum, so they draw as the smallest
       // dot — visibly least-known rather than invisibly average.

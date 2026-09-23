@@ -32,8 +32,9 @@ CREATE TABLE trees (
   place_note  text,                       -- RegionRemark; street rows only
   -- Nullable: 18 rows across the two files carry no species at all.
   species     text,                       -- TreeType
-  -- NULL means "not credibly recorded", not "zero". See 02_load.sql.
-  height_m    real CHECK (height_m > 0 AND height_m <= 40),
+  -- NULL means "not credibly recorded", not "zero". Only a non-positive height
+  -- is rejected — there is deliberately no ceiling. See 02_load.sql.
+  height_m    real CHECK (height_m > 0),
   diameter_cm real CHECK (diameter_cm > 0 AND diameter_cm <= 400),
   survey_date date,
   geom        geometry(Point, 4326) NOT NULL

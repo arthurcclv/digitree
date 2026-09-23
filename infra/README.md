@@ -100,12 +100,20 @@ this check.
 
 Heights and diameters are usable but carry obvious data-entry damage. The full
 rules, with the values that motivated them, are in the comment above the insert
-in `sql/02_load.sql`. In short: height is kept only within (0, 40] m — the
-street file's maximum is **2023.0**, a survey year keyed into the height column
-— and diameter only within (0, 400] cm. Out-of-range values become `NULL`
-rather than being clamped, so a tree of unknown height is never rendered as a
-40 m one. The same two rules apply to custom rows: they are properties of what
-the app can render, not of who supplied the file.
+in `sql/02_load.sql`. In short: height is kept whenever it is **positive**,
+with no ceiling, and diameter only within (0, 400] cm. Out-of-range values
+become `NULL` rather than being clamped, so a tree of unknown diameter is never
+rendered as a 400 cm one. The same rules apply to custom rows: they are
+properties of what the app can render, not of who supplied the file.
+
+Height has no upper bound on purpose. The column carries visible keying damage
+— the street file's maximum is **2023.0**, a survey year typed into the height
+field, and the park file's is **797.0** — and those rows now load and render at
+that height rather than being discarded along with every genuinely tall tree
+above the old 40 m cut. It is 22 rows out of 162,930 (p99 is 18.9 / 20.8 m), and
+a visible spike a reader can recognise as bad data beats a silently missing
+height. Note that the app's mesh half keeps the **tallest** trees when it
+exceeds its instance budget, so those rows are never the ones culled.
 
 ## Attribution
 
