@@ -17,14 +17,17 @@ docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin
 martin.yaml          which tables are published, and under what names
 sql/01_schema.sql    the trees table and its indexes
 sql/02_load.sql      staging COPY -> normalise -> clean -> insert
+sql/03_checks.sql    assertions over the loaded table; fails the load
 load.sh              the whole bring-up in one command
+test/                fixture CSVs and run.sh, the loader's test suite
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 ```
 
-Commands (run from `infra/`): `./load.sh` does everything. `docker compose down`
-stops it; `docker compose down -v` also discards the database volume, which is
-the right way to start over.
+Commands (run from `infra/`): `./load.sh` does everything, `./test/run.sh` runs
+the loader against fixtures in a scratch database. `docker compose down` stops
+it; `docker compose down -v` also discards the database volume, which is the
+right way to start over.
 
 ## Rules
 
@@ -36,12 +39,16 @@ the right way to start over.
   must always be safe, and must always leave the live schema identical to the
   file.
 - **The loader takes its inputs as psql variables** (`street_csv`, `park_csv`,
-  `custom_dir`), defaulting to the mounted paths, so the same SQL can be aimed
-  at other files without being copied. A new input follows the same pattern.
+  `custom_dir`), defaulting to the mounted paths. That is what lets
+  `test/run.sh` exercise the real SQL against fixtures instead of a second
+  loader that drifts from it. A new input follows the same pattern.
 - **A bad drop-in fails the load; it never half-loads it.** The whole load is
   one transaction, and a wrong header or a duplicate `TreeID` raises with the
   file named. Anything that would instead load a plausible-looking wrong value
   — a swapped LAT/LON, a shadowed city tree — must be made to fail instead.
+- **Test a loader change in `test/`.** New cleaning rules, new columns and new
+  failure modes each get a fixture and an assertion; `./test/run.sh` must be
+  green before a load change lands.
 - **Cleaning rules are documented where they are applied**, in the comment block
   above the insert in `02_load.sql`, with the specific values that motivated
   them. Open data is dirty in specific ways and a bare threshold teaches nobody
@@ -73,8 +80,8 @@ colours and filters on the literal values `street`, `park` and `custom`, so
 adding a fourth means editing `TreeKindFilter` in `app/src/layers/tree/index.ts`
 and `TreeKind` in `treeLayer.ts`, plus the spec, in the same commit. Note that
 `district`, `place`, `place_note` and `survey_date` are NULL on every `custom`
-row — the drop-in schema has no columns for them — which is what the app's spec
-promises.
+row — the drop-in schema has no columns for them — which is what `03_checks.sql`
+asserts and what the app's spec promises.
 
 The published property names (`tree_id`, `kind`, `district`, `place`, `species`,
 `height_m`, `diameter_cm`) are equally load-bearing: the app styles and filters

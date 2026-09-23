@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bring up Postgres, create the schema, load both extracts, then start Martin.
+# Bring up Postgres, create the schema, load the extracts and any custom
+# drop-ins, check the result, then start Martin.
 # Idempotent: re-running reloads the table from the CSVs.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -33,8 +34,17 @@ psql_run() {
 echo "==> schema"
 psql_run /sql/01_schema.sql
 
-echo "==> loading 162,930 trees (this takes a few seconds)"
+# The two extracts are ~163,000 rows; data/custom/ is optional and usually
+# small. The loader discovers the drop-ins itself — see sql/02_load.sql.
+if compgen -G "data/custom/*.csv" > /dev/null; then
+  echo "==> loading the extracts and $(ls data/custom/*.csv | wc -l | tr -d ' ') custom drop-in(s) (this takes a few seconds)"
+else
+  echo "==> loading the extracts (this takes a few seconds)"
+fi
 psql_run /sql/02_load.sql
+
+echo "==> checks"
+psql_run /sql/03_checks.sql
 
 # Martin reads each table's columns and types once, at startup, so it must be
 # restarted after a load — otherwise a schema change leaves it serving HTTP 500

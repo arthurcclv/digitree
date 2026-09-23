@@ -18,6 +18,21 @@ curl -s localhost:3000/trees | jq          # TileJSON
 `docker compose down` stops it. `docker compose down -v` also drops the database
 volume — the right way to start over.
 
+## Tests
+
+```bash
+./test/run.sh
+```
+
+Runs `sql/01_schema.sql`, `sql/02_load.sql` and `sql/03_checks.sql` — the real
+files — against the fixture CSVs in `test/fixtures/`, in a scratch database. It
+covers the transform, the cleaning rules, the drop-in contract and the three
+ways a drop-in is rejected, in a second or two and without touching `data/` or
+the development database.
+
+`sql/03_checks.sql` also runs as the last step of `./load.sh`, so a load that
+produces a structurally wrong table fails there rather than on the map.
+
 ## The data
 
 Two extracts from Taipei City's open-data platform, placed in `data/`:

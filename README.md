@@ -133,6 +133,8 @@ app/
     styles.css         the design system
 infra/
   data/                raw open-data extracts (gitignored)
+    custom/            optional drop-in CSVs, in the app as kind "custom"
+  test/                the loader's fixtures and test suite
 ```
 
 Other modules import a layer through its folder (`./layers/tree`), never through

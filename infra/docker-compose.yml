@@ -18,6 +18,10 @@ services:
       # faster than streaming 19 MB of CSV through psql's \copy.
       - ./data:/data:ro
       - ./sql:/sql:ro
+      # The loader's fixtures. Mounted read-only like the rest: test/run.sh
+      # points the same sql/ files at these paths in a scratch database, so the
+      # loader is tested without a 163,000-row load and without touching data/.
+      - ./test:/test:ro
     healthcheck:
       # -h 127.0.0.1 is load-bearing. During initdb the entrypoint runs a
       # temporary server on the unix socket only, so a socket-based pg_isready
