@@ -162,7 +162,7 @@ export function Segmented({
 }: {
   items: SegmentedItem[];
   value: string | null;
-  columns: 2 | 4;
+  columns: 2 | 3 | 4;
   label: string;
   onChange: (id: string) => void;
 }) {

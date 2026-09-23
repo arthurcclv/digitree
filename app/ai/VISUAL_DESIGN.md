@@ -227,10 +227,12 @@ than a poster with controls over it.
   sliding lamp toggle; a flag is a checkbox, and the lamp was a bespoke control
   carrying no information the checkbox does not.
 - **Segmented control** (`.segmented`): equal-width buttons in one group, for the
-  four basemaps and the four ramp choices (three palettes plus Flat). Selected is
-  `.active` (blue) with `aria-pressed`. The ramp variant carries a small gradient
-  swatch per segment, drawn from the palette's own stops — the one place a
-  component shows a data colour.
+  four basemaps, the four ramp choices (three palettes plus Flat) and the three
+  tree-kind choices (All / Street / Park). Selected is `.active` (blue) with
+  `aria-pressed`. The ramp variant carries a small gradient swatch per segment,
+  drawn from the palette's own stops — the one place a component shows a data
+  colour. Column count is explicit — `--2`, `--3`, `--4` — and must match the
+  item count, so a group never leaves a ragged empty cell.
 - **Button** (`.btn`): 13px/600, 6px radius. Blue primary; `.secondary` neutral
   on `--border-subtle`; `.active` blue for a toggle that is on; disabled goes
   flat `--border-raised`. `.block` is the full-width stacked form. `.icon-btn` is

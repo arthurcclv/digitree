@@ -6,6 +6,40 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-22 — Tree data from local PostGIS + Martin, read back from MapLibre's own tiles
+
+**Decision.** Taipei's 162,930-tree inventory is loaded into PostGIS and served
+as vector tiles by Martin (`infra/`). The tree layer consumes it as **two**
+GeoLibre records from **one** source: `tree-points`, an ordinary `vector-tiles`
+record drawing circles city-wide from z14, and `tree-mesh`, the existing
+external-native three.js record drawing instanced geometry in the viewport from
+z16. The mesh half fetches nothing — it reads the tiles MapLibre already parsed,
+via `querySourceFeatures`.
+
+**Why.** 163k trees cannot all be three.js meshes, and circles alone waste the
+surveyed heights. Two renderers over one source means the views cannot disagree,
+and — the point that decided it — the app still makes **no `fetch()` of its
+own**: no async state, no loading or error paths, no CORS surface beyond the tile
+URL, despite now having a backend.
+
+**What it rules out.** The app does not talk to Postgres, does not hold a second
+endpoint, and does not gain a data-fetching layer. `source.tiles` is used rather
+than Martin's TileJSON, whose tile URL is absolute and would bypass the Vite
+proxy. And the two records are **not** independent: hiding `tree-points` would
+starve the mesh layer of data, so it stays visible at zero opacity instead. That
+coupling is the price of the design and is recorded as an invariant in the spec.
+
+**What it reverses.** The tree layer was a single procedural tree at a hardcoded
+coordinate, deterministic across reloads. The mesh *shape* is still
+deterministic; the *scene* is not — it depends on the viewport. `TREE_LOCATION`
+is retired and `TreeSettings.height` (absolute metres) becomes `heightScale`,
+because an absolute height is meaningless once every tree carries its own.
+
+**Revisit when.** The inventory needs per-species geometry (glTF), or a second
+dataset wants the same treatment and the points/mesh pairing is worth extracting
+into something reusable. Also if Martin ever has to be reachable from anywhere
+but a developer's machine — none of this considers auth, caching or uptime.
+
 ## 2026-09-22 — Split the repo into `app/` and `infra/`
 
 **Decision.** The Vite app moves from the repo root into `app/`, taking its

@@ -7,8 +7,10 @@ import {
 } from "./layers/buildings";
 import {
   DEFAULT_TREE_SETTINGS,
-  TREE_BASE_HEIGHT_M,
-  TREE_LOCATION,
+  TREES_ATTRIBUTION,
+  TREES_MIN_ZOOM,
+  TREE_MESH_MIN_ZOOM,
+  type TreeKindFilter,
   type TreeSettings,
 } from "./layers/tree";
 import { useMapEngine } from "./lib/useMapEngine";
@@ -34,6 +36,12 @@ const dms = (value: number, axis: "lat" | "lng") => {
 const FLAT_RAMP_ID = "flat";
 
 const basemapItems: SegmentedItem[] = BASEMAPS.map((b) => ({ id: b.id, label: b.label }));
+
+const treeKindItems: SegmentedItem[] = [
+  { id: "all", label: "All" },
+  { id: "street", label: "Street" },
+  { id: "park", label: "Park" },
+];
 
 export default function App() {
   const [basemapId, setBasemapId] = useState(BASEMAPS[0].id);
@@ -182,9 +190,21 @@ export default function App() {
 
           <Panel title="Trees">
             <CheckboxRow
-              label="Tree mesh"
-              checked={tree.visible}
-              onChange={(visible) => patchTree({ visible })}
+              label="Points"
+              checked={tree.pointsVisible}
+              onChange={(pointsVisible) => patchTree({ pointsVisible })}
+            />
+            <CheckboxRow
+              label="3D meshes"
+              checked={tree.meshVisible}
+              onChange={(meshVisible) => patchTree({ meshVisible })}
+            />
+            <Segmented
+              label="Tree kind"
+              items={treeKindItems}
+              columns={3}
+              value={tree.kind}
+              onChange={(kind) => patchTree({ kind: kind as TreeKindFilter })}
             />
             <Slider
               label="Opacity"
@@ -196,20 +216,23 @@ export default function App() {
               onChange={(v) => patchTree({ opacity: v / 100 })}
             />
             <Slider
-              label="Height"
-              value={tree.height}
-              min={4}
-              max={60}
-              step={1}
-              unit="m"
-              onChange={(height) => patchTree({ height })}
+              label="Height scale"
+              value={tree.heightScale}
+              min={0.5}
+              max={4}
+              step={0.1}
+              decimals={1}
+              unit="×"
+              title="Exaggerates each tree's surveyed height. 1.0 is true scale."
+              onChange={(heightScale) => patchTree({ heightScale })}
             />
             <div className="panel__rule" />
-            <StatLine
-              k="Location"
-              v={`${TREE_LOCATION[1].toFixed(4)}° N · ${TREE_LOCATION[0].toFixed(4)}° E`}
-            />
-            <StatLine k="Modelled height" v={`${TREE_BASE_HEIGHT_M} m`} />
+            <StatLine k="Points from" v={`z${TREES_MIN_ZOOM}`} />
+            <StatLine k="Meshes from" v={`z${TREE_MESH_MIN_ZOOM}`} />
+            <p className="hint">
+              162,930 surveyed trees. Height comes from the survey, so a tree with no
+              credible measurement draws at the smallest size rather than an invented one.
+            </p>
           </Panel>
         </div>
 
@@ -241,10 +264,16 @@ export default function App() {
                     onChange: (visible) => patch({ visible }),
                   },
                   {
-                    id: "tree",
-                    label: "Tree",
-                    checked: tree.visible,
-                    onChange: (visible) => patchTree({ visible }),
+                    id: "tree-points",
+                    label: "Tree points",
+                    checked: tree.pointsVisible,
+                    onChange: (pointsVisible) => patchTree({ pointsVisible }),
+                  },
+                  {
+                    id: "tree-mesh",
+                    label: "Tree meshes",
+                    checked: tree.meshVisible,
+                    onChange: (meshVisible) => patchTree({ meshVisible }),
                   },
                   {
                     id: "labels",
@@ -257,9 +286,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Required whenever the map is visible — see the basemaps spec. */}
+          {/* Required whenever the map is visible — see the basemaps spec. The
+              tree inventory is a second source and so a second obligation. */}
           <div className="map-credit">
             <span>{OSM_ATTRIBUTION}</span>
+            <span>{TREES_ATTRIBUTION}</span>
             <a href="https://github.com/opengeos/GeoLibre" target="_blank" rel="noreferrer">
               GeoLibre 3.0.0
             </a>

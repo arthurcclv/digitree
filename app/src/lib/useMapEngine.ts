@@ -12,7 +12,8 @@ import {
   ThreeTreeLayer,
   TREE_LAYER_ID,
   TREE_NATIVE_LAYER_ID,
-  treeLayerRecord,
+  treeMeshRecord,
+  treePointsLayer,
   type TreeSettings,
 } from "../layers/tree";
 
@@ -88,8 +89,14 @@ export function useMapEngine(
     // The three.js layer rides in the same sync call as the buildings: its
     // record is marked as an external custom layer, so GeoLibre moves and shows
     // the native layer we added rather than trying to create or paint it.
-    // Later entries end up higher in the stack, so the tree sits above.
-    sync.sync([buildingsLayer(settingsRef.current), treeLayerRecord(treeSettingsRef.current)]);
+    // Later entries end up higher in the stack, so the meshes sit above the
+    // tree circles and both above the extrusions. The mesh layer reads its data
+    // back out of the source this same call creates for `tree-points`.
+    sync.sync([
+      buildingsLayer(settingsRef.current),
+      treePointsLayer(treeSettingsRef.current),
+      treeMeshRecord(treeSettingsRef.current),
+    ]);
     // `createLayerSync` always appends on top, which is what we want by
     // default; only drop below the labels when the user asks for it.
     if (settingsRef.current.labelsOnTop) {
@@ -196,10 +203,16 @@ export function useMapEngine(
     applyLayers();
   }, [applyLayers, settings, treeSettings]);
 
-  // Height is the app's own control, not something GeoLibre models.
+  // Height exaggeration is the app's own control, not something GeoLibre models.
   useEffect(() => {
-    treeRef.current?.setHeight(treeSettings.height);
-  }, [treeSettings.height]);
+    treeRef.current?.setHeightScale(treeSettings.heightScale);
+  }, [treeSettings.heightScale]);
+
+  // The kind filter reaches the circles through the record, but GeoLibre cannot
+  // filter the custom layer — so the mesh layer is told separately.
+  useEffect(() => {
+    treeRef.current?.setKind(treeSettings.kind);
+  }, [treeSettings.kind]);
 
   const flyTo = useCallback((view: Viewpoint) => {
     mapRef.current?.flyTo({

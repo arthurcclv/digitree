@@ -14,5 +14,19 @@ export default defineConfig({
   // has to be an ES module rather than Vite's default IIFE.
   worker: { format: "es" },
   resolve: { dedupe: ["maplibre-gl", "react", "react-dom"] },
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    // The tree layer's tiles come from the Martin server in infra/. Proxying
+    // keeps every tile request same-origin, so the app needs no CORS setup and
+    // carries no absolute URL to a host that only exists in development —
+    // which is also why the layer uses `source.tiles` rather than Martin's own
+    // TileJSON, whose tile URL is absolute.
+    proxy: {
+      "/tiles": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tiles/, ""),
+      },
+    },
+  },
 });

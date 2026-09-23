@@ -68,13 +68,17 @@ The app answers all three by being a working thing, not a README.
 ## Non-goals
 
 - Not a basemap editor, a data-upload tool, or a GIS. There is no project
-  concept, no persistence, no server.
+  concept and no persistence. There *is* now a server — the local PostGIS +
+  Martin stack in `infra/` that serves the tree inventory — but it is a data
+  source the app reads over HTTP, not a backend the app owns: no accounts, no
+  writes, no session, and the app runs without it.
 - Not a GeoLibre feature tour. Only the parts that prove the three questions
   above are wired up.
 - Not mobile-first. Below 900px the shell becomes one scrolling column with the
   map on top (see `VISUAL_DESIGN.md`), but the target is a desktop browser with a
   GPU.
-- No accounts, no analytics, no network calls beyond tiles and Google Fonts.
+- No accounts, no analytics, no network calls beyond tiles. The app makes no
+  `fetch()` call of its own even now that it has a data source of its own.
 
 ## Where the design pressure is
 

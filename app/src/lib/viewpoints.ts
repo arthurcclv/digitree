@@ -1,6 +1,5 @@
 import type { Viewpoint } from "./useMapEngine";
 import { HOME } from "./useMapEngine";
-import { TREE_LOCATION } from "../layers/tree";
 
 export const VIEWPOINTS: Viewpoint[] = [
   HOME,
@@ -50,12 +49,15 @@ export const VIEWPOINTS: Viewpoint[] = [
     bearing: 8,
   },
   {
-    // A 13 m tree in Taipei is unfindable without a way to fly to it.
+    // The 3D tree meshes only appear from z16, so the viewpoint has to land
+    // above that. Da'an carries some of the densest street planting in the
+    // inventory. The coordinate lives here, not in the layer: the layer covers
+    // the whole city and no longer has a location of its own.
     id: "tree",
-    label: "The Tree",
-    sub: "three.js · 大安",
-    center: TREE_LOCATION,
-    zoom: 18.6,
+    label: "Trees",
+    sub: "行道樹 · 大安",
+    center: [121.5374, 25.0431],
+    zoom: 17.4,
     pitch: 72,
     bearing: -24,
   },
