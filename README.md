@@ -20,6 +20,11 @@ cd infra
 ./load.sh        # postgis + martin, loads 162,930 trees, serves tiles on :3000
 ```
 
+Your own tree data goes in `infra/data/custom/` as
+`TreeID,TreeType,Diameter,TreeHeight,LAT,LON` (WGS84) — every CSV there is
+loaded alongside the city's, and the map's **Custom** filter shows it. See
+[`infra/README.md`](infra/README.md).
+
 ## Where the behaviour is documented
 
 Each GeoLibre layer, plugin, or extension owns a folder under `app/src/layers/`, and

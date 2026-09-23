@@ -10,7 +10,8 @@ Modules:
 ## Purpose
 
 Renders Taipei's tree inventory — 162,930 surveyed street and park trees, served
-from the local PostGIS + Martin stack in `infra/` — at two levels of detail:
+from the local PostGIS + Martin stack in `infra/`, plus any custom trees dropped
+into that stack — at two levels of detail:
 
 - **points**, as MapLibre circles, from z14 across the whole city;
 - **mesh**, as instanced three.js geometry, from z16 within the viewport.
@@ -36,9 +37,18 @@ One Martin source feeds both records.
 | feature id | integer `id` (MVT requires integers; `tree_id` is text) |
 | properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm` |
 
-`kind` is `"street"` or `"park"`. `height_m` and `diameter_cm` are **nullable**:
-`NULL` means the survey value was missing or implausible, not zero. `species` is
-nullable too — 18 rows carry none.
+`kind` is `"street"`, `"park"` or `"custom"`. The first two are the city's open
+data; `"custom"` is whatever a contributor dropped into `infra/data/custom/`,
+and the layer treats it as a third peer — same source, same tiles, same
+properties, no separate code path. `height_m` and `diameter_cm` are
+**nullable**: `NULL` means the survey value was missing or implausible, not
+zero. `species` is nullable too — 18 rows carry none. `district` and `place` are
+**always `NULL` on `"custom"` rows**; the layer must not assume otherwise.
+
+The bounds above are the *open data's* extent, and MapLibre requests no tile
+outside them. Custom trees beyond that box therefore render nothing until this
+constant is widened — `infra`'s load prints the loaded extent per kind so the
+mismatch is visible rather than mysterious.
 
 `infra/CLAUDE.md` holds the other side of this contract. The source id, the MVT
 layer name and every property name above are a published interface: renaming one
@@ -87,7 +97,10 @@ circle/line/fill triple and the circle is the one that matters.
   carries most of the city: measured, z12 is 2.2 MB against z16's 21 KB.
 - Radius interpolates on `height_m`, colour on `kind`, both as MapLibre
   expressions built the way `colorExpression` in `layers/buildings/index.ts`
-  builds its ramp.
+  builds its ramp. Three colours — street, park, custom — plus the fallback for
+  an unrecognised value. Custom trees are deliberately **not** styled to blend
+  in with the surveyed ones: the segment exists so you can see which trees are
+  yours.
 - Trees with a `NULL` `height_m` still draw. GeoLibre's radius comes from
   `proportionalSize*`, whose `interpolate` falls a missing value back to the
   range minimum, so they draw as the **smallest** dot — visibly least-known
@@ -280,6 +293,13 @@ until tiles reload. The refresh on `idle` covers this; no special case is needed
 | `opacity` | `1` | `tree-points` record → circle paint; `tree-mesh` → paint bridge → `setOpacity` |
 | `heightScale` | `1` | app → `setHeightScale` directly |
 | `kind` | `"all"` | `tree-points` → `filterExpression`; `tree-mesh` → app → `setKind` directly |
+
+`kind` is one of `"all"`, `"street"`, `"park"`, `"custom"` — four segments, so
+the control is `columns={4}`. `"custom"` selects nothing when no custom data is
+loaded, which is the honest outcome: an empty result for an empty dataset, not a
+hidden control. Adding a value here means adding it to `TreeKindFilter` in
+`index.ts` *and* to `TreeKind` in `treeLayer.ts`, which mirrors it to avoid a
+module cycle.
 
 `heightScale` **replaces** the old absolute `height` control. An absolute height
 is meaningless once every tree carries its own; the control now exaggerates, the

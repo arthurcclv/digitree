@@ -41,6 +41,9 @@ const treeKindItems: SegmentedItem[] = [
   { id: "all", label: "All" },
   { id: "street", label: "Street" },
   { id: "park", label: "Park" },
+  // Selects nothing when no drop-in data is loaded, which is the honest
+  // outcome: an empty result for an empty dataset, not a hidden control.
+  { id: "custom", label: "Custom" },
 ];
 
 export default function App() {
@@ -202,7 +205,7 @@ export default function App() {
             <Segmented
               label="Tree kind"
               items={treeKindItems}
-              columns={3}
+              columns={4}
               value={tree.kind}
               onChange={(kind) => patchTree({ kind: kind as TreeKindFilter })}
             />

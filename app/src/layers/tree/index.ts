@@ -27,8 +27,12 @@ export {
   TREE_POINTS_LAYER_ID,
 } from "./constants";
 
-/** Street and park trees are the two halves of the inventory. */
-export type TreeKindFilter = "all" | "street" | "park";
+/**
+ * The city's inventory is street plus park; `custom` is whatever was dropped
+ * into `infra/data/custom/`. Adding a value here means adding it to `TreeKind`
+ * in `treeLayer.ts` too, which mirrors this type to avoid a module cycle.
+ */
+export type TreeKindFilter = "all" | "street" | "park" | "custom";
 
 export interface TreeSettings {
   /** The vector-tile circles, city-wide from z14. */
@@ -49,9 +53,15 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
   kind: "all",
 };
 
-/** Canopy green for street trees, a cooler green for park trees. */
+/**
+ * Canopy green for street trees, a cooler green for park trees — and a warm
+ * ochre for custom ones, which is deliberately *not* a third green: the point
+ * of the segment is seeing at a glance which trees are yours rather than the
+ * city's. It is no relation of `--accent`, which is chrome.
+ */
 const COLOR_STREET = "#5f8f5a";
 const COLOR_PARK = "#4a8f86";
+const COLOR_CUSTOM = "#c08a45";
 const COLOR_UNKNOWN = "#5c6b7a";
 
 /**
@@ -66,6 +76,8 @@ function colorExpression(): string {
     COLOR_STREET,
     "park",
     COLOR_PARK,
+    "custom",
+    COLOR_CUSTOM,
     COLOR_UNKNOWN,
   ]);
 }

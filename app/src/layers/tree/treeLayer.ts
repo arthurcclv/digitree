@@ -10,7 +10,7 @@ import { sourceId } from "@geolibre/map/style-layer-ids";
 import { TREES_SOURCE_LAYER, TREE_POINTS_LAYER_ID } from "./constants";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
-export type TreeKind = "all" | "street" | "park";
+export type TreeKind = "all" | "street" | "park" | "custom";
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
 export const TREE_NATIVE_LAYER_ID = "threejs-tree-native";

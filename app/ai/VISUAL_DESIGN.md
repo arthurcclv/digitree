@@ -94,6 +94,7 @@ three places for it to drift.
 | --- | --- |
 | Building height ramps (`ember`, `jade`, `neon`) | `PALETTES` in `src/layers/buildings/index.ts`, described in its spec |
 | Flat building colour per basemap | `BASEMAPS[].buildingColor`, in the basemaps spec table |
+| Tree circle colour per kind (street / park / custom) | `COLOR_*` in `src/layers/tree/index.ts`, described in its spec |
 | Tree bark / leaf materials | `buildTree()` in `src/layers/tree/treeLayer.ts` |
 | Tree light rig (hemisphere + directional) | `buildLights()` in the same file |
 | MapLibre extrusion light | the `map.setLight` call in `useMapEngine.ts` |
@@ -227,9 +228,9 @@ than a poster with controls over it.
   sliding lamp toggle; a flag is a checkbox, and the lamp was a bespoke control
   carrying no information the checkbox does not.
 - **Segmented control** (`.segmented`): equal-width buttons in one group, for the
-  four basemaps, the four ramp choices (three palettes plus Flat) and the three
-  tree-kind choices (All / Street / Park). Selected is `.active` (blue) with
-  `aria-pressed`. The ramp variant carries a small gradient swatch per segment,
+  four basemaps, the four ramp choices (three palettes plus Flat) and the four
+  tree-kind choices (All / Street / Park / Custom). Selected is `.active`
+  (blue) with `aria-pressed`. The ramp variant carries a small gradient swatch per segment,
   drawn from the palette's own stops — the one place a component shows a data
   colour. Column count is explicit — `--2`, `--3`, `--4` — and must match the
   item count, so a group never leaves a ragged empty cell.

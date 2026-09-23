@@ -6,6 +6,41 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-23 — Custom tree data is a third `kind`, not a second source
+
+**Decision.** Trees that are not the city's open data — anything dropped into
+`infra/data/custom/` as `TreeID,TreeType,Diameter,TreeHeight,LAT,LON` — load
+into the same `trees` table with `kind = 'custom'`, and reach the app through
+the same Martin source, the same tile URL and the same properties. The app gains
+one union member, one colour and one segment in the Tree kind control. It gains
+no second source, no second GeoLibre record and no code path of its own.
+
+**Why.** A custom tree is the same object as a surveyed one: a point with a
+species, a height and a diameter. The parts of the layer that are hard — one
+source feeding two renderers, dedup by `tree_id`, the paint bridge, the bounds
+and zoom floor — are indifferent to where a row came from, and duplicating them
+for a second source would double the surface while changing nothing on screen.
+`kind` already existed as the discriminator for exactly this reason.
+
+**What it rules out.** Custom rows carry no district, place or survey date —
+the drop-in schema has no columns for them — so `district` lost its `NOT NULL`
+and a NULL district is now how a custom row is recognised. Per-dataset styling,
+per-dataset visibility and per-dataset attribution are all out of reach without
+revisiting this: there is one `custom` bucket, not one bucket per file.
+
+Two couplings are accepted rather than solved. `TREES_BOUNDS` is still a
+hand-measured constant, so custom trees outside it render nothing until it is
+widened — `infra`'s load prints the extent per kind so the cause is visible.
+And `TreeKindFilter` in `index.ts` is still mirrored by `TreeKind` in
+`treeLayer.ts`, so a fourth kind means editing both.
+
+**Revisit when.** A drop-in needs its own colour, its own toggle or its own
+attribution line — at that point `kind` is being asked to carry dataset
+identity, which it cannot, and the right move is a `source` column with the
+filter driven from the loaded values rather than from a hardcoded union.
+
+---
+
 ## 2026-09-22 — Tree data from local PostGIS + Martin, read back from MapLibre's own tiles
 
 **Decision.** Taipei's 162,930-tree inventory is loaded into PostGIS and served
