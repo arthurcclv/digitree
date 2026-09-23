@@ -2,3 +2,6 @@ node_modules
 dist
 .DS_Store
 *.tsbuildinfo
+
+# Raw open-data extracts: large, re-downloadable, loaded into PostGIS by infra/load.sh
+infra/data/*.csv

@@ -1,0 +1,46 @@
+# Martin publishes one source: the `trees` table, as MVT layer `trees`.
+# The source id below is both the tile path (/trees/{z}/{x}/{y}) and the
+# `source-layer` name the app's GeoLibre record must ask for.
+listen_addresses: "0.0.0.0:3000"
+
+postgres:
+  connection_string: "postgres://taipei:taipei@db:5432/taipei"
+  # Explicit rather than auto_publish, so the source id and therefore the MVT
+  # layer name are ours and cannot drift when the schema gains a table.
+  auto_publish: false
+  tables:
+    trees:
+      schema: public
+      table: trees
+      srid: 4326
+      geometry_column: geom
+      # Must be an integer column — tree_id is text. See sql/01_schema.sql.
+      id_column: id
+      geometry_type: POINT
+      # A point layer generalises to nothing — every tree survives to every
+      # zoom — so the floor is set from measured tile weight, not taste:
+      #
+      #   z12  2.2 MB/tile   (the whole city in one tile)
+      #   z14  485 KB, max 14,522 features, median 1,443
+      #   z15  102 KB, max  6,760 features, median   801
+      #   z16   21 KB, max  2,623 features, median   253
+      #
+      # 14 is the floor the app uses too, so an accidental zoomed-out request
+      # cannot pull the whole city.
+      minzoom: 14
+      maxzoom: 20
+      extent: 4096
+      buffer: 64
+      clip_geom: true
+      properties:
+        # Published as a property, not just as the row key: the three.js layer
+        # reads these tiles back with querySourceFeatures, where a point inside
+        # the tile buffer arrives once per covering tile, and tree_id is what
+        # deduplicates it. Dropping it here makes the 3D layer render nothing.
+        tree_id: text
+        kind: text
+        district: text
+        place: text
+        species: text
+        height_m: real
+        diameter_cm: real

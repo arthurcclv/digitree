@@ -1,0 +1,44 @@
+# Local-only data stack. Credentials are deliberately trivial and the ports are
+# published on localhost: this is a development fixture, not a deployment.
+services:
+  db:
+    # imresamu/postgis is the multi-arch build of the PostGIS image (the Docker
+    # Hub postgis/postgis tags are amd64-only, which means Rosetta emulation on
+    # Apple Silicon). Same Dockerfile lineage, native arm64.
+    image: imresamu/postgis:16-3.4
+    environment:
+      POSTGRES_USER: taipei
+      POSTGRES_PASSWORD: taipei
+      POSTGRES_DB: taipei
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Server-side COPY reads these paths inside the container, which is far
+      # faster than streaming 19 MB of CSV through psql's \copy.
+      - ./data:/data:ro
+      - ./sql:/sql:ro
+    healthcheck:
+      # -h 127.0.0.1 is load-bearing. During initdb the entrypoint runs a
+      # temporary server on the unix socket only, so a socket-based pg_isready
+      # reports healthy while the image's own postgis setup is still running —
+      # and our CREATE EXTENSION then races it. Forcing TCP fails until the
+      # real server is up.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U taipei -d taipei"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./martin.yaml:/config/martin.yaml:ro
+    command: ["--config", "/config/martin.yaml"]
+
+volumes:
+  pgdata:
