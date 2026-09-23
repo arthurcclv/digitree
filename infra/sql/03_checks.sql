@@ -4,8 +4,8 @@
 -- Neither package has a unit-test runner, so this is where a load is tested:
 -- the checks below are the ones the schema's own constraints cannot make —
 -- relationships between columns, and between rows and the file they came from.
--- A constraint already covers `kind`'s domain, height's positivity, the
--- diameter range and `tree_id` uniqueness, so none of those are repeated here.
+-- A constraint already covers `kind`'s domain, height and diameter positivity,
+-- and `tree_id` uniqueness, so none of those are repeated here.
 --
 -- Every check runs before anything is raised: a load with three problems should
 -- report three, not the first one and then a second run to find the next.

@@ -163,12 +163,19 @@ END $$;
 --             file's is 797.0 — and those 22 rows (of 162,930; p99 is 18.9 /
 --             20.8) now load, and render, at that height. That is the accepted
 --             cost of not having to decide, per row, which tall tree is a typo.
---   diameter  kept only in (0, 400] cm. The park file's maximum is 2637 cm and
---             9,266 of its rows record 0.
+--   diameter  kept whenever it is positive, on the same terms as height: the
+--             (0, 400] ceiling was discarding exactly two rows — the park
+--             file's 468.8 and 2637.0 — and buying nothing that recognising a
+--             26 m-wide trunk on sight does not. The floor is the half that
+--             matters: 9,266 park rows and 53 street rows record a diameter of
+--             exactly 0, which is a surveyor leaving the field blank, not a
+--             tree of no width. Those stay NULL, because a consumer averaging
+--             or scaling on diameter would silently pull toward a literal zero.
 --
--- Out-of-range values become NULL rather than being clamped: a tree of unknown
--- diameter must not render as a 400 cm one. The same rules apply to custom rows
--- — they describe what the app can render, not who supplied the file.
+-- A value that fails a rule becomes NULL rather than being clamped or zeroed:
+-- an unmeasured trunk must not render as a thin one. The same rules apply to
+-- custom rows — they describe what the app can render, not who supplied the
+-- file.
 --
 -- Coordinates are the exception, because `geom` is NOT NULL: there is no "null
 -- it and keep the row" option. A custom row whose LAT/LON is missing,
@@ -227,7 +234,7 @@ INSERT INTO trees (
 SELECT row_number() OVER (ORDER BY tree_id),
        tree_id, kind, district, place, place_note, species,
        CASE WHEN height_m    > 0                        THEN height_m    END,
-       CASE WHEN diameter_cm > 0 AND diameter_cm <= 400 THEN diameter_cm END,
+       CASE WHEN diameter_cm > 0                        THEN diameter_cm END,
        survey_date,
        CASE WHEN srid = 4326 THEN ST_SetSRID(ST_MakePoint(x, y), 4326)
             ELSE ST_Transform(ST_SetSRID(ST_MakePoint(x, y), srid), 4326) END

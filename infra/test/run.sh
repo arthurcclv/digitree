@@ -116,6 +116,10 @@ expect_query "keeps a custom height above the old 40 m ceiling" \
   "SELECT height_m::text FROM trees WHERE tree_id='CUSTOM-0005'" "999"
 expect_query "keeps the street file's 2023.0 height" \
   "SELECT coalesce(height_m::text,'null') FROM trees WHERE tree_id='BT0000000002'" "2023"
+# Diameter is the mirror of height: no ceiling, but the floor stays, and the
+# floor is the half that matters — a 0 is a blank field, not a thin tree.
+expect_query "keeps a diameter above the old 400 cm ceiling" \
+  "SELECT diameter_cm::text FROM trees WHERE tree_id='SL0000000002'" "2637"
 expect_query "nulls a zero diameter" \
   "SELECT coalesce(diameter_cm::text,'null') FROM trees WHERE tree_id='BT0000000003'" "null"
 expect_query "empty columns become NULL, not ''" \

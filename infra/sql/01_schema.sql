@@ -35,7 +35,10 @@ CREATE TABLE trees (
   -- NULL means "not credibly recorded", not "zero". Only a non-positive height
   -- is rejected — there is deliberately no ceiling. See 02_load.sql.
   height_m    real CHECK (height_m > 0),
-  diameter_cm real CHECK (diameter_cm > 0 AND diameter_cm <= 400),
+  -- Same shape as height, and for the same reason. The floor is the load-bearing
+  -- half here: 9,319 rows record a diameter of exactly 0, which is a blank field
+  -- and not a measurement.
+  diameter_cm real CHECK (diameter_cm > 0),
   survey_date date,
   geom        geometry(Point, 4326) NOT NULL
 );

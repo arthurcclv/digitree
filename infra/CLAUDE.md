@@ -53,9 +53,11 @@ right way to start over.
   above the insert in `02_load.sql`, with the specific values that motivated
   them. Open data is dirty in specific ways and a bare threshold teaches nobody
   why it is there.
-- **Out-of-range values become `NULL`, never clamped.** A tree of unknown
-  diameter must not render as a 400 cm one. Height is the deliberate exception
-  to having a range at all: any positive value is kept, keying damage included.
+- **A value that fails a cleaning rule becomes `NULL`, never clamped or
+  zeroed.** An unmeasured trunk must not render as a thin one. Note that neither
+  measurement has an upper bound any more: height and diameter keep any positive
+  value, keying damage included. The `> 0` floor is the rule that remains, and
+  it is load-bearing — 9,319 rows record a diameter of exactly `0`.
 - **Never modify `data/`.** The extracts are treated as read-only inputs; every
   correction belongs in `02_load.sql` so it is reproducible and reviewable. The
   one thing a contributor *adds* there is a drop-in CSV under `data/custom/` —

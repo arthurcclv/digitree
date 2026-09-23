@@ -6,12 +6,12 @@ new entry — the old one stays, marked superseded.
 
 ---
 
-## 2026-09-23 — Surveyed height has no upper bound
+## 2026-09-23 — Neither surveyed measurement has an upper bound
 
-**Decision.** `trees.height_m` is kept whenever it is positive. The `(0, 40]`
-range that `01_schema.sql` enforced and `02_load.sql` applied is gone; only a
-zero or negative height still becomes `NULL`. Diameter's `(0, 400]` range is
-untouched. This supersedes the cleaning rule introduced with the tree layer.
+**Decision.** `trees.height_m` and `trees.diameter_cm` are kept whenever they
+are positive. The `(0, 40]` and `(0, 400]` ranges that `01_schema.sql` enforced
+and `02_load.sql` applied are gone; only a zero or negative value still becomes
+`NULL`. This supersedes the cleaning rules introduced with the tree layer.
 
 **Why.** The 40 m cut was calibrated on the two values that are obviously junk —
 2023.0 in the street file, a survey year typed into the height field, and 797.0
@@ -22,13 +22,20 @@ absurd spike reads as bad data at a glance and points at the row that needs
 fixing upstream. The threshold also could not survive contact with drop-in data,
 where the plausible range is whatever the supplier's trees happen to be.
 
+Diameter's ceiling was the same bet at a twentieth of the stakes: it discarded
+two rows, the park file's 468.8 and 2637.0, and a 26 m-wide trunk announces
+itself without a constraint's help. Its `> 0` floor was kept, and is the reason
+this is a decision about ceilings rather than about cleaning: 9,319 rows record
+a diameter of exactly `0`, which is a blank field, and admitting those would
+change what the column means rather than merely widening it.
+
 **What it rules out.** The map now draws a 2,023 m and a 797 m tree, and the
 mesh half keeps the **tallest** instances when it exceeds `MAX_INSTANCES`, so
 those two are the rows least likely to be culled — they are permanent fixtures
 of any view that contains them. Anything wanting a bounded height range (a
 colour ramp keyed to height, a height histogram, an auto-fitted camera) must
 clamp for itself rather than trusting the column. Rows with a `NULL` height fall
-from 78 to 56.
+from 78 to 56; rows with a `NULL` diameter from 9,321 to 9,319.
 
 **Revisit when.** Per-row provenance exists — a way to say *this* value is a
 keying error without also indicting every tall tree. A confidence column, or a

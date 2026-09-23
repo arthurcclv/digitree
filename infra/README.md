@@ -100,11 +100,17 @@ this check.
 
 Heights and diameters are usable but carry obvious data-entry damage. The full
 rules, with the values that motivated them, are in the comment above the insert
-in `sql/02_load.sql`. In short: height is kept whenever it is **positive**,
-with no ceiling, and diameter only within (0, 400] cm. Out-of-range values
-become `NULL` rather than being clamped, so a tree of unknown diameter is never
-rendered as a 400 cm one. The same rules apply to custom rows: they are
-properties of what the app can render, not of who supplied the file.
+in `sql/02_load.sql`. In short: height and diameter are both kept whenever they
+are **positive**, and neither has a ceiling. A value that fails becomes `NULL`
+rather than being clamped or zeroed, so an unmeasured trunk is never rendered as
+a thin one. The same rules apply to custom rows: they are properties of what the
+app can render, not of who supplied the file.
+
+Diameter's floor is the half doing the work: **9,319** rows — 9,266 in the park
+file and 53 in the street file — record a diameter of exactly `0`, which is a
+surveyor leaving the field blank rather than a measurement. The `(0, 400]`
+ceiling that used to sit above it was discarding two rows (468.8 and 2637.0) and
+buying nothing that recognising a 26 m-wide trunk on sight does not.
 
 Height has no upper bound on purpose. The column carries visible keying damage
 — the street file's maximum is **2023.0**, a survey year typed into the height
