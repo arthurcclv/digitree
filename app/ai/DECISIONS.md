@@ -6,6 +6,39 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-22 — Split the repo into `app/` and `infra/`
+
+**Decision.** The Vite app moves from the repo root into `app/`, taking its
+`ai/` documentation set with it, and a sibling `infra/` holds the local data
+stack and the raw open-data extracts it loads. `CLAUDE.md` splits in two: the
+root file carries the rules that govern every package (spec first and approved,
+no spec/code drift, tests, docs current), `app/CLAUDE.md` carries the
+layer-specific mechanics. The root `README.md` stays at the root and describes
+both.
+
+**Why.** The app is about to consume data from a PostGIS + Martin stack we run
+ourselves. That stack is not a dependency of the app in any npm sense and must
+not become one — but it does need a home, a schema, a loader and its own
+documentation. Leaving the app at the root would have forced the backend to
+either live inside the frontend package or float in an unnamed sibling
+directory. Naming both packages makes the boundary explicit.
+
+**What it rules out.** No workspaces and no root `package.json`:
+`app/package.json` remains the only one, and every npm command is run after
+`cd app`. `app/` must never import from `infra/` — it reaches the data over HTTP
+like any other tile source, so the app still runs, minus those layers, with
+nothing else running. This is what keeps `infra/` optional rather than required.
+
+**What did not change.** No behaviour, and no build configuration.
+`tsconfig.json` includes only `["src", "vite.config.ts"]` and `vite.config.ts`
+holds no paths, so the move was six `git mv`s and nothing else. The three
+load-bearing MapLibre worker settings are untouched.
+
+**Revisit when.** A second frontend appears, or `infra/` grows something the app
+genuinely needs to import (generated types from the schema would be the likely
+trigger). At that point workspaces stop being overhead and start paying for
+themselves.
+
 ## 2026-09-22 — Adopt the slate/blue desktop-tool visual language
 
 **Decision.** Replace the app's visual system with the one described in

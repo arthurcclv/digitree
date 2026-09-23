@@ -1,0 +1,91 @@
+# CLAUDE.md — `app/`
+
+Guidance for the Vite + React map application. The repo-wide rules live in the
+root `CLAUDE.md`; this file covers what is specific to the app.
+
+## What this is
+
+A single Vite + React app (`taipei-3d`) — one `package.json`, no workspaces. A 3D
+map of Taipei built on GeoLibre 3.0.0 over MapLibre, with a three.js custom
+layer.
+
+**Every GeoLibre layer, plugin, or extension gets its own folder under
+`src/layers/<name>/`, and every such folder carries a `specs/spec.md`.** That
+spec is the source of truth for the layer's behaviour. Adding a new layer means
+adding a new folder with a spec, not a new file in `src/lib`.
+
+```
+index.html          Vite entry
+vite.config.ts      React plugin + the two MapLibre worker settings (see README)
+tsconfig.json       TS project refs; `tsc -b` runs in `npm run build`
+src/
+  layers/           one folder per GeoLibre layer / plugin / extension
+    basemaps/
+      index.ts        basemap catalogue, OSM tiles + attribution, basemap
+                      building suppression, label anchoring
+      specs/spec.md
+    buildings/
+      index.ts        buildingsLayer() GeoLibre record, BuildingSettings, PALETTES
+      specs/spec.md
+    tree/
+      index.ts        both GeoLibre records (treePointsLayer, treeMeshRecord),
+                      TreeSettings
+      treeLayer.ts    ThreeTreeLayer — the MapLibre custom layer + instanced mesh
+      constants.ts    the Martin source contract, shared by the two above
+      specs/spec.md
+  lib/              shared engine + config, not layers
+    useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
+    viewpoints.ts     the eight Taipei VIEWPOINTS
+  ui/
+    Panel.tsx       Panel / Toggle / Slider primitives
+    Compass.tsx     bearing rose
+  App.tsx           the interface: control state, panel, viewpoints, telemetry
+  main.tsx          React root
+  styles.css        the design system (all styling lives here; no CSS modules)
+dist/               build output (gitignored)
+```
+
+### Rules for a layer folder
+
+- `index.ts` is the only entry other modules import (`../layers/tree`, never
+  `../layers/tree/treeLayer`). Split into more files inside the folder freely.
+- A layer folder may import from `src/lib` and from another layer's `index.ts`
+  (`buildings` imports the OSM tile URL and attribution from `basemaps`). It must
+  not reach into another layer's internals.
+- `specs/spec.md` is mandatory and must describe the layer's contract with
+  GeoLibre, its settings, and its invariants.
+
+### How a layer reaches the map
+
+Settings flow one way: `App.tsx` holds the state → each layer's `index.ts` turns
+settings into a `GeoLibreLayer` record → `useMapEngine.ts` passes the records to
+GeoLibre's `sync()`. Nothing outside `useMapEngine.ts` and `layers/basemaps`
+touches the MapLibre map directly.
+
+Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
+`npm run preview`. There is no test runner and no linter configured.
+
+## Documentation
+
+The app carries its own AI/contributor documentation set under `ai/`
+(orientation beyond the spec and the commands here): `DESIGN.md`,
+`ARCHITECTURE.md`, `CONVENTIONS.md`, `DECISIONS.md`, `WORKFLOWS.md`, `STACK.md`,
+`VISUAL_DESIGN.md`. Start at `ai/README.md`.
+
+The `specs/spec.md` in each `src/layers/<name>/` folder remains the source of
+truth for that layer's behavior; the `ai/` docs explain the product, structure,
+and process around it. A change that changes a color, type, spacing, or
+component rule is incomplete until `ai/VISUAL_DESIGN.md` is updated with it.
+
+## Workflow rules
+
+The root `CLAUDE.md` carries the repo-wide rules (spec first and approved, no
+drift, tests, docs current). These are the app's own:
+
+- **Read the relevant spec before changing anything.** The `specs/spec.md` in the
+  layer folder you are touching (`src/layers/<name>/specs/spec.md`) is the source
+  of truth for intended behavior, not just background reading — check the
+  applicable section(s) before touching layer, engine, or app code.
+- **Every new layer, plugin, or extension ships a spec.** A new
+  `src/layers/<name>/` folder is incomplete without its `specs/spec.md`, written
+  and approved before the layer's implementation lands.

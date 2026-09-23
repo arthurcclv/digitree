@@ -6,8 +6,10 @@ layers.
 
 ## Shape
 
-Single Vite + React app. No monorepo, no workspaces, one `package.json` at the
-root. Three tiers:
+Single Vite + React app, living in `app/` beside `infra/`. No monorepo, no
+workspaces, no root `package.json` — `app/package.json` is the only one, and the
+app is entered with `cd app`. `app/` never imports from `infra/`; it reaches its
+data over HTTP like any other tile source. Three tiers:
 
 ```
 App.tsx                 state + chrome          (knows settings, not MapLibre)

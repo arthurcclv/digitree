@@ -6,27 +6,36 @@ interface is custom — none of GeoLibre's own UI is used, and no MapLibre contr
 are added either.
 
 ```bash
+cd app
 npm install
 npm run dev      # http://localhost:5173
-npm run build    # -> dist/
+npm run build    # -> app/dist/
+```
+
+The tree layers need the local data stack. It is optional — without it the map
+still runs and the tree layers simply render nothing:
+
+```bash
+cd infra
+./load.sh        # postgis + martin, loads 162,930 trees, serves tiles on :3000
 ```
 
 ## Where the behaviour is documented
 
-Each GeoLibre layer, plugin, or extension owns a folder under `src/layers/`, and
+Each GeoLibre layer, plugin, or extension owns a folder under `app/src/layers/`, and
 its `specs/spec.md` is the source of truth for how it behaves. This README covers
 only what sits *between* those layers.
 
 | Layer | Spec | What it covers |
 | --- | --- | --- |
-| `basemaps` | [`src/layers/basemaps/specs/spec.md`](src/layers/basemaps/specs/spec.md) | the basemap catalogue, the OSM tile source and its required attribution, and the style surgery every GeoLibre layer depends on |
-| `buildings` | [`src/layers/buildings/specs/spec.md`](src/layers/buildings/specs/spec.md) | the OSM extrusion record, its settings, the colour ramps, filtering, and stacking |
-| `tree` | [`src/layers/tree/specs/spec.md`](src/layers/tree/specs/spec.md) | the three.js custom layer, its GeoLibre external-native contract, and the projection matrix that actually works |
+| `basemaps` | [`app/src/layers/basemaps/specs/spec.md`](app/src/layers/basemaps/specs/spec.md) | the basemap catalogue, the OSM tile source and its required attribution, and the style surgery every GeoLibre layer depends on |
+| `buildings` | [`app/src/layers/buildings/specs/spec.md`](app/src/layers/buildings/specs/spec.md) | the OSM extrusion record, its settings, the colour ramps, filtering, and stacking |
+| `tree` | [`app/src/layers/tree/specs/spec.md`](app/src/layers/tree/specs/spec.md) | the three.js custom layer, its GeoLibre external-native contract, and the projection matrix that actually works |
 
-Beyond the specs, `ai/` carries the contributor documentation set — [`DESIGN`](ai/DESIGN.md),
-[`ARCHITECTURE`](ai/ARCHITECTURE.md), [`CONVENTIONS`](ai/CONVENTIONS.md),
-[`DECISIONS`](ai/DECISIONS.md), [`WORKFLOWS`](ai/WORKFLOWS.md), [`STACK`](ai/STACK.md)
-and [`VISUAL_DESIGN`](ai/VISUAL_DESIGN.md). Start at [`ai/README.md`](ai/README.md).
+Beyond the specs, `app/ai/` carries the contributor documentation set — [`DESIGN`](app/ai/DESIGN.md),
+[`ARCHITECTURE`](app/ai/ARCHITECTURE.md), [`CONVENTIONS`](app/ai/CONVENTIONS.md),
+[`DECISIONS`](app/ai/DECISIONS.md), [`WORKFLOWS`](app/ai/WORKFLOWS.md), [`STACK`](app/ai/STACK.md)
+and [`VISUAL_DESIGN`](app/ai/VISUAL_DESIGN.md). Start at [`app/ai/README.md`](app/ai/README.md).
 
 ## How GeoLibre is used
 
@@ -36,17 +45,23 @@ Zustand store, Cesium, or any map controls". That is the half this app uses, so
 there is no GeoLibre chrome to strip out — it was never bundled.
 
 Layers are *described*, never imperatively built. Each layer folder turns its
-settings into a plain `GeoLibreLayer` record, and `src/lib/useMapEngine.ts` hands
+settings into a plain `GeoLibreLayer` record, and `app/src/lib/useMapEngine.ts` hands
 the whole list to one diff-sync:
 
 ```ts
 const sync = createLayerSync(map);
-sync.sync([buildingsLayer(settings), treeLayerRecord(treeSettings)]);
+sync.sync([
+  buildingsLayer(settings),
+  treePointsLayer(treeSettings),   // Taipei's tree inventory, as circles
+  treeMeshRecord(treeSettings),    // the same trees, as three.js meshes
+]);
 ```
 
 Every control in the sidebar works by re-describing the layers and re-syncing.
-The three.js tree rides in that same call as the OSM buildings rather than being
-bolted on beside GeoLibre — see the tree spec for the contract that allows it.
+The three.js trees ride in that same call as the OSM buildings rather than being
+bolted on beside GeoLibre — see the tree spec for the contract that allows it,
+and for why the mesh layer reads its data back out of the tiles MapLibre already
+parsed for the circles instead of fetching anything.
 
 | Package | Role |
 | --- | --- |
@@ -64,14 +79,14 @@ extrusion toggle, height exaggeration, opacity, a minimum-height filter, three
 height colour ramps plus a flat mode, a three.js panel (mesh toggle, opacity,
 height), eight Taipei viewpoints, a layer menu, zoom buttons, a compass that
 tracks bearing, and a pitch slider. Every bounded scalar's value is an editable
-field, not just a drag. See [`ai/VISUAL_DESIGN.md`](ai/VISUAL_DESIGN.md).
+field, not just a drag. See [`app/ai/VISUAL_DESIGN.md`](app/ai/VISUAL_DESIGN.md).
 
 Panel state lives in `App.tsx` and flows one way: state → layer record → `sync()`.
 Nothing in the UI reaches for the MapLibre map.
 
 ## Two non-obvious build settings
 
-Both live in `vite.config.ts` and `src/lib/useMapEngine.ts`; without them the map
+Both live in `app/vite.config.ts` and `app/src/lib/useMapEngine.ts`; without them the map
 renders as a black rectangle with no error in the console.
 
 1. **`optimizeDeps.exclude: ["maplibre-gl"]`** — MapLibre resolves its worker as a
@@ -86,28 +101,38 @@ renders as a black rectangle with no error in the console.
 
 ## Layout
 
+Two packages side by side — no workspaces, no root `package.json`. `app/` is the
+map; `infra/` holds the local data stack and the raw extracts it loads. The app
+reaches `infra/` over HTTP like any other tile source, never by import, so it
+runs on its own.
+
 ```
-src/
-  layers/
-    basemaps/
-      index.ts       basemap catalogue, building-layer suppression, label anchoring
-      specs/spec.md
-    buildings/
-      index.ts       the GeoLibre layer record + colour ramps
-      specs/spec.md
-    tree/
-      index.ts       the GeoLibre record for the three.js layer
-      treeLayer.ts   the three.js custom layer + procedural mesh
-      specs/spec.md
-  lib/
-    useMapEngine.ts  map lifecycle, layer sync, camera
-    viewpoints.ts    Taipei viewpoints
-  ui/
-    Panel.tsx        panel card, slider, checkbox row, segmented, badge, stat line
-    Compass.tsx      bearing rose
-    LayerMenu.tsx    viewport layer-visibility popover
-  App.tsx            the interface
-  styles.css         the design system
+app/
+  CLAUDE.md            the app's own rules (the root one covers both packages)
+  ai/                  contributor documentation set
+  src/
+    layers/
+      basemaps/
+        index.ts       basemap catalogue, building-layer suppression, label anchoring
+        specs/spec.md
+      buildings/
+        index.ts       the GeoLibre layer record + colour ramps
+        specs/spec.md
+      tree/
+        index.ts       the GeoLibre record for the three.js layer
+        treeLayer.ts   the three.js custom layer + procedural mesh
+        specs/spec.md
+    lib/
+      useMapEngine.ts  map lifecycle, layer sync, camera
+      viewpoints.ts    Taipei viewpoints
+    ui/
+      Panel.tsx        panel card, slider, checkbox row, segmented, badge, stat line
+      Compass.tsx      bearing rose
+      LayerMenu.tsx    viewport layer-visibility popover
+    App.tsx            the interface
+    styles.css         the design system
+infra/
+  data/                raw open-data extracts (gitignored)
 ```
 
 Other modules import a layer through its folder (`./layers/tree`), never through
