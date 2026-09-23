@@ -6,3 +6,5 @@ dist
 
 # Raw open-data extracts: large, re-downloadable, loaded into PostGIS by infra/load.sh
 infra/data/*.csv
+# Custom drop-in datasets: someone else's data, on the same terms
+infra/data/custom/

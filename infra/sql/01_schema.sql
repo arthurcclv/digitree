@@ -15,10 +15,19 @@ CREATE TABLE trees (
   -- same ids, so MapLibre feature-state survives a reload.
   id          bigint PRIMARY KEY,
   -- The real key. Unique across *both* source files — verified, zero overlap —
-  -- which is why one table with a `kind` discriminator beats two tables.
+  -- which is why one table with a `kind` discriminator beats two tables. A
+  -- custom drop-in that reuses an existing TreeID aborts the load with a named
+  -- error rather than shadowing a row; see 02_load.sql.
   tree_id     text NOT NULL UNIQUE,
-  kind        text NOT NULL CHECK (kind IN ('street', 'park')),
-  district    text NOT NULL,              -- Dist
+  -- 'custom' rows come from the optional drop-in CSVs in data/custom/. They are
+  -- the same kind of object — a surveyed tree — from a source that is not the
+  -- city's open data, which is why they share this table rather than getting
+  -- their own.
+  kind        text NOT NULL CHECK (kind IN ('street', 'park', 'custom')),
+  -- Nullable because the drop-in schema has no Dist column. Street and park
+  -- rows always carry one; a NULL district means "custom row", not "unknown
+  -- district of a city tree".
+  district    text,                       -- Dist
   place       text,                       -- Region (road name) or ParkName
   place_note  text,                       -- RegionRemark; street rows only
   -- Nullable: 18 rows across the two files carry no species at all.

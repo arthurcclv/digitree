@@ -38,6 +38,49 @@ column rather than two tables.
 Coordinates are **TWD97 / TM2 zone 121 (EPSG:3826)** and are transformed to
 WGS84 at load. Every row parses — there are no malformed coordinates.
 
+### Custom drop-in datasets
+
+`data/custom/` is an **optional** directory for your own tree data. Every
+`*.csv` in it is loaded alongside the two extracts, as `kind = 'custom'`. No
+directory, or an empty one, loads nothing and is not an error — only the two
+extracts above are required.
+
+The header must be exactly, in this order:
+
+```
+TreeID,TreeType,Diameter,TreeHeight,LAT,LON
+```
+
+| column | maps to | notes |
+| --- | --- | --- |
+| `TreeID` | `tree_id` | must be unique across *every* file, including the two extracts |
+| `TreeType` | `species` | may be empty |
+| `Diameter` | `diameter_cm` | cm; cleaned like the extracts |
+| `TreeHeight` | `height_m` | m; cleaned like the extracts |
+| `LAT`, `LON` | `geom` | **WGS84 degrees** — stored as-is, no transform |
+
+`district`, `place`, `place_note` and `survey_date` are `NULL` for these rows:
+the schema carries no columns for them.
+
+Three failure modes, all deliberate:
+
+- **A wrong header fails the load**, loudly, naming the file. `COPY … HEADER
+  MATCH` compares the header against the expected columns, so a file with
+  `LON,LAT` reversed — or with the extracts' own column set — is rejected
+  instead of loading longitude into `lat`.
+- **A duplicate `TreeID` aborts the load**, naming the offending ids. Silently
+  shadowing a city tree with a custom row is worse than refusing to start.
+- **A row whose `LAT`/`LON` is empty, unparseable or outside (-90, 90) /
+  (-180, 180) is skipped**, and the load prints how many were skipped per file.
+  `geom` is `NOT NULL`, so there is no "null it and keep the row" option here
+  the way there is for height.
+
+One coupling to know about: the app declares the tile source's `bounds` as a
+constant (`TREES_BOUNDS` in `app/src/layers/tree/constants.ts`). MapLibre never
+requests a tile outside it, so **custom trees outside that box render nothing**
+until the constant is widened. The load prints the extent per kind for exactly
+this check.
+
 ### What gets cleaned, and why
 
 Heights and diameters are usable but carry obvious data-entry damage. The full
@@ -46,7 +89,8 @@ in `sql/02_load.sql`. In short: height is kept only within (0, 40] m — the
 street file's maximum is **2023.0**, a survey year keyed into the height column
 — and diameter only within (0, 400] cm. Out-of-range values become `NULL`
 rather than being clamped, so a tree of unknown height is never rendered as a
-40 m one.
+40 m one. The same two rules apply to custom rows: they are properties of what
+the app can render, not of who supplied the file.
 
 ## Attribution
 
