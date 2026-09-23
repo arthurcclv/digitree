@@ -7,11 +7,18 @@ npm install
 npm run dev       # vite, http://localhost:5173
 npm run build     # tsc -b && vite build  →  dist/
 npm run preview   # serve dist/
+npm test          # vitest run
+npm run test:watch
 ```
 
-`npm run build` is the only automated gate in the repo: there is no test runner,
-no linter, no CI. It is a real gate though — `tsc -b` runs under `strict` with
-`noUnusedLocals`/`noUnusedParameters`, so dead code fails it.
+`npm run build` and `npm test` are the automated gates; there is no linter and
+no CI. The build is a real gate — `tsc -b` runs under `strict` with
+`noUnusedLocals`/`noUnusedParameters`, so dead code fails it — and `tsc -b`
+covers the test files too, since `tsconfig.json` includes all of `src`.
+
+`npm test` covers what can be tested without a map: the species → form table and
+the geometry builders. It cannot cover a GL context, a MapLibre source or the
+paint bridge, so it does not replace the browser check below.
 
 **Always run `npm run build` before calling a change done**, especially any
 change touching the worker settings or the tree layer: those fail at runtime, not
@@ -31,14 +38,15 @@ The spec is the gate, not the paperwork afterwards.
    approved spec change.
 3. Implement.
 4. **Add a test.** New functionality and bug fixes need one; manual verification
-   alone is not enough. There is no runner configured yet — introducing one is
-   itself a decision that belongs in `DECISIONS.md` and `STACK.md`.
+   alone is not enough. `npm test` runs `vitest`; tests live beside the code as
+   `*.test.ts` inside the layer folder. If the behaviour genuinely cannot be
+   reached without a map, say so in the change rather than skipping the step.
 5. **Update the `ai/` docs in the same change** if the change alters module
    structure (`ARCHITECTURE.md`), adds or reverses a technical decision
    (`DECISIONS.md`, newest at top), introduces a coding convention
    (`CONVENTIONS.md`), changes a dependency (`STACK.md`), or changes a
    colour/type/spacing/component rule (`VISUAL_DESIGN.md`).
-6. `npm run build`, then check it in the browser.
+6. `npm test`, `npm run build`, then check it in the browser.
 
 A diff that changes behaviour without a corresponding approved spec update is
 incomplete. So is one that silently invalidates an `ai/` doc.

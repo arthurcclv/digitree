@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   MercatorCoordinate,
   type CustomLayerInterface,
@@ -8,15 +7,14 @@ import {
 } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
 import { TREES_SOURCE_LAYER, TREE_POINTS_LAYER_ID } from "./constants";
+import { formOf, type TreeForm } from "./forms";
+import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
 export type TreeKind = "all" | "street" | "park" | "custom";
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
 export const TREE_NATIVE_LAYER_ID = "threejs-tree-native";
-
-/** Height of the mesh as modelled, in metres; every instance scales from it. */
-export const TREE_BASE_HEIGHT_M = 13;
 
 /**
  * The inventory's median height. Used for the ~56 trees whose surveyed
@@ -34,69 +32,37 @@ export const TREE_MESH_MIN_ZOOM = 16;
  */
 export const MAX_INSTANCES = 20_000;
 
+/**
+ * Where a form's mesh pair starts before it grows. Sixteen meshes each sized
+ * for `MAX_INSTANCES` would allocate 320,000 matrix slots — around 40 MB of
+ * buffer to draw a viewport holding a few thousand trees.
+ */
+export const INITIAL_CAPACITY = 1_024;
+
 /** One tree pulled out of a vector tile. */
 interface TreeInstance {
   lng: number;
   lat: number;
   height: number;
+  form: TreeForm;
 }
 
 /**
- * A low-poly tree in metres, Y-up, its base at the origin, as two merged
- * geometries.
- *
- * Two rather than one so the layer keeps one material per geometry: `setOpacity`
- * iterates over `materials`, and collapsing bark and canopy into a single mesh
- * would break GeoLibre's paint bridge.
- *
- * `premultipliedAlpha` matters: MapLibre sets `blendFunc(ONE, ONE_MINUS_SRC_ALPHA)`
- * and expects premultiplied colours, so three.js has to emit them or the trees
- * wash out at partial opacity.
+ * One form's pair of meshes. Allocated on the form's first instance and grown
+ * by doubling, never shrunk — so a palm-lined boulevard is served, and a view
+ * with no palms in it never allocates a palm buffer.
  */
-function buildTree(): {
-  bark: THREE.BufferGeometry;
-  canopy: THREE.BufferGeometry;
-  materials: THREE.MeshStandardMaterial[];
-} {
-  const barkMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4a3b2f,
-    roughness: 0.95,
-    metalness: 0,
-    flatShading: true,
-    premultipliedAlpha: true,
-  });
-  const leafMaterial = new THREE.MeshStandardMaterial({
-    color: 0x5f8f5a,
-    roughness: 0.85,
-    metalness: 0,
-    flatShading: true,
-    premultipliedAlpha: true,
-  });
+interface FormMeshes {
+  bark: THREE.InstancedMesh;
+  canopy: THREE.InstancedMesh;
+  capacity: number;
+}
 
-  const trunk = new THREE.CylinderGeometry(0.34, 0.62, 6.2, 9);
-  trunk.translate(0, 3.1, 0);
-
-  // Overlapping icosahedra read as foliage once flat-shaded. Fixed offsets and
-  // rotations rather than Math.random so the shape is identical every reload.
-  const blobs: { r: number; pos: [number, number, number]; rot: number }[] = [
-    { r: 3.5, pos: [0, 8.2, 0], rot: 0.0 },
-    { r: 2.6, pos: [1.9, 6.9, 0.9], rot: 0.7 },
-    { r: 2.4, pos: [-1.7, 7.3, -1.1], rot: 1.4 },
-    { r: 2.1, pos: [0.4, 10.4, -0.7], rot: 2.1 },
-  ];
-  const canopyParts = blobs.map(({ r, pos, rot }) => {
-    const blob = new THREE.IcosahedronGeometry(r, 0);
-    blob.rotateX(rot);
-    blob.rotateY(rot * 1.7);
-    blob.rotateZ(rot * 0.4);
-    blob.translate(...pos);
-    return blob;
-  });
-
-  const canopy = mergeGeometries(canopyParts, false);
-  for (const part of canopyParts) part.dispose();
-
-  return { bark: trunk, canopy, materials: [barkMaterial, leafMaterial] };
+function setCount(pair: FormMeshes, count: number): void {
+  for (const mesh of [pair.bark, pair.canopy]) {
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+  }
 }
 
 function buildLights(): THREE.Object3D[] {
@@ -128,8 +94,10 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.Camera();
   private readonly materials: THREE.MeshStandardMaterial[];
-  private readonly bark: THREE.InstancedMesh;
-  private readonly canopy: THREE.InstancedMesh;
+  /** One geometry pair per form, built once; cheap, and needed for teardown. */
+  private readonly geometries = new Map<TreeForm, FormGeometry>();
+  /** Filled lazily — a form with no tree in view has no buffers at all. */
+  private readonly meshes = new Map<TreeForm, FormMeshes>();
   private readonly group = new THREE.Group();
 
   /** Rebuilt on every refresh from the viewport centre. */
@@ -140,19 +108,51 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   private refreshQueued = false;
 
   constructor() {
-    const { bark, canopy, materials } = buildTree();
-    this.materials = materials;
-    this.bark = new THREE.InstancedMesh(bark, materials[0], MAX_INSTANCES);
-    this.canopy = new THREE.InstancedMesh(canopy, materials[1], MAX_INSTANCES);
-    for (const mesh of [this.bark, this.canopy]) {
+    this.materials = buildMaterials();
+    for (const form of TREE_FORMS) this.geometries.set(form, buildForm(form));
+    this.scene.add(this.group, ...buildLights());
+  }
+
+  /**
+   * The mesh pair for a form, sized to hold at least `needed` instances.
+   *
+   * Capacity doubles from `INITIAL_CAPACITY` and never shrinks, so a view that
+   * fills with palms keeps its palm buffers for the rest of the session rather
+   * than reallocating on every pan. Growth replaces the pair — three cannot
+   * resize an `InstancedMesh` — which is bounded to at most five doublings
+   * before `MAX_INSTANCES` caps it.
+   */
+  private meshesFor(form: TreeForm, needed: number): FormMeshes {
+    const existing = this.meshes.get(form);
+    if (existing && existing.capacity >= needed) return existing;
+
+    let capacity = existing?.capacity ?? INITIAL_CAPACITY;
+    while (capacity < needed) capacity *= 2;
+    capacity = Math.min(capacity, MAX_INSTANCES);
+
+    const geometry = this.geometries.get(form)!;
+    const bark = new THREE.InstancedMesh(geometry.bark, this.materials[0], capacity);
+    const canopy = new THREE.InstancedMesh(geometry.canopy, this.materials[1], capacity);
+    for (const mesh of [bark, canopy]) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.count = 0;
       // Instances are placed per refresh across the whole viewport, so three's
       // object-level frustum culling has no useful bounding volume to test.
       mesh.frustumCulled = false;
     }
-    this.group.add(this.bark, this.canopy);
-    this.scene.add(this.group, ...buildLights());
+
+    if (existing) {
+      this.group.remove(existing.bark, existing.canopy);
+      // Frees the instance buffers only; the geometry and the two materials are
+      // shared and outlive this pair.
+      existing.bark.dispose();
+      existing.canopy.dispose();
+    }
+    this.group.add(bark, canopy);
+
+    const pair: FormMeshes = { bark, canopy, capacity };
+    this.meshes.set(form, pair);
+    return pair;
   }
 
   onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
@@ -214,13 +214,13 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     if (!map) return;
 
     if (!this.visible || map.getZoom() < TREE_MESH_MIN_ZOOM) {
-      this.setCount(0);
+      this.clear();
       return;
     }
 
     const src = sourceId(TREE_POINTS_LAYER_ID);
     if (!map.getSource(src)) {
-      this.setCount(0);
+      this.clear();
       return;
     }
 
@@ -229,7 +229,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
       features = map.querySourceFeatures(src, { sourceLayer: TREES_SOURCE_LAYER });
     } catch {
       // The source exists but has not finished loading its first tiles.
-      this.setCount(0);
+      this.clear();
       return;
     }
 
@@ -252,9 +252,12 @@ export class ThreeTreeLayer implements CustomLayerInterface {
       const [lng, lat] = feature.geometry.coordinates as [number, number];
       const raw = props.height_m;
       const height = typeof raw === "number" && raw > 0 ? raw : TREE_FALLBACK_HEIGHT_M;
-      instances.push({ lng, lat, height });
+      instances.push({ lng, lat, height, form: formOf(props.species) });
     }
 
+    // Global, and before the split by form below. Culling within a form would
+    // let the shape of a tree decide whether it survives, and a palm-lined
+    // street would evict the banyans behind it.
     if (instances.length > MAX_INSTANCES) {
       instances.sort((a, b) => b.height - a.height);
       instances.length = MAX_INSTANCES;
@@ -292,25 +295,43 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
 
-    instances.forEach((tree, i) => {
-      const point = MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0);
-      // Mercator deltas back into the local metre frame: east, up, south.
-      position.set((point.x - origin.x) / metre, 0, (point.y - origin.y) / metre);
-      const s = (tree.height / TREE_BASE_HEIGHT_M) * this.heightScale;
-      scale.setScalar(s);
-      matrix.compose(position, quaternion, scale);
-      this.bark.setMatrixAt(i, matrix);
-      this.canopy.setMatrixAt(i, matrix);
-    });
+    // The survivors of the cull, split by shape. Each form writes into its own
+    // pair of meshes, so the index a tree lands at is its index within its
+    // form, not within the viewport.
+    const byForm = new Map<TreeForm, TreeInstance[]>();
+    for (const tree of instances) {
+      const bucket = byForm.get(tree.form);
+      if (bucket) bucket.push(tree);
+      else byForm.set(tree.form, [tree]);
+    }
 
-    this.setCount(instances.length);
+    for (const form of TREE_FORMS) {
+      const bucket = byForm.get(form);
+      if (!bucket?.length) {
+        // Nothing in view. A form that has never been allocated stays that way.
+        const idle = this.meshes.get(form);
+        if (idle) setCount(idle, 0);
+        continue;
+      }
+
+      const pair = this.meshesFor(form, bucket.length);
+      const base = this.geometries.get(form)!.baseHeightM;
+      bucket.forEach((tree, i) => {
+        const point = MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0);
+        // Mercator deltas back into the local metre frame: east, up, south.
+        position.set((point.x - origin.x) / metre, 0, (point.y - origin.y) / metre);
+        scale.setScalar((tree.height / base) * this.heightScale);
+        matrix.compose(position, quaternion, scale);
+        pair.bark.setMatrixAt(i, matrix);
+        pair.canopy.setMatrixAt(i, matrix);
+      });
+      setCount(pair, bucket.length);
+    }
   }
 
-  private setCount(count: number): void {
-    for (const mesh of [this.bark, this.canopy]) {
-      mesh.count = count;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+  /** Empties every allocated form without giving its buffers back. */
+  private clear(): void {
+    for (const pair of this.meshes.values()) setCount(pair, 0);
   }
 
   /** Driven by GeoLibre through the external-native paint bridge. */
@@ -353,8 +374,15 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   }
 
   dispose(): void {
-    this.bark.geometry.dispose();
-    this.canopy.geometry.dispose();
+    for (const pair of this.meshes.values()) {
+      pair.bark.dispose();
+      pair.canopy.dispose();
+    }
+    this.meshes.clear();
+    for (const geometry of this.geometries.values()) {
+      geometry.bark.dispose();
+      geometry.canopy.dispose();
+    }
     for (const material of this.materials) material.dispose();
     this.renderer?.dispose();
     this.renderer = null;

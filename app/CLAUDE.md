@@ -31,7 +31,10 @@ src/
       index.ts        both GeoLibre records (treePointsLayer, treeMeshRecord),
                       TreeSettings
       treeLayer.ts    ThreeTreeLayer — the MapLibre custom layer + instanced mesh
+      formGeometry.ts the eight procedural form shapes + the shared materials
+      forms.ts        TreeForm, the species -> silhouette table, formOf()
       constants.ts    the Martin source contract, shared by the two above
+      *.test.ts       vitest, beside the modules they cover
       specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
@@ -63,7 +66,11 @@ GeoLibre's `sync()`. Nothing outside `useMapEngine.ts` and `layers/basemaps`
 touches the MapLibre map directly.
 
 Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
-`npm run preview`. There is no test runner and no linter configured.
+`npm run preview`, `npm test` (vitest). There is no linter configured.
+
+`npm test` covers only what is pure — the species table and the geometry
+builders. There is no jsdom and no headless GL, so anything needing a map or a
+GL context is still checked in the browser.
 
 ## Documentation
 
@@ -89,3 +96,7 @@ drift, tests, docs current). These are the app's own:
 - **Every new layer, plugin, or extension ships a spec.** A new
   `src/layers/<name>/` folder is incomplete without its `specs/spec.md`, written
   and approved before the layer's implementation lands.
+- **Tests live beside the code, inside the layer folder.** `<module>.test.ts`,
+  not a parallel `test/` tree. A test may import a layer's internals directly —
+  the one exception to the `index.ts`-only rule, because it is inside the folder
+  rather than reaching into it.

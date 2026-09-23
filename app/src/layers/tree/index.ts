@@ -12,12 +12,14 @@ import { TREE_NATIVE_LAYER_ID } from "./treeLayer";
 
 export {
   ThreeTreeLayer,
-  TREE_BASE_HEIGHT_M,
   TREE_FALLBACK_HEIGHT_M,
   TREE_MESH_MIN_ZOOM,
   TREE_NATIVE_LAYER_ID,
   MAX_INSTANCES,
 } from "./treeLayer";
+
+/** The silhouette vocabulary. See "Form classes" in `specs/spec.md`. */
+export { formOf, SPECIES_FORMS, type TreeForm } from "./forms";
 
 export {
   TREES_ATTRIBUTION,

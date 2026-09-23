@@ -33,6 +33,7 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | `typescript` | `~5.9.0` | `tsc -b` in the build; tilde-pinned |
 | `@types/react`, `@types/react-dom` | `^19.2.0` | |
 | `@types/three` | `^0.186.0` | kept in lockstep with `three` |
+| `vitest` | `^5.0.1` | `npm test`; runs the tree layer's form tests under Vite's own transform |
 
 ## Not used, deliberately
 
@@ -51,9 +52,14 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
   vector tiles MapLibre already parsed (`querySourceFeatures`) rather than
   fetching anything, which is what keeps that true now that the app has a
   backend.
-- **No test runner, no linter, no formatter, no CI.** `npm run build` is the
-  only gate. Adding a runner is a decision; record it here and in
-  `DECISIONS.md`.
+- **No linter, no formatter, no CI.** `npm run build` and `npm test` are the
+  gates. A test runner *is* now configured — `vitest`, added with the tree form
+  classes; see `DECISIONS.md`. It was chosen for costing nothing: it reuses the
+  Vite config and needs no DOM, because what it tests is pure.
+- **No jsdom, no browser-mode runner, no headless GL.** The tests cover the
+  parts that can be tested without a map — the species table and the geometry
+  builders. Anything needing a GL context or a live MapLibre map is still
+  verified in the browser, and `WORKFLOWS.md` says so.
 
 ## External services
 

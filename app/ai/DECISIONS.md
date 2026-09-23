@@ -6,6 +6,92 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-23 — Trees are drawn by silhouette, not by species
+
+**Decision.** The mesh half draws one of **eight** shapes instead of one. Seven
+are named for a silhouette — `spreading`, `upright`, `tiered`, `columnar`,
+`conic`, `palm-feather`, `palm-fan` — and the eighth, `generic`, is the shape
+the layer drew before. A hand-written table of 100 species in
+`src/layers/tree/forms.ts` maps species → form and covers 95.02% of the 162,930
+surveyed trees; everything else, including every unrecognised custom drop-in,
+draws `generic`. The builders stay procedural: no glTF, no loader, no asset.
+
+**Why.** Per-species geometry was the spec's stated extension point and is not
+reachable: the inventory names 471 species, and the model library that prompted
+this (Sketchfab's `evolveduk`, 33 stylised models) is temperate-European and
+desert-tropical against a subtropical East Asian inventory. Cross-checked, it
+offers an exact genus match for 3.5% of the trees and a defensible stand-in for
+another 28%, and has no counterpart at all for 茄苳, 樟樹, 臺灣欒樹, 黑板樹 or
+白千層 — five species that are a quarter of Taipei's canopy between them. It
+also contains a "bamboo" model for an inventory with no bamboo in it: 竹柏 is a
+podocarp and 竹蕉 is a *Dracaena*.
+
+Form is the axis that makes the problem finite. It is also what makes the glTF
+swap tractable *later* — eight assets rather than 471 — so this is the cheap
+step that does not foreclose the expensive one.
+
+The classes are named for shape and never for a taxon, because the data punishes
+taxonomic naming: 福木 is a broadleaf that is `columnar`, 竹柏 and 羅漢松 are
+podocarps that are also `columnar`, and 楓香 sits in `upright` beside 青楓
+without being an *Acer*. A class called `cypress` would have to lie about three
+of those.
+
+**What it rules out.** `spreading` and `upright` are 75% of the inventory, so
+the map's character is still set by two shapes; this buys the silhouettes that
+read as Taipei, not botanical accuracy. The table is a judgement, not a
+derivation — a wrong row is a wrong shape on the map and an error nowhere else,
+and three assignments are contested in the spec by name (楓香, 木棉, 阿勃勒).
+Species keys are matched exactly, with no normalisation, so a supplier whose CSV
+spells 臺灣欒樹 with 台 gets `generic` silently. Sixteen `InstancedMesh`es now
+exist where two did, which is why they are allocated lazily and grown by
+doubling rather than each being sized for `MAX_INSTANCES`; the cull stays global
+and runs *before* the split by form, or a palm-lined street would evict the
+banyans behind it.
+
+`TREE_BASE_HEIGHT_M` is gone with it. Each form's base height is measured from
+its built geometry, which incidentally fixed a silent error: the constant said
+13 m for a mesh that stood 12.23 m, so every tree in the city had been drawing
+about 6% short of its surveyed height.
+
+**Revisit when.** A model library exists that actually covers subtropical East
+Asian street trees, or the 1,500 trees of a single dominant species in one
+district justify modelling that species alone. Splitting `spreading` — a vase
+榔榆 against a dense 芒果 — is available without revisiting any of this.
+
+---
+
+## 2026-09-23 — `vitest` is the test runner
+
+**Decision.** `vitest` is a dev dependency, `npm test` runs it, and tests live
+beside the code as `<module>.test.ts` inside the layer folder. No jsdom, no
+browser mode, no headless GL.
+
+**Why.** The repo has asked for a test with every change since it started, and
+had nowhere to put one; the form classes are the first change where the
+untestable excuse ran out, because a species → silhouette table is pure data and
+a geometry builder is a pure function of no inputs. `vitest` costs nothing here:
+it reuses the existing Vite config and TypeScript setup, and `tsc -b` already
+covers the test files because `tsconfig.json` includes all of `src`.
+
+Restricting it to what is pure is the point rather than a limitation. The tests
+that matter assert the things a reader cannot check by looking — that the
+silhouette classes actually have the silhouettes they promise (`spreading` is
+wider than tall, `tiered` leaves real gaps, the palms have bare trunks), and
+that each form's declared height is the height its geometry actually has.
+
+**What it rules out.** Nothing in `treeLayer.ts` itself is covered: the GL
+context, the `querySourceFeatures` read-back, the paint bridge, the projection
+matrix and the style-load cycle remain browser-verified, and `npm test` passing
+says nothing about them. Adding jsdom or a headless GL harness to reach them is
+a separate decision, and a much larger one — it would make the runner something
+the project maintains rather than something it uses.
+
+**Revisit when.** A bug lands in the instancing or the refresh path that a unit
+test could have caught. That is the evidence that would justify the harness this
+decision declines.
+
+---
+
 ## 2026-09-23 — Neither surveyed measurement has an upper bound
 
 **Decision.** `trees.height_m` and `trees.diameter_cm` are kept whenever they

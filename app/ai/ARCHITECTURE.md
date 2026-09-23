@@ -69,6 +69,21 @@ Current folders: `basemaps` (extension — produces no record), `buildings`
 (vector-tile extrusion record), `tree` (external-native record + the custom
 layer class).
 
+`tree` is the one folder with a real internal split, and the split is by
+dependency rather than by topic:
+
+| Module | Owns | Imports three.js |
+| --- | --- | --- |
+| `index.ts` | the two GeoLibre records, `TreeSettings` | no |
+| `constants.ts` | the Martin source contract | no |
+| `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
+| `formGeometry.ts` | the eight procedural shapes and the two shared materials | yes |
+| `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam | yes |
+
+`forms.ts` is deliberately three.js-free. It is the layer's only pure module and
+therefore the only one testable without a GL context, which is why the species
+table lives there and not inside the geometry it selects.
+
 ## The style-load cycle
 
 This is the non-obvious part of the engine. `map.setStyle()` — which every

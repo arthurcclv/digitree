@@ -107,7 +107,14 @@ coloured dot; the compass rotation is backed by a numeric bearing.
 
 ## What does not exist
 
-No test runner, no linter, no formatter config, no CI. `npm run build` (which
-runs `tsc -b`) is the only gate. The project instructions ask for a test with
-every change — adding a runner is itself a decision that belongs in
-`DECISIONS.md` and `STACK.md`.
+No linter, no formatter config, no CI. `npm run build` (which runs `tsc -b`)
+and `npm test` (`vitest`) are the gates.
+
+Tests sit beside the code they cover, as `<module>.test.ts` inside the layer
+folder — not in a parallel `test/` tree. They may import a layer's internals
+directly (`./forms`), which is the one exception to the `index.ts`-only rule,
+because a test is inside the folder rather than reaching into it.
+
+There is no jsdom and no headless GL: what is tested is what is pure. A module
+that wants a test is a module worth keeping free of three.js and MapLibre —
+`layers/tree/forms.ts` is the worked example.
