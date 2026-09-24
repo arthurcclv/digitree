@@ -6,6 +6,35 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-24 — Cards state figures as stat lines, not prose
+
+**Decision.** The Trees card's closing paragraph is gone. The number it carried
+is now a `StatLine` — **Surveyed trees · 162,930** — at the head of the card's
+readout block, from a new `TREES_TOTAL` in `src/layers/tree/constants.ts`.
+
+**Why.** The paragraph buried a figure in four lines of prose, and its other two
+claims (height comes from the survey; the mesh source changes a tree's look, not
+its place or height) are properties of the layer that the spec already states.
+The panel is an instrument: what it knows about the data it should say the way
+the Camera card says latitude.
+
+**Why the constant sits with the source contract.** `TREES_TOTAL` is a fact
+about what `infra/` loaded, alongside the bounds and the zoom range, not about
+what the layer draws. It counts the street and park open data only — `infra/`
+decides how many custom rows exist and never tells the app — so the label says
+*surveyed*.
+
+**What it rules out.** The count is not live. It does not follow the kind
+filter, and it is not the number of trees in view, which moves with the
+viewport and with which tiles happen to be loaded. An in-view count would need
+the mesh layer to report upward the way `modelStatus` does; that is the change
+to make if the question ever becomes "how many am I looking at" rather than "how
+big is this dataset". Revisit when `infra/` loads a newer extract — the figure
+is then stale, and a stale figure stated confidently is worse than the
+paragraph was.
+
+---
+
 ## 2026-09-24 — Paper is the default basemap, and buildings are always flat
 
 **Decision.** `BASEMAPS[0]` is now `positron` ("Paper"), so the app opens on a

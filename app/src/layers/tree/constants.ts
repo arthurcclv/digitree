@@ -31,6 +31,15 @@ export const TREES_TILES = "/tiles/trees/{z}/{x}/{y}";
 export const TREES_MIN_ZOOM = 14;
 export const TREES_MAX_ZOOM = 20;
 
+/**
+ * How many surveyed trees `infra/` loads — the street and park open data, the
+ * two `kind`s the city publishes. Custom rows are *not* counted: they live in
+ * the same source but `infra/` decides how many exist and never tells the app,
+ * so this figure is honest only where it is labelled as the surveyed
+ * inventory. Reloading `infra/` with a newer extract changes it.
+ */
+export const TREES_TOTAL = 162_930;
+
 /** The loaded inventory's extent, west/south/east/north. */
 export const TREES_BOUNDS: [number, number, number, number] = [
   121.4619, 24.9771, 121.6268, 25.1606,

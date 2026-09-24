@@ -6,6 +6,7 @@ import {
   MODELS_ATTRIBUTION,
   TREES_ATTRIBUTION,
   TREES_MIN_ZOOM,
+  TREES_TOTAL,
   TREE_MESH_MIN_ZOOM,
   type TreeKindFilter,
   type TreeMeshSource,
@@ -217,6 +218,9 @@ export default function App() {
               onChange={(heightScale) => patchTree({ heightScale })}
             />
             <div className="panel__rule" />
+            {/* The inventory's size, not what is in view: the drawn count moves
+                with the viewport and would read as data changing. */}
+            <StatLine k="Surveyed trees" v={TREES_TOTAL.toLocaleString("en-US")} />
             <StatLine k="Points from" v={`z${TREES_MIN_ZOOM}`} />
             <StatLine k="Meshes from" v={`z${TREE_MESH_MIN_ZOOM}`} />
             {/* Models arrive one at a time and a form that never arrives keeps
@@ -232,12 +236,6 @@ export default function App() {
                 }
               />
             ) : null}
-            <p className="hint">
-              162,930 surveyed trees. Height comes from the survey, so a tree with no
-              credible measurement draws at the smallest size rather than an invented one.
-              The source changes what a tree looks like, never where it stands or how
-              tall it is.
-            </p>
           </Panel>
         </div>
 

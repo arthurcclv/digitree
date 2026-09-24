@@ -44,6 +44,7 @@ One Martin source feeds both records.
 | bounds | `[121.4619, 24.9771, 121.6268, 25.1606]` |
 | feature id | integer `id` (MVT requires integers; `tree_id` is text) |
 | properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm` |
+| open-data rows | 162,930, published as `TREES_TOTAL` (see *Panel readouts*) |
 
 `kind` is `"street"`, `"park"` or `"custom"`. The first two are the city's open
 data; `"custom"` is whatever a contributor dropped into `infra/data/custom/`,
@@ -915,6 +916,34 @@ to one route and forgetting the other is the easy way to break invariant 8.
 `setOpacity` flips `material.transparent` only when it actually changes, and sets
 `needsUpdate` when it does. Every setter calls `map.triggerRepaint()` — the map
 is otherwise idle and the change would not appear until the next interaction.
+
+### Panel readouts
+
+Below the controls, past a `.panel__rule`, the Trees card carries only
+`StatLine` rows — the same definition-list form the Camera card uses. There is
+no prose paragraph in this card:
+
+| line | value | shown |
+| --- | --- | --- |
+| **Surveyed trees** | `TREES_TOTAL`, grouped (`162,930`) | always |
+| **Points from** | `z` + `TREES_MIN_ZOOM` | always |
+| **Meshes from** | `z` + `TREE_MESH_MIN_ZOOM` | always |
+| **Modelled forms** | `loaded/total`, plus ` · N failed` | only while `meshSource === "model"` |
+
+The count is the **inventory's** size — how many trees the loaded open data
+holds — not how many are in view, which moves with the viewport and belongs to
+no readout. It is a constant in `constants.ts` beside the rest of the source
+contract, because it is a fact about what `infra/` loaded, not about what the
+layer draws. It does not count custom trees: `infra/` decides how many of those
+exist, the app never learns it, and a figure that silently excludes them is
+honest only while it is labelled as the surveyed inventory.
+
+The prose hint this replaces said the same number in a sentence, alongside two
+claims — that height comes from the survey, and that the mesh source changes a
+tree's look but never its place or height — which are specified here (*Neither
+source is "real"*, *What the two sources share*) and are properties of the
+layer, not a readout. A card of figures reads at a glance; a paragraph under it
+does not.
 
 ## Attribution
 

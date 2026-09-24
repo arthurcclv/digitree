@@ -277,6 +277,12 @@ than a poster with controls over it.
   `--fg-muted` labels. A table header would outweigh six figures. Pitch is a
   `Slider` row in this same card rather than a vertical rail in the corner: it is
   a bounded scalar like every other, and it gains an editable value.
+- **Trees card readouts**: the same `.stat-line` form under a `.panel__rule` —
+  the surveyed total (`162,930`), the two minimum zooms, and, only under the
+  modelled source, how many forms have loaded. A figure a card wants to state
+  is a stat line, not a sentence: `.hint` (11px `--fg-muted`) stays in the
+  stylesheet, but no card uses it, and reaching for it again means arguing for
+  prose over a number.
 - **Badge** (`.badge`): pill, 11px/600. Variants: `sync` (green on `#123a2b`, the
   layer sync is live), `loading` (neutral blue `#7fb8e6`), and `tile-error`
   (amber on `#4a3410`). The old blinking square is replaced by a labelled badge —
