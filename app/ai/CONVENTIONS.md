@@ -88,10 +88,9 @@ Rules of thumb:
 - Component state is expressed through ARIA attributes, and CSS selects on them:
   `aria-pressed="true"`, `aria-selected="true"`, `aria-expanded`,
   `data-collapsed`. There are no `is-active` classes.
-- Inline `style` is only for values computed at runtime — a slider's `--fill`,
-  a ramp swatch's gradient. It is **not** for spacing, and no longer for the
-  accent: the accent is a fixed token, not a per-basemap value
-  (see `VISUAL_DESIGN.md`).
+- Inline `style` is only for values computed at runtime — a slider's `--fill`.
+  It is **not** for spacing, and no longer for the accent: the accent is a fixed
+  token, not a per-basemap value (see `VISUAL_DESIGN.md`).
 
 ## Accessibility
 

@@ -44,8 +44,8 @@ The `building` source layer carries `render_height` (drives extrusion height) an
 | `visible` | `true` | layer on/off |
 | `heightScale` | `1` | vertical exaggeration applied to `render_height` |
 | `opacity` | `0.94` | extrusion opacity |
-| `paletteId` | `"ember"` | height ramp; `null` = flat colour |
-| `flatColor` | `"#3d4658"` | the one colour used when `paletteId` is `null` |
+| `paletteId` | `null` | height ramp; `null` = flat colour |
+| `flatColor` | `"#d6d3cd"` | the one colour used when `paletteId` is `null` |
 | `minHeight` | `0` | hide buildings shorter than this, in real metres |
 | `labelsOnTop` | `false` | draw basemap labels above the extrusions |
 
@@ -66,7 +66,16 @@ with `extrusionAdvancedStyleEnabled: true`.
 enter the colour expression, so the legend stays honest when exaggeration is on.
 
 When `paletteId` is `null` (or matches no palette), advanced styling is disabled
-and `extrusionColor: flatColor` paints every building one colour.
+and `extrusionColor: flatColor` paints every building one colour. `flatColor`
+defaults to `BASEMAPS[0].buildingColor` and is re-patched on every basemap
+change, so the flat colour always belongs to the ground under it.
+
+**No UI exposes `paletteId`.** The ramps remain part of this layer's contract and
+a caller may still set `paletteId` — the expression above is live, tested code —
+but the app ships `null` and never changes it. The panel that chose a ramp is
+gone (`ai/DECISIONS.md`, 2026-09-24). Against Paper the flat colour already
+separates building from ground, and a height ramp was answering a question the
+app no longer asks.
 
 ## Filtering
 

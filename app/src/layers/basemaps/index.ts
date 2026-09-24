@@ -24,7 +24,15 @@ export interface Basemap {
   light: boolean;
 }
 
+/** Ordered; `BASEMAPS[0]` is the app's initial basemap. Paper leads. */
 export const BASEMAPS: Basemap[] = [
+  {
+    id: "positron",
+    label: "Paper",
+    styleUrl: "https://tiles.openfreemap.org/styles/positron",
+    buildingColor: "#d6d3cd",
+    light: true,
+  },
   {
     id: "dark",
     label: "Midnight",
@@ -44,13 +52,6 @@ export const BASEMAPS: Basemap[] = [
     label: "Liberty",
     styleUrl: "https://tiles.openfreemap.org/styles/liberty",
     buildingColor: "#c9c3b6",
-    light: true,
-  },
-  {
-    id: "positron",
-    label: "Paper",
-    styleUrl: "https://tiles.openfreemap.org/styles/positron",
-    buildingColor: "#d6d3cd",
     light: true,
   },
 ];

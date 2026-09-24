@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { BASEMAPS, OSM_ATTRIBUTION } from "./layers/basemaps";
-import {
-  DEFAULT_BUILDING_SETTINGS,
-  PALETTES,
-  type BuildingSettings,
-} from "./layers/buildings";
+import { DEFAULT_BUILDING_SETTINGS, type BuildingSettings } from "./layers/buildings";
 import {
   DEFAULT_TREE_SETTINGS,
   MODELS_ATTRIBUTION,
@@ -34,8 +30,6 @@ const dms = (value: number, axis: "lat" | "lng") => {
   const hemi = axis === "lat" ? (value >= 0 ? "N" : "S") : value >= 0 ? "E" : "W";
   return `${Math.abs(value).toFixed(4)}° ${hemi}`;
 };
-
-const FLAT_RAMP_ID = "flat";
 
 const basemapItems: SegmentedItem[] = BASEMAPS.map((b) => ({ id: b.id, label: b.label }));
 
@@ -79,16 +73,6 @@ export default function App() {
     setBasemapId(id);
     patch({ flatColor: next.buildingColor });
   };
-
-  // The swatch shows the ramp itself, so the choice is legible without a legend.
-  const rampItems: SegmentedItem[] = [
-    ...PALETTES.map((p) => ({
-      id: p.id,
-      label: p.label,
-      swatch: `linear-gradient(135deg, ${p.stops[1][1]}, ${p.stops[4][1]})`,
-    })),
-    { id: FLAT_RAMP_ID, label: "Flat", swatch: settings.flatColor },
-  ];
 
   const bearing = (((camera.bearing % 360) + 360) % 360).toFixed(0);
 
@@ -157,7 +141,7 @@ export default function App() {
               step={0.1}
               decimals={1}
               unit="×"
-              title="Vertical exaggeration. Colour and the minimum-height filter still read true height."
+              title="Vertical exaggeration. The minimum-height filter still reads true height."
               onChange={(heightScale) => patch({ heightScale })}
             />
             <Slider
@@ -185,20 +169,6 @@ export default function App() {
               onChange={(labelsOnTop) => patch({ labelsOnTop })}
               title="Off by default: labels styled for a dark ground are unreadable over lit building faces."
             />
-          </Panel>
-
-          <Panel title="Colour ramp">
-            <Segmented
-              items={rampItems}
-              value={settings.paletteId ?? FLAT_RAMP_ID}
-              columns={2}
-              label="Colour ramp"
-              onChange={(id) => patch({ paletteId: id === FLAT_RAMP_ID ? null : id })}
-            />
-            <p className="hint">
-              Height ramps read the true <b>render_height</b>, so exaggeration never
-              changes what a colour means.
-            </p>
           </Panel>
 
           <Panel title="Trees">

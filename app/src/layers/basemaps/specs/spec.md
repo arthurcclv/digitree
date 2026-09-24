@@ -27,14 +27,20 @@ buildings, so the two can never disagree.
 
 ## Catalogue
 
-`BASEMAPS` is an ordered list; `BASEMAPS[0]` is the app's initial basemap.
+`BASEMAPS` is an ordered list; `BASEMAPS[0]` is the app's initial basemap. Paper
+leads: the city reads as figure against a pale ground, and the extrusions carry
+their own colour rather than borrowing contrast from a dark basemap.
 
 | id | label | light | buildingColor |
 | --- | --- | --- | --- |
+| `positron` | Paper | yes | `#d6d3cd` |
 | `dark` | Midnight | no | `#3d4658` |
 | `fiord` | Fiord | no | `#3b4a63` |
 | `liberty` | Liberty | yes | `#c9c3b6` |
-| `positron` | Paper | yes | `#d6d3cd` |
+
+`BASEMAPS[0].buildingColor` is also the building layer's default `flatColor` —
+the app patches that colour only when the basemap *changes*, so the two defaults
+must agree or the first frame paints buildings for the wrong ground.
 
 Each entry carries:
 

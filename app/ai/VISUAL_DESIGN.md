@@ -103,9 +103,13 @@ three places for it to drift.
 question — *how tall is this building* — and a ramp drawn in interface blues
 invites reading a tall building as a selected one. The ramps share only the
 direction: cold is low, hot is high. They are the one place in the app where a
-colour is chosen for what it encodes rather than for palette consistency, and
-the swatch beside each ramp name in the panel is the ramp itself, not a chrome
-token.
+colour is chosen for what it encodes rather than for palette consistency.
+
+**No panel reaches them today.** The app always paints buildings flat in the
+current basemap's `buildingColor` (`ai/DECISIONS.md`, 2026-09-24). The ramps
+stay in the layer and keep these rules for whatever exposes them next; the
+swatch that used to sit beside each ramp name — the one place a component showed
+a data colour — is drawn by no control at present.
 
 ### Viewport lighting
 
@@ -235,13 +239,13 @@ than a poster with controls over it.
   sliding lamp toggle; a flag is a checkbox, and the lamp was a bespoke control
   carrying no information the checkbox does not.
 - **Segmented control** (`.segmented`): equal-width buttons in one group, for the
-  four basemaps, the four ramp choices (three palettes plus Flat), the four
-  tree-kind choices (All / Street / Park / Custom) and the two tree mesh sources
-  (Generated / Modelled — the one `--2` use). Selected is `.active`
-  (blue) with `aria-pressed`. The ramp variant carries a small gradient swatch per segment,
-  drawn from the palette's own stops — the one place a component shows a data
-  colour. Column count is explicit — `--2`, `--3`, `--4` — and must match the
-  item count, so a group never leaves a ragged empty cell.
+  four basemaps, the four tree-kind choices (All / Street / Park / Custom) and
+  the two tree mesh sources (Generated / Modelled — the one `--2` use). Selected
+  is `.active` (blue) with `aria-pressed`. The `swatch` prop and its `.swatch`
+  rule survive unused: they drew a gradient per segment for the ramp picker, and
+  stay for whatever shows a data colour next. Column count is explicit — `--2`,
+  `--3`, `--4` — and must match the item count, so a group never leaves a ragged
+  empty cell.
 - **Button** (`.btn`): 13px/600, 6px radius. Blue primary; `.secondary` neutral
   on `--border-subtle`; `.active` blue for a toggle that is on; disabled goes
   flat `--border-raised`. `.block` is the full-width stacked form. `.icon-btn` is

@@ -6,6 +6,37 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-24 — Paper is the default basemap, and buildings are always flat
+
+**Decision.** `BASEMAPS[0]` is now `positron` ("Paper"), so the app opens on a
+pale ground, and `DEFAULT_BUILDING_SETTINGS.flatColor` moves with it to
+`#d6d3cd`. The colour-ramp panel is removed: `paletteId` defaults to `null` and
+nothing in the UI ever sets it, so every building is painted one flat colour.
+
+**The ramp code stays.** `PALETTES`, `colorExpression` and the `paletteId`
+branch of `buildingsLayer()` remain in the layer, specified and covered by
+tests. What was removed is the control, not the capability.
+
+**Why.** Two of the three ramps were tuned for a dark ground, and on Paper a
+height ramp fights the basemap instead of reading against it. The ramp also
+competed with the trees: with 162,930 trees drawing their own colours, a second
+data colour over the buildings made the view harder to read, not richer. Flat
+buildings in the basemap's own `buildingColor` give the trees the foreground and
+keep the extrusions as shape rather than as a second chart.
+
+**What it rules out.** There is no way to colour a building by height from the
+interface, and no legend. Height is still readable — through extrusion itself,
+the height-exaggeration slider and the minimum-height filter — but not as
+colour. It also rules out the swatch-carrying variant of the segmented control
+having any live use; the prop stays on the primitive.
+
+**What would make us revisit.** A question that only colour can answer over the
+building stock — age, use, a survey value — or a ramp designed for a light
+ground. The layer is ready for it: set `paletteId` and the expression compiles.
+Bringing the panel back means a spec change first, as this one had.
+
+---
+
 ## 2026-09-23 — Modelled trees draw a numbered ladder of detail levels
 
 **Decision.** A modelled form is a **ladder** of geometries numbered from 0.

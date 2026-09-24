@@ -80,8 +80,12 @@ export const DEFAULT_BUILDING_SETTINGS: BuildingSettings = {
   visible: true,
   heightScale: 1,
   opacity: 0.94,
-  paletteId: "ember",
-  flatColor: "#3d4658",
+  // No control sets `paletteId`; the app always paints flat. The ramps below
+  // stay part of the layer's contract — see the spec.
+  paletteId: null,
+  // Must equal BASEMAPS[0].buildingColor: the app re-patches this only when the
+  // basemap changes, so a mismatch paints the first frame for the wrong ground.
+  flatColor: "#d6d3cd",
   minHeight: 0,
   labelsOnTop: false,
 };
