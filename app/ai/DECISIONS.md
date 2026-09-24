@@ -6,7 +6,215 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-23 — Modelled trees draw a numbered ladder of detail levels
+
+**Decision.** A modelled form is a **ladder** of geometries numbered from 0.
+Level 0 is the authored model at the plain name; every rung above it is a
+decimated copy named for its number — `oak_tree.glb`, `oak_tree.L1.glb`,
+`oak_tree.L2.glb` and so on. Rungs are built by `gltf-transform`
+(meshoptimizer) at `--ratio 0.1 --error 0.15` with 128 px textures instead of
+512. A tree draws the **lowest-numbered rung whose reach covers its distance
+from the camera**; the last rung has no reach and catches everything beyond.
+Today the ladder is two rungs, with level 0 reaching 300 m.
+
+The ladder is **data**: `MODEL_LODS` in `models.ts` holds how far each rung
+reaches, `LEVELS` in the prep script holds how each is built. Adding an L2 is a
+row in each and no code change — nothing in the layer names a level, it indexes
+one. The procedural source keeps its single level; it is ~130 triangles a tree
+already.
+
+**Why.** Instancing was working and was never the bottleneck. Measured over
+Da'an, the modelled source drew 11,607 trees in **22 draw calls** and **95.2
+million triangles a frame**, which took the map from 120 fps to 13. One mesh was
+61% of it — oak_tree's canopy, 7,340 triangles against 7,866 instances, because
+`spreading` is 46% of the inventory. These are hero assets, authored to look
+right as one tree and carrying no LOD of their own. The earlier prep step
+downscaled textures and never touched geometry, so the triangle load arrived
+untouched.
+
+With the ladder in place the same view draws **11.5 M triangles at 10.5 ms —
+95 fps** (median of three fresh-page trials; a single reading of this is not
+worth much, as one early one-off came back 40% slower and did not reproduce).
+
+**What it rules out.**
+
+- **The cheap distance metric is wrong and is not used.** Instance positions are
+  already metres from the anchor, so `x² + z²` is free — and the anchor is the
+  *viewport centre*. At this map's pitch the trees nearest the eye sit well in
+  front of it, and they are the largest things on screen; ranking by anchor
+  distance would hand them the decimated mesh and keep full geometry for the
+  specks on the horizon. The camera's real position is derived instead, from
+  public camera state (`getVerticalFieldOfView`, `getZoom`, `getPitch`,
+  `getBearing`, canvas height) — **not** from `transform.cameraPosition`, which
+  is `@internal`, nor `getFreeCameraOptions`, which MapLibre v6 removed. The
+  derivation was cross-checked against MapLibre's own `cameraToCenterDistance`
+  and matched exactly (1371 px).
+- **Numbered levels, not `near` and `far`.** A two-value name is a two-value
+  ceiling — in the file name and in the type behind it alike — and the next
+  tier this map wants is the one it does not have yet. Renaming only the file
+  would have left the ceiling one layer in, for whoever adds the third rung to
+  unpick. The cost of avoiding it is an integer.
+- **The whole ladder shares one `baseHeightM`, measured from level 0.**
+  Decimation moves a bounding box slightly, so a rung measured on its own
+  stands a fraction of a percent shorter and every tree would twitch as it
+  crossed a threshold. `matchHeight` scales each rung to level 0's height at
+  load. Invariant 19.
+- **`weld` before `simplify` is load-bearing.** Sketchfab exports carry split
+  vertices and meshoptimizer will not collapse an edge across one. Unwelded,
+  oak_tree's leaves obeyed the ratio (7,340 → 673) while its trunk did not move
+  at all — 1,024 before and after, at every ratio tried. Welded, the same
+  command reaches the target on every primitive: 8,364 → 775, a 10.8× cut.
+- **Three models are topology-limited and stay that way.** `beech_tree` 4.1×,
+  `spruce` 6.5×, `date_palm` 2.2× — identical at `--error` 0.15, 0.3 and 0.6,
+  with `--lock-border false` already the default. Their foliage is disconnected
+  cards. The error bound was not raised on the strength of looking like it might
+  help.
+- **Level 0 draws very few trees, and widening its reach changes that
+  slowly.** At the shipped 300 m: 34 of 11,607 trees at z17.2/pitch 65, 151 of
+  9,293 at z20/pitch 70. At 150 m it was 0 and 31 — so tripling the reach bought
+  34 and 151 trees and cost 1% and 6% of frame time (10.4 → 10.5 ms and
+  8.3 → 8.8 ms). The frustum is deep and most of what is in it is far, so reach
+  buys detail slowly and costs slowly; the number is a comfortable choice rather
+  than a knife edge. It does still mean 6.3 MB of level-0 models exist to draw a
+  couple of hundred trees at a time.
+- **A build-time dependency on `@gltf-transform/cli`**, shelled out to from a
+  Python script. Mixed, and deliberately outside `npm run build`: the input
+  changes about never, and the alternative is a mesh toolchain in every
+  `npm install`.
+
+**What would make us revisit.** Models authored with their own LODs, which would
+retire the decimation step. Or impostors — a billboard rung beyond a few hundred
+metres would cut the remaining 11 M triangles by another order of magnitude, and
+is now an `L2` row rather than a redesign, which is the point of numbering them.
+
+---
+
+## 2026-09-23 — Each tree's rotation is hashed from its `tree_id`
+
+**Decision.** Every instance is yawed about the vertical by an angle in
+`[0, 2π)` returned by `rotationOf(treeId)` in `src/layers/tree/placement.ts` —
+FNV-1a over the id's UTF-16 code units, then murmur3's `fmix32`, scaled to a
+turn. The layer does not call `Math.random`, anywhere (invariant 18). Yaw only:
+no pitch, no roll.
+
+**Why.** Without rotation a street of 榕樹 is one mesh stamped forty times at
+forty spacings, and the repetition reads as a rendering artefact rather than as
+a row of trees. The angle has to be *stable* rather than merely varied, and for
+a stronger reason than reproducibility across launches: the mesh refresh runs on
+`idle`, so a drawn angle would make every tree in view visibly spin while
+panning.
+
+`tree_id` is the seed because it is already the layer's answer to *which tree is
+this* — instances are deduped by it, and it is published as a tile property for
+that reason. It also makes the angle a property of the tree rather than of the
+geometry, which is what keeps a source switch from re-orienting the city;
+invariant 13 was extended to say so.
+
+**What it rules out.**
+
+- **No `Math.random`, and no seeded-PRNG dependency either.** The arithmetic is
+  written out because the *exact* constants are the contract: changing them is
+  not a refactor, it reshuffles every tree in Taipei. `placement.test.ts` pins
+  three angles to five decimal places to make that concrete rather than
+  aspirational.
+- **Plain FNV-1a was not good enough, and the reason is specific to this data.**
+  The inventory's ids are sequential — `BT0015000001`, `BT0015000002`, … — and
+  one street's trees carry consecutive ones. Two ids differing by 1 leave FNV-1a
+  differing by exactly one multiple of the prime, 0.39% of a circle: measured on
+  the real ids, consecutive trees came out **1.4° apart** (106.8°, 105.4°,
+  104.0°, …). The hash meant to remove the repetition reintroduced it. Hence the
+  `fmix32` finalizer, which took the mean gap between consecutive trees from
+  16.6° to 96.7° (90° is what independent angles would give).
+- **A uniformity test would not have caught that**, which is why the test suite
+  does not rely on one. Plain FNV-1a already spread 20,000 ids evenly across
+  eight octants; the defect was *local correlation* between neighbouring ids,
+  invisible to a histogram. `placement.test.ts` therefore measures the angular
+  gap between consecutive ids and asserts a floor on the mean.
+- **Orientation is only as stable as `tree_id`.** If `infra` reloads and a row's
+  id changes, that tree re-orients. Honest: the layer has been told it is a
+  different tree.
+- **No lean.** Pitch and roll are not modelled because the survey does not
+  record them, and inventing one would be inventing data — the same rule that
+  governs a `NULL` height.
+
+**What would make us revisit.** A survey field that actually records orientation
+or lean, which would replace the hash with data for the rows that have it. Or
+per-form variation beyond yaw — a modest per-tree scale jitter is the obvious
+next increment and would hash from the same id, but it fights the rule that a
+tree's drawn height is its surveyed height, so it has not been taken.
+
+---
+
+## 2026-09-23 — A second mesh source: per-form glTF models, switchable
+
+**Decision.** The mesh half can draw from **two** sources, chosen by
+`TreeSettings.meshSource` and a two-segment control in the Trees panel. The
+`"procedural"` source is the eight shapes `formGeometry.ts` builds and is the
+default. The `"model"` source loads one authored glTF per form from
+`public/models/trees/`. Seventeen CC BY 4.0 models by Sketchfab's `evolveduk`
+are served; `FORM_MODELS` in `src/layers/tree/models.ts` names eight of them and
+the other nine are a shelf for retuning the table.
+
+**Why.** The entry below predicted this: form is the axis that turns a
+per-species asset problem (471) into a per-form one (8), and at eight the swap
+is cheap. It turned out cheap enough that it did not have to be a swap at all —
+keeping both sources and letting the panel choose costs one setting and one
+branch, and the comparison is worth more than either source alone. The
+procedural source is also the one that survives a missing file, a clone without
+Git LFS, and a first paint; making it the default means the app still fetches
+nothing until someone asks it to.
+
+**What it rules out, and what it reverses.**
+
+- **"No glTF, no loader, no asset" is no longer true of the layer** — only of
+  its default source. The entry below is superseded on that clause alone; its
+  reasoning about *per-species* assets stands entirely, which is why the models
+  are indexed by form and there are eight of them.
+- **The "two shared materials" rule is gone**, replaced by a **material
+  registry**. Sixteen procedural meshes could share one bark and one canopy
+  material; eight models bring twenty-odd of their own, authored by someone
+  else. So the constraint moved from *how many* materials exist to *where they
+  are*: `setOpacity` iterates the registry, and a mesh drawn with a material not
+  in it silently ignores GeoLibre's paint bridge. That failure looks like a
+  rendering bug and is a contract bug, which is why it is now invariant 14.
+- **The layer now fetches.** Opting into the modelled source makes `GLTFLoader`
+  pull eight files. `DESIGN.md` and `STACK.md` are amended rather than quietly
+  left wrong. Nothing was added to do it — `three` already ships the loader.
+- **Three attribution obligations, one of them conditional.** The models are CC
+  BY 4.0 and the credit shows only while they are drawing.
+  `stylized_tropical_pack.glb` arrived with the set under the Sketchfab Standard
+  License and is **deliberately absent**: that licence does not permit
+  redistributing the model file, and `public/` is downloadable by definition. A
+  test asserts every served `.glb` declares CC-BY, so re-adding it fails
+  `npm test` rather than shipping.
+- **Binary assets in the repo, through Git LFS**, and a manual Python prep step
+  outside `npm`. The originals are 124 MB of uncompressed 1024² PNG textures;
+  prepared they are 11.6 MB, of which a session loads 6.3 MB. A tree is tens of
+  pixels wide at z16, so the discarded half of that resolution was never
+  resolved.
+- **`columnar` draws as bamboo**, and the entry below criticises this very
+  library for shipping a bamboo model for an inventory with no bamboo in it.
+  That criticism was about *taxonomy* and still holds — nothing here claims
+  Taipei has bamboo. It is the asset-side application of the rule that already
+  governs the class names: a form is a silhouette, and bamboo is the only
+  candidate in the set that is narrow with foliage to the ground, which is what
+  福木 and 龍柏 look like from across a street. Two other rows are approximate
+  for the same reason and the spec names all three.
+
+**What would make us revisit.** A set of models that actually matches a
+subtropical East Asian inventory — at which point the contested rows
+(`palm-fan` served by a feather palm, `tiered` served by a flat umbrella) get
+replaced and `FORM_MODELS` changes with no spec change, because the table is
+data. Or evidence that nobody uses the toggle, in which case one source should
+win outright rather than both being carried.
+
+---
+
 ## 2026-09-23 — Trees are drawn by silhouette, not by species
+
+> **Superseded in part** by the entry above: the builders are no longer the
+> layer's only mesh source. Everything here about *per-species* assets, and
+> about naming classes for shape rather than taxon, stands.
 
 **Decision.** The mesh half draws one of **eight** shapes instead of one. Seven
 are named for a silhouette — `spreading`, `upright`, `tiered`, `columnar`,

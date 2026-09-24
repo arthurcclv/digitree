@@ -9,9 +9,28 @@ import { sourceId } from "@geolibre/map/style-layer-ids";
 import { TREES_SOURCE_LAYER, TREE_POINTS_LAYER_ID } from "./constants";
 import { formOf, type TreeForm } from "./forms";
 import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
+import {
+  lodFor,
+  loadFormModel,
+  MODEL_LODS,
+  type FormModel,
+  type ModelLod,
+  type ModelPart,
+} from "./models";
+import { rotationOf } from "./placement";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
 export type TreeKind = "all" | "street" | "park" | "custom";
+
+/** Mirrors `TreeMeshSource` in `index.ts`, for the same reason. */
+export type MeshSource = "procedural" | "model";
+
+/** What the panel shows: how much of the modelled source actually arrived. */
+export interface ModelStatus {
+  loaded: number;
+  failed: number;
+  total: number;
+}
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
 export const TREE_NATIVE_LAYER_ID = "threejs-tree-native";
@@ -41,28 +60,68 @@ export const INITIAL_CAPACITY = 1_024;
 
 /** One tree pulled out of a vector tile. */
 interface TreeInstance {
+  /** Carried past dedup because it is also what the tree's yaw is hashed from. */
+  id: string;
   lng: number;
   lat: number;
   height: number;
   form: TreeForm;
 }
 
+/** The local frame's up axis — `y`, per *The model matrix and the instance frame*. */
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** Every rung of the ladder, in the order buckets are filled. */
+const LODS: readonly ModelLod[] = MODEL_LODS.map((rung) => rung.level);
+
+/** MapLibre's world is this many pixels across at z0. */
+const TILE_SIZE_PX = 512;
+
 /**
- * One form's pair of meshes. Allocated on the form's first instance and grown
- * by doubling, never shrunk — so a palm-lined boulevard is served, and a view
- * with no palms in it never allocates a palm buffer.
+ * One form's meshes. Allocated on the form's first instance and grown by
+ * doubling, never shrunk — so a palm-lined boulevard is served, and a view with
+ * no palms in it never allocates a palm buffer.
+ *
+ * The procedural source contributes a bark/canopy pair and a modelled one
+ * between one and five parts, but the rule is the same either way: a form is a
+ * list of meshes over **one shared instance-matrix attribute**, written and
+ * counted together. Capacity is therefore a property of the form, and a
+ * five-part model costs the same matrix buffer as the pair does.
  */
 interface FormMeshes {
-  bark: THREE.InstancedMesh;
-  canopy: THREE.InstancedMesh;
+  meshes: THREE.InstancedMesh[];
+  instanceMatrix: THREE.InstancedBufferAttribute;
   capacity: number;
+  /** Which source built these; a switch discards the ones that no longer match. */
+  source: MeshSource;
 }
 
-function setCount(pair: FormMeshes, count: number): void {
-  for (const mesh of [pair.bark, pair.canopy]) {
-    mesh.count = count;
-    mesh.instanceMatrix.needsUpdate = true;
-  }
+/** What a bucket draws this frame — the two sources reduce to the same shape. */
+interface FormParts {
+  parts: readonly ModelPart[];
+  baseHeightM: number;
+  source: MeshSource;
+}
+
+/**
+ * Buckets are per form *and* per level of detail, so `spreading` at level 0 and
+ * `spreading` at level 1 are separate mesh sets over separate instance lists.
+ * The procedural source has one level and only ever fills level 0.
+ */
+type BucketKey = `${TreeForm}|${number}`;
+
+const bucketKey = (form: TreeForm, lod: ModelLod): BucketKey => `${form}|${lod}`;
+
+function setCount(group: FormMeshes, count: number): void {
+  for (const mesh of group.meshes) mesh.count = count;
+  // One attribute behind every mesh in the bucket, so one upload, not five.
+  group.instanceMatrix.needsUpdate = true;
+}
+
+/** Empty a bucket without re-uploading a buffer nothing is going to read. */
+function clearCount(group: FormMeshes): void {
+  if (group.meshes[0]?.count === 0) return;
+  for (const mesh of group.meshes) mesh.count = 0;
 }
 
 function buildLights(): THREE.Object3D[] {
@@ -94,65 +153,130 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.Camera();
   private readonly materials: THREE.MeshStandardMaterial[];
+  /**
+   * Every material the layer draws with, procedural and loaded alike.
+   *
+   * This is what `setOpacity` iterates, and it replaces the old rule that there
+   * were exactly two materials — a rule no source whose materials come out of a
+   * file can keep. A mesh built against a material that is not in here is
+   * invisible to GeoLibre's paint bridge: it stays opaque while the rest of the
+   * canopy fades, which looks like a rendering bug and is a contract bug.
+   */
+  private readonly materialRegistry = new Set<THREE.Material>();
   /** One geometry pair per form, built once; cheap, and needed for teardown. */
   private readonly geometries = new Map<TreeForm, FormGeometry>();
-  /** Filled lazily — a form with no tree in view has no buffers at all. */
-  private readonly meshes = new Map<TreeForm, FormMeshes>();
+  /** Filled as models arrive. A form absent from here draws procedurally. */
+  private readonly models = new Map<TreeForm, FormModel>();
+  /** Every form that has been asked for, so nothing is fetched twice. */
+  private readonly modelState = new Map<TreeForm, "loading" | "loaded" | "failed">();
+  /** Filled lazily — a bucket with no tree in view has no buffers at all. */
+  private readonly meshes = new Map<BucketKey, FormMeshes>();
   private readonly group = new THREE.Group();
 
   /** Rebuilt on every refresh from the viewport centre. */
   private modelMatrix = new THREE.Matrix4();
   private heightScale = 1;
   private kind: TreeKind = "all";
+  private meshSource: MeshSource = "procedural";
+  private opacity = 1;
   private visible = true;
   private refreshQueued = false;
 
+  /** Lets the panel report how much of the modelled source actually arrived. */
+  onModelsChanged: (() => void) | null = null;
+
   constructor() {
     this.materials = buildMaterials();
+    for (const material of this.materials) this.materialRegistry.add(material);
     for (const form of TREE_FORMS) this.geometries.set(form, buildForm(form));
     this.scene.add(this.group, ...buildLights());
   }
 
   /**
-   * The mesh pair for a form, sized to hold at least `needed` instances.
+   * What a form draws right now.
+   *
+   * A form is modelled only once its file has arrived, so this is also where
+   * the spec's loading policy lives: until then — and permanently, if the load
+   * failed — it falls back to the procedural shape. Nothing is invented by
+   * doing so. The position and the height are the data and are already on
+   * screen; only the silhouette is pending, and the shape drawn a moment ago is
+   * a better answer for the next second than a hole in the canopy.
+   */
+  private partsFor(form: TreeForm, lod: ModelLod): FormParts {
+    const model = this.meshSource === "model" ? this.models.get(form) : undefined;
+    if (model) {
+      // The whole ladder shares level 0's height, so a level change cannot
+      // alter how tall a tree draws. See `matchHeight` in models.ts.
+      return {
+        parts: model.levels[lod].parts,
+        baseHeightM: model.baseHeightM,
+        source: "model",
+      };
+    }
+    const geometry = this.geometries.get(form)!;
+    return {
+      parts: [
+        { geometry: geometry.bark, material: this.materials[0] },
+        { geometry: geometry.canopy, material: this.materials[1] },
+      ],
+      baseHeightM: geometry.baseHeightM,
+      source: "procedural",
+    };
+  }
+
+  /**
+   * The meshes for a form, sized to hold at least `needed` instances and built
+   * from whichever source that form is drawing from.
    *
    * Capacity doubles from `INITIAL_CAPACITY` and never shrinks, so a view that
    * fills with palms keeps its palm buffers for the rest of the session rather
-   * than reallocating on every pan. Growth replaces the pair — three cannot
+   * than reallocating on every pan. Growth replaces the meshes — three cannot
    * resize an `InstancedMesh` — which is bounded to at most five doublings
    * before `MAX_INSTANCES` caps it.
+   *
+   * A source switch also replaces them, and resets capacity: the meshes are
+   * built against one source's geometries and cannot be repointed at another's.
    */
-  private meshesFor(form: TreeForm, needed: number): FormMeshes {
-    const existing = this.meshes.get(form);
-    if (existing && existing.capacity >= needed) return existing;
+  private meshesFor(form: TreeForm, lod: ModelLod, needed: number): FormMeshes {
+    const desired = this.partsFor(form, lod);
+    const key = bucketKey(form, lod);
+    const existing = this.meshes.get(key);
+    const sameSource = existing?.source === desired.source;
+    if (existing && sameSource && existing.capacity >= needed) return existing;
 
-    let capacity = existing?.capacity ?? INITIAL_CAPACITY;
+    let capacity = sameSource ? existing!.capacity : INITIAL_CAPACITY;
     while (capacity < needed) capacity *= 2;
     capacity = Math.min(capacity, MAX_INSTANCES);
 
-    const geometry = this.geometries.get(form)!;
-    const bark = new THREE.InstancedMesh(geometry.bark, this.materials[0], capacity);
-    const canopy = new THREE.InstancedMesh(geometry.canopy, this.materials[1], capacity);
-    for (const mesh of [bark, canopy]) {
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // One attribute behind every part, so a five-part model costs the same
+    // matrix buffer as the procedural pair rather than two and a half times it.
+    const instanceMatrix = new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity * 16),
+      16,
+    );
+    instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    const meshes = desired.parts.map((part) => {
+      const mesh = new THREE.InstancedMesh(part.geometry, part.material, capacity);
+      mesh.instanceMatrix = instanceMatrix;
       mesh.count = 0;
       // Instances are placed per refresh across the whole viewport, so three's
       // object-level frustum culling has no useful bounding volume to test.
       mesh.frustumCulled = false;
-    }
+      return mesh;
+    });
 
     if (existing) {
-      this.group.remove(existing.bark, existing.canopy);
-      // Frees the instance buffers only; the geometry and the two materials are
-      // shared and outlive this pair.
-      existing.bark.dispose();
-      existing.canopy.dispose();
+      this.group.remove(...existing.meshes);
+      // Frees the instance buffers only; the geometries and the materials are
+      // shared with the other forms and outlive these meshes.
+      for (const mesh of existing.meshes) mesh.dispose();
     }
-    this.group.add(bark, canopy);
+    this.group.add(...meshes);
 
-    const pair: FormMeshes = { bark, canopy, capacity };
-    this.meshes.set(form, pair);
-    return pair;
+    const group: FormMeshes = { meshes, instanceMatrix, capacity, source: desired.source };
+    this.meshes.set(key, group);
+    return group;
   }
 
   onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
@@ -252,7 +376,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
       const [lng, lat] = feature.geometry.coordinates as [number, number];
       const raw = props.height_m;
       const height = typeof raw === "number" && raw > 0 ? raw : TREE_FALLBACK_HEIGHT_M;
-      instances.push({ lng, lat, height, form: formOf(props.species) });
+      instances.push({ id: treeId, lng, lat, height, form: formOf(props.species) });
     }
 
     // Global, and before the split by form below. Culling within a form would
@@ -295,55 +419,136 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
 
-    // The survivors of the cull, split by shape. Each form writes into its own
-    // pair of meshes, so the index a tree lands at is its index within its
-    // form, not within the viewport.
-    const byForm = new Map<TreeForm, TreeInstance[]>();
-    for (const tree of instances) {
-      const bucket = byForm.get(tree.form);
-      if (bucket) bucket.push(tree);
-      else byForm.set(tree.form, [tree]);
+    // Unproject once, here, rather than again inside the per-bucket loop: the
+    // level of detail is chosen from this position, so it has to exist first.
+    const placed = instances.map((tree) => {
+      const point = MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0);
+      // Mercator deltas back into the local metre frame: east, up, south.
+      return { tree, x: (point.x - origin.x) / metre, z: (point.y - origin.y) / metre };
+    });
+
+    const camera = this.cameraMetres(metre);
+
+    // The survivors of the cull, split by shape *and* by level of detail. Each
+    // bucket writes into its own meshes, so the index a tree lands at is its
+    // index within its bucket, not within the viewport.
+    const buckets = new Map<BucketKey, typeof placed>();
+    for (const item of placed) {
+      // True 3D distance from the eye. Not from the anchor: the anchor is the
+      // viewport centre, and at this map's pitch the trees nearest the camera
+      // sit well in front of it — ranking by anchor distance would hand the
+      // decimated mesh to the largest trees on screen.
+      const lod =
+        this.meshSource === "model"
+          ? lodFor(Math.hypot(item.x - camera.x, camera.y, item.z - camera.z))
+          : 0;
+      const key = bucketKey(item.tree.form, lod);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(item);
+      else buckets.set(key, [item]);
+    }
+
+    // Anything not refilled below holds no tree this frame. A bucket that has
+    // never been allocated stays that way.
+    for (const [key, idle] of this.meshes) {
+      if (!buckets.has(key)) clearCount(idle);
     }
 
     for (const form of TREE_FORMS) {
-      const bucket = byForm.get(form);
-      if (!bucket?.length) {
-        // Nothing in view. A form that has never been allocated stays that way.
-        const idle = this.meshes.get(form);
-        if (idle) setCount(idle, 0);
-        continue;
-      }
+      for (const lod of LODS) {
+        const bucket = buckets.get(bucketKey(form, lod));
+        if (!bucket?.length) continue;
 
-      const pair = this.meshesFor(form, bucket.length);
-      const base = this.geometries.get(form)!.baseHeightM;
-      bucket.forEach((tree, i) => {
-        const point = MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0);
-        // Mercator deltas back into the local metre frame: east, up, south.
-        position.set((point.x - origin.x) / metre, 0, (point.y - origin.y) / metre);
-        scale.setScalar((tree.height / base) * this.heightScale);
-        matrix.compose(position, quaternion, scale);
-        pair.bark.setMatrixAt(i, matrix);
-        pair.canopy.setMatrixAt(i, matrix);
-      });
-      setCount(pair, bucket.length);
+        const group = this.meshesFor(form, lod, bucket.length);
+        // Measured from whichever geometry is drawing, never declared — which
+        // is what lets a source change *and* a level change leave every tree
+        // the same height.
+        const { baseHeightM } = this.partsFor(form, lod);
+        const matrices = group.instanceMatrix.array as Float32Array;
+        bucket.forEach((item, i) => {
+          const { tree } = item;
+          position.set(item.x, 0, item.z);
+          scale.setScalar((tree.height / baseHeightM) * this.heightScale);
+          // Yaw only, and hashed from the tree's own id rather than drawn — so
+          // it is the same angle on every reload, under either mesh source and
+          // at either level. The refresh runs on `idle`, so a random one would
+          // spin as you panned.
+          quaternion.setFromAxisAngle(UP, rotationOf(tree.id));
+          matrix.compose(position, quaternion, scale);
+          // Written once, into the attribute every mesh in this bucket shares.
+          matrix.toArray(matrices, i * 16);
+        });
+        setCount(group, bucket.length);
+      }
     }
   }
 
-  /** Empties every allocated form without giving its buffers back. */
+  /**
+   * The camera's own position, in the same local metre frame the instances use.
+   *
+   * Derived from public camera state — `getVerticalFieldOfView`, `getZoom`,
+   * `getPitch`, `getBearing` and the canvas height — rather than read off the
+   * transform. MapLibre v6 removed `getFreeCameraOptions`, and its
+   * `transform.cameraPosition` is marked `@internal`; this layer already
+   * depends on one v6 signature change (see the spec on the projection matrix)
+   * and does not need to depend on an unpublished one as well.
+   *
+   * The arithmetic: the camera sits `d` metres from the viewport centre along
+   * the view ray, where `d` is the perspective distance that makes the canvas
+   * subtend the field of view. Pitch splits `d` into an altitude and a ground
+   * offset, and the offset runs *backwards* along the bearing — the camera is
+   * behind what it is looking at.
+   *
+   * The altitude is load-bearing rather than a refinement: at this map's pitch
+   * the camera is well above the ground, and a flat 2D distance would call the
+   * entire foreground "near".
+   */
+  private cameraMetres(metre: number): THREE.Vector3 {
+    const map = this.map;
+    if (!map) return new THREE.Vector3();
+
+    const fov = (map.getVerticalFieldOfView() * Math.PI) / 180;
+    const distancePx = map.getCanvas().clientHeight / 2 / Math.tan(fov / 2);
+    // Mercator spans [0, 1] across the world, so `metre * worldSizePx` is
+    // pixels per metre at this latitude and zoom.
+    const worldSizePx = TILE_SIZE_PX * 2 ** map.getZoom();
+    const distance = distancePx / (metre * worldSizePx);
+
+    const pitch = (map.getPitch() * Math.PI) / 180;
+    const bearing = (map.getBearing() * Math.PI) / 180;
+    const ground = distance * Math.sin(pitch);
+    // x is east and z is south, and north is -z — hence the signs.
+    return new THREE.Vector3(
+      -ground * Math.sin(bearing),
+      distance * Math.cos(pitch),
+      ground * Math.cos(bearing),
+    );
+  }
+
+  /** Empties every allocated bucket without giving its buffers back. */
   private clear(): void {
-    for (const pair of this.meshes.values()) setCount(pair, 0);
+    for (const group of this.meshes.values()) clearCount(group);
   }
 
-  /** Driven by GeoLibre through the external-native paint bridge. */
+  /**
+   * Driven by GeoLibre through the external-native paint bridge.
+   *
+   * Iterates the registry rather than a fixed pair, so a model's own materials
+   * fade with everything else the moment they are registered.
+   */
   setOpacity(opacity: number): void {
-    for (const material of this.materials) {
-      material.opacity = opacity;
-      if (material.transparent !== opacity < 1) {
-        material.transparent = opacity < 1;
-        material.needsUpdate = true;
-      }
-    }
+    this.opacity = opacity;
+    for (const material of this.materialRegistry) this.fade(material);
     this.map?.triggerRepaint();
+  }
+
+  /** One material brought to the layer's current opacity. */
+  private fade(material: THREE.Material): void {
+    material.opacity = this.opacity;
+    if (material.transparent !== this.opacity < 1) {
+      material.transparent = this.opacity < 1;
+      material.needsUpdate = true;
+    }
   }
 
   /** Also driven by GeoLibre; MapLibre honours layer visibility on its own. */
@@ -365,6 +570,88 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     this.map?.triggerRepaint();
   }
 
+  /**
+   * Which of the two sources draws. Not a GeoLibre concept either — which
+   * geometry a plugin chooses is ours, and a record field for it would be
+   * silently inert.
+   *
+   * Switching to `"model"` is what first triggers any fetching at all; before
+   * that the layer carries no asset and makes no request.
+   */
+  setMeshSource(source: MeshSource): void {
+    if (source === this.meshSource) return;
+    this.meshSource = source;
+    if (source === "model") this.loadModels();
+    // The meshes were built against the other source's geometries and cannot be
+    // repointed, so drop them; `meshesFor` rebuilds on the next refresh.
+    this.discardMeshes();
+    this.refresh();
+    this.map?.triggerRepaint();
+  }
+
+  /**
+   * Fetch every form's model once, in parallel, and swap each in as it lands.
+   *
+   * A failure leaves that form procedural for the rest of the session. There is
+   * no retry and no substitute — a form never borrows another form's file —
+   * and the panel reports the count, because a canopy quietly missing its palms
+   * is exactly the kind of thing nobody notices.
+   */
+  private loadModels(): void {
+    for (const form of TREE_FORMS) {
+      if (this.modelState.has(form)) continue;
+      this.modelState.set(form, "loading");
+      loadFormModel(form).then(
+        (model) => {
+          this.models.set(form, model);
+          this.modelState.set(form, "loaded");
+          for (const part of model.levels.flatMap((level) => level.parts)) {
+            // Registered before anything draws with them, or they would ignore
+            // the paint bridge until the next opacity change.
+            this.materialRegistry.add(part.material);
+            this.fade(part.material);
+          }
+          // Only this form's meshes are stale; the others are still correct.
+          this.discardMeshes(form);
+          this.refresh();
+          this.map?.triggerRepaint();
+          this.onModelsChanged?.();
+        },
+        () => {
+          this.modelState.set(form, "failed");
+          this.onModelsChanged?.();
+        },
+      );
+    }
+  }
+
+  /** How much of the modelled source arrived. Read by the panel. */
+  modelStatus(): ModelStatus {
+    let loaded = 0;
+    let failed = 0;
+    for (const state of this.modelState.values()) {
+      if (state === "loaded") loaded += 1;
+      else if (state === "failed") failed += 1;
+    }
+    return { loaded, failed, total: TREE_FORMS.length };
+  }
+
+  /**
+   * Give back the instance buffers of one form, or of all of them.
+   *
+   * Only the buffers: the geometries and materials behind them are shared and
+   * are disposed in `dispose`.
+   */
+  private discardMeshes(only?: TreeForm): void {
+    for (const [key, group] of this.meshes) {
+      // A form owns both of its levels, so dropping one drops the pair.
+      if (only && !key.startsWith(`${only}|`)) continue;
+      this.group.remove(...group.meshes);
+      for (const mesh of group.meshes) mesh.dispose();
+      this.meshes.delete(key);
+    }
+  }
+
   /** Not a GeoLibre concept — the app drives this one directly. */
   setHeightScale(scale: number): void {
     if (scale === this.heightScale) return;
@@ -374,16 +661,22 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   }
 
   dispose(): void {
-    for (const pair of this.meshes.values()) {
-      pair.bark.dispose();
-      pair.canopy.dispose();
-    }
-    this.meshes.clear();
+    this.discardMeshes();
     for (const geometry of this.geometries.values()) {
       geometry.bark.dispose();
       geometry.canopy.dispose();
     }
-    for (const material of this.materials) material.dispose();
+    for (const model of this.models.values()) {
+      for (const level of model.levels) {
+        for (const part of level.parts) part.geometry.dispose();
+      }
+    }
+    this.models.clear();
+    this.modelState.clear();
+    // The registry holds both sources' materials, so this is the one loop that
+    // frees a model's textures too.
+    for (const material of this.materialRegistry) material.dispose();
+    this.materialRegistry.clear();
     this.renderer?.dispose();
     this.renderer = null;
     this.gl = null;

@@ -14,6 +14,7 @@ import {
   TREE_NATIVE_LAYER_ID,
   treeMeshRecord,
   treePointsLayer,
+  type ModelStatus,
   type TreeSettings,
 } from "../layers/tree";
 
@@ -80,6 +81,13 @@ export function useMapEngine(
   });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Nothing is fetched until the modelled source is first chosen, so this stays
+  // all-zero — and the panel stays quiet about it — for a procedural session.
+  const [modelStatus, setModelStatus] = useState<ModelStatus>({
+    loaded: 0,
+    failed: 0,
+    total: 0,
+  });
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
@@ -124,6 +132,8 @@ export function useMapEngine(
 
     const tree = new ThreeTreeLayer();
     treeRef.current = tree;
+    // Models arrive one at a time, long after the switch that asked for them.
+    tree.onModelsChanged = () => setModelStatus(tree.modelStatus());
     // Route GeoLibre's generic opacity and visibility controls into three.js.
     setExternalNativePaintBridge(TREE_LAYER_ID, {
       setOpacity: (opacity) => tree.setOpacity(opacity),
@@ -214,6 +224,13 @@ export function useMapEngine(
     treeRef.current?.setKind(treeSettings.kind);
   }, [treeSettings.kind]);
 
+  // Which geometry the meshes draw is not a GeoLibre concept either, and the
+  // circles are the same circles under either source — so this reaches exactly
+  // one of the two halves, on purpose.
+  useEffect(() => {
+    treeRef.current?.setMeshSource(treeSettings.meshSource);
+  }, [treeSettings.meshSource]);
+
   const flyTo = useCallback((view: Viewpoint) => {
     mapRef.current?.flyTo({
       center: view.center,
@@ -244,5 +261,16 @@ export function useMapEngine(
     mapRef.current?.easeTo({ bearing: 0, duration: 420 });
   }, []);
 
-  return { containerRef, camera, ready, error, flyTo, zoomBy, setPitch, setBearing, resetNorth };
+  return {
+    containerRef,
+    camera,
+    ready,
+    error,
+    modelStatus,
+    flyTo,
+    zoomBy,
+    setPitch,
+    setBearing,
+    resetNorth,
+  };
 }

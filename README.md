@@ -124,8 +124,12 @@ app/
         index.ts       the GeoLibre layer record + colour ramps
         specs/spec.md
       tree/
-        index.ts       the GeoLibre record for the three.js layer
-        treeLayer.ts   the three.js custom layer + procedural mesh
+        index.ts       the GeoLibre records + TreeSettings
+        treeLayer.ts   the three.js custom layer, instancing, the GL seam
+        formGeometry.ts  mesh source 1: the eight procedural shapes
+        models.ts        mesh source 2: one glTF model per form
+        forms.ts       species -> silhouette table
+        placement.ts   each tree's yaw, hashed from its tree_id
         specs/spec.md
     lib/
       useMapEngine.ts  map lifecycle, layer sync, camera
@@ -136,6 +140,11 @@ app/
       LayerMenu.tsx    viewport layer-visibility popover
     App.tsx            the interface
     styles.css         the design system
+  public/
+    models/trees/      17 CC BY glTF tree models, one file per LOD level
+                       (<name>.glb, <name>.L1.glb) — Git LFS + CREDITS.md
+  tools/
+    prepare-tree-models.py   texture downscale + WebP re-encode
 infra/
   data/                raw open-data extracts (gitignored)
     custom/            optional drop-in CSVs, in the app as kind "custom"

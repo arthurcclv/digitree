@@ -77,12 +77,31 @@ dependency rather than by topic:
 | `index.ts` | the two GeoLibre records, `TreeSettings` | no |
 | `constants.ts` | the Martin source contract | no |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
+| `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
 | `formGeometry.ts` | the eight procedural shapes and the two shared materials | yes |
+| `models.ts` | `FORM_MODELS`, the glTF loader, `normalizeModel`, the LOD rule | yes |
 | `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam | yes |
 
-`forms.ts` is deliberately three.js-free. It is the layer's only pure module and
-therefore the only one testable without a GL context, which is why the species
-table lives there and not inside the geometry it selects.
+`forms.ts` and `placement.ts` are deliberately three.js-free. They are the
+layer's two pure modules and therefore the ones fully testable without a GL
+context, which is why the species table lives in one and the rotation hash in the
+other rather than inside the geometry they feed.
+
+They also divide along the same line: both answer a question about the *tree*
+rather than about the mesh. `forms.ts` says which shape it takes, `placement.ts`
+says which way it faces — and because neither reads the geometry, a source
+switch changes neither.
+
+`formGeometry.ts` and `models.ts` are the two **mesh sources**, and they are
+interchangeable on purpose: each hands `treeLayer.ts` a list of
+`{ geometry, material }` parts plus the height its shape was modelled at, and
+the layer places them identically. `models.ts` needs a GL context no more than
+`formGeometry.ts` does — `normalizeModel` is bounding-box arithmetic over
+`BufferGeometry` and is tested, unlike the fetch around it.
+
+Neither source reaches the other, and nothing outside `treeLayer.ts` chooses
+between them: `App.tsx` sets `TreeSettings.meshSource` and the layer resolves it
+per form, because a form is modelled only once its file has actually arrived.
 
 ## The style-load cycle
 

@@ -1,0 +1,1 @@
+app/public/models/trees/*.glb filter=lfs diff=lfs merge=lfs -text

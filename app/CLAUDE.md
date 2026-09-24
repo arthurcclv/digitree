@@ -32,7 +32,10 @@ src/
                       TreeSettings
       treeLayer.ts    ThreeTreeLayer — the MapLibre custom layer + instanced mesh
       formGeometry.ts the eight procedural form shapes + the shared materials
+      models.ts       FORM_MODELS, the glTF loader, normalizeModel — the other
+                      mesh source; interchangeable with formGeometry.ts
       forms.ts        TreeForm, the species -> silhouette table, formOf()
+      placement.ts    rotationOf() — each tree's yaw, hashed from its tree_id
       constants.ts    the Martin source contract, shared by the two above
       *.test.ts       vitest, beside the modules they cover
       specs/spec.md
@@ -45,6 +48,14 @@ src/
   App.tsx           the interface: control state, panel, viewpoints, telemetry
   main.tsx          React root
   styles.css        the design system (all styling lives here; no CSS modules)
+public/             copied verbatim by Vite, never imported
+  models/trees/     17 CC BY glTF tree models, each at every rung of the
+                    detail ladder (<name>.glb, <name>.L1.glb, ...), Git LFS,
+                    + CREDITS.md
+tools/
+  prepare-tree-models.py
+                    texture downscale + WebP re-encode; run out of band, not
+                    part of npm. See ai/WORKFLOWS.md
 dist/               build output (gitignored)
 ```
 
@@ -68,9 +79,11 @@ touches the MapLibre map directly.
 Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
-`npm test` covers only what is pure — the species table and the geometry
-builders. There is no jsdom and no headless GL, so anything needing a map or a
-GL context is still checked in the browser.
+`npm test` covers only what is pure — the species table, the geometry builders,
+`normalizeModel`, and assertions about the served model folder itself (every
+`.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
+so anything needing a map or a GL context — including whether a model actually
+loads — is still checked in the browser.
 
 ## Documentation
 

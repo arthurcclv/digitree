@@ -21,13 +21,22 @@ export {
 /** The silhouette vocabulary. See "Form classes" in `specs/spec.md`. */
 export { formOf, SPECIES_FORMS, type TreeForm } from "./forms";
 
+/** Per-tree variation. See "Rotation is hashed, not random". */
+export { rotationOf } from "./placement";
+
 export {
+  MODELS_ATTRIBUTION,
   TREES_ATTRIBUTION,
   TREES_MIN_ZOOM,
   TREES_SOURCE_LAYER,
   TREE_LAYER_ID,
   TREE_POINTS_LAYER_ID,
 } from "./constants";
+
+/** The other half of the silhouette vocabulary. See "The model table". */
+export { FORM_MODELS, MODELS_BASE_URL, normalizeModel } from "./models";
+export type { ModelGeometry, ModelPart } from "./models";
+export type { ModelStatus } from "./treeLayer";
 
 /**
  * The city's inventory is street plus park; `custom` is whatever was dropped
@@ -36,11 +45,25 @@ export {
  */
 export type TreeKindFilter = "all" | "street" | "park" | "custom";
 
+/**
+ * Which of the two mesh sources draws. Mirrored by `MeshSource` in
+ * `treeLayer.ts`, which cannot import this without a module cycle.
+ *
+ * Deliberately not named `"real"`. A modelled tree is a stock asset of a beech
+ * or a spruce picked because its silhouette matches a form — not a portrait of
+ * the 榕樹 standing at that coordinate, and no more a likeness of it than the
+ * icosahedra are. What is real under both sources is the position and the
+ * surveyed height.
+ */
+export type TreeMeshSource = "procedural" | "model";
+
 export interface TreeSettings {
   /** The vector-tile circles, city-wide from z14. */
   pointsVisible: boolean;
   /** The three.js meshes, in the viewport from z16. */
   meshVisible: boolean;
+  /** Which geometry those meshes draw. Nothing is fetched until this is "model". */
+  meshSource: TreeMeshSource;
   opacity: number;
   /** Exaggeration applied to each tree's surveyed `height_m`; 1 is true scale. */
   heightScale: number;
@@ -50,6 +73,8 @@ export interface TreeSettings {
 export const DEFAULT_TREE_SETTINGS: TreeSettings = {
   pointsVisible: true,
   meshVisible: true,
+  // The source that always works: no asset, no request, no licence.
+  meshSource: "procedural",
   opacity: 1,
   heightScale: 1,
   kind: "all",

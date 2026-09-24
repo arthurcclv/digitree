@@ -41,3 +41,12 @@ export const TREES_BOUNDS: [number, number, number, number] = [
  * control is disabled — so the app's status bar must render this.
  */
 export const TREES_ATTRIBUTION = "臺北市政府 · Taipei City open data";
+
+/**
+ * A third obligation, and the only conditional one: the glTF models are CC BY
+ * 4.0, which requires the author, the licence and a link, but only while they
+ * are being used. Showing this under the procedural source would credit
+ * evolveduk for icosahedra. `public/models/trees/CREDITS.md` carries the
+ * per-file detail the status bar has no room for.
+ */
+export const MODELS_ATTRIBUTION = "Tree models: evolveduk · CC BY 4.0";

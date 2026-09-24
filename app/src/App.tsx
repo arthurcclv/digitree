@@ -7,10 +7,12 @@ import {
 } from "./layers/buildings";
 import {
   DEFAULT_TREE_SETTINGS,
+  MODELS_ATTRIBUTION,
   TREES_ATTRIBUTION,
   TREES_MIN_ZOOM,
   TREE_MESH_MIN_ZOOM,
   type TreeKindFilter,
+  type TreeMeshSource,
   type TreeSettings,
 } from "./layers/tree";
 import { useMapEngine } from "./lib/useMapEngine";
@@ -46,6 +48,14 @@ const treeKindItems: SegmentedItem[] = [
   { id: "custom", label: "Custom" },
 ];
 
+// Not "Real". A modelled tree is a stock beech or spruce picked for its
+// silhouette, not a portrait of the 榕樹 at that coordinate — what is real
+// under either source is the position and the surveyed height.
+const treeSourceItems: SegmentedItem[] = [
+  { id: "procedural", label: "Generated" },
+  { id: "model", label: "Modelled" },
+];
+
 export default function App() {
   const [basemapId, setBasemapId] = useState(BASEMAPS[0].id);
   const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
@@ -54,7 +64,7 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
-  const { containerRef, camera, ready, error, flyTo, zoomBy, setPitch, resetNorth } =
+  const { containerRef, camera, ready, error, modelStatus, flyTo, zoomBy, setPitch, resetNorth } =
     useMapEngine(basemap, settings, tree);
 
   const patch = (next: Partial<BuildingSettings>) =>
@@ -203,6 +213,13 @@ export default function App() {
               onChange={(meshVisible) => patchTree({ meshVisible })}
             />
             <Segmented
+              label="Mesh source"
+              items={treeSourceItems}
+              columns={2}
+              value={tree.meshSource}
+              onChange={(id) => patchTree({ meshSource: id as TreeMeshSource })}
+            />
+            <Segmented
               label="Tree kind"
               items={treeKindItems}
               columns={4}
@@ -232,9 +249,24 @@ export default function App() {
             <div className="panel__rule" />
             <StatLine k="Points from" v={`z${TREES_MIN_ZOOM}`} />
             <StatLine k="Meshes from" v={`z${TREE_MESH_MIN_ZOOM}`} />
+            {/* Models arrive one at a time and a form that never arrives keeps
+                drawing generated, so the count is the only way to see it. */}
+            {tree.meshSource === "model" ? (
+              <StatLine
+                k="Modelled forms"
+                v={
+                  modelStatus.total === 0
+                    ? "loading…"
+                    : `${modelStatus.loaded}/${modelStatus.total}` +
+                      (modelStatus.failed ? ` · ${modelStatus.failed} failed` : "")
+                }
+              />
+            ) : null}
             <p className="hint">
               162,930 surveyed trees. Height comes from the survey, so a tree with no
               credible measurement draws at the smallest size rather than an invented one.
+              The source changes what a tree looks like, never where it stands or how
+              tall it is.
             </p>
           </Panel>
         </div>
@@ -294,6 +326,11 @@ export default function App() {
           <div className="map-credit">
             <span>{OSM_ATTRIBUTION}</span>
             <span>{TREES_ATTRIBUTION}</span>
+            {/* Conditional where the other two are not: the obligation exists
+                only while the CC BY models are the ones being drawn. */}
+            {tree.meshVisible && tree.meshSource === "model" ? (
+              <span>{MODELS_ATTRIBUTION}</span>
+            ) : null}
             <a href="https://github.com/opengeos/GeoLibre" target="_blank" rel="noreferrer">
               GeoLibre 3.0.0
             </a>

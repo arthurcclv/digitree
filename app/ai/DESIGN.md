@@ -77,8 +77,13 @@ The app answers all three by being a working thing, not a README.
 - Not mobile-first. Below 900px the shell becomes one scrolling column with the
   map on top (see `VISUAL_DESIGN.md`), but the target is a desktop browser with a
   GPU.
-- No accounts, no analytics, no network calls beyond tiles. The app makes no
-  `fetch()` call of its own even now that it has a data source of its own.
+- No accounts, no analytics, no network calls beyond tiles and the tree models.
+  The app made no `fetch()` call of its own for a long time, including after it
+  gained a data source of its own — the 3D trees read back the vector tiles
+  MapLibre had already parsed. The **modelled** mesh source is the one
+  exception, and it is opt-in: choosing it loads eight glTF files from the app's
+  own `public/`. The default source fetches nothing, so the sentence above still
+  describes the app you get on load.
 
 ## Where the design pressure is
 

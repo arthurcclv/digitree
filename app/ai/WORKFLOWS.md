@@ -93,12 +93,60 @@ the top; order within the `sync([...])` array is the only other lever, plus
 In dev the map is exposed as `window.__map` for console poking. It is gated on
 `import.meta.env.DEV`; do not depend on it in app code.
 
-## Checking the tree
+## Checking the trees
 
-Fly to viewpoint `The Tree` (07) — 25.0431° N, 121.5374° E, Da'an. It is 13 m
-tall by default and unfindable by panning. Verify occlusion by toggling
-Extrusion off and on at a low bearing: the tree should be substantially hidden by
-buildings when they are on.
+Fly to viewpoint `Trees` (07) — a vantage over a dense part of Da'an — and get
+above z16, where the meshes start. Then:
+
+- **Occlusion.** Toggle Extrusion off and on at a low bearing. The trees should
+  be substantially hidden by buildings when they are on; if they always draw in
+  front, the layer has lost `renderingMode: "3d"` and its share of MapLibre's
+  depth buffer.
+- **Both mesh sources.** Switch *Mesh source* between Generated and Modelled.
+  The trees must change shape and nothing else — same count, same positions,
+  same heights. A tree that moves or resizes means the model's `baseHeightM` is
+  being declared somewhere instead of measured.
+- **The models actually arrived.** With Modelled selected the panel shows
+  `Modelled forms 8/8`. Anything less means a `.glb` 404ed and those forms are
+  still drawing generated — which is the designed degradation, not a crash, so
+  nothing in the console will tell you.
+- **Level of detail.** Descend to z20 and the closest trees should gain
+  detail while the distance does not change shape, jump height, or shift. Most
+  trees draw level 1 at any zoom — at pitch 70 most of the visible ground is
+  beyond 300 m — which is the design, not a bug. `MODEL_LODS` in `models.ts` is
+  the ladder: each row is a rung, and adding one is a row there plus a row in
+  `LEVELS` in the prep script.
+- **Rotation.** Trees on one street must face different ways, and must face the
+  *same* ways after a reload and after a source switch. A street that fans
+  gradually rather than scattering means the `tree_id` hash has lost its
+  finalizer and is leaking the ids' sequence — see `placement.ts`.
+- **Opacity reaches them.** Pull Opacity down with Modelled selected. A model's
+  own materials fade only if they made it into the layer's material registry;
+  a part left opaque while the rest of the canopy fades is a registry bug.
+
+## Preparing tree models
+
+The `.glb` files under `public/models/trees/` are not the files that were
+downloaded — they are texture-downscaled, WebP-re-encoded copies, about a tenth
+the size. To add or re-prepare one:
+
+```bash
+python3 tools/prepare-tree-models.py <dir-of-original-glb-files>
+```
+
+It writes **one file per rung of the detail ladder** — `<name>.glb` at level 0
+and `<name>.L1.glb` above it — regenerates `CREDITS.md` from each file's
+`asset.extras`, and **refuses** anything not under a CC-BY licence, since
+`public/` is downloadable by definition. `npm test` asserts the same things from
+the other end, so a model that slips in, or a rung that failed to decimate,
+fails the suite.
+
+It needs `@gltf-transform/cli`, so run `npm install` in `app/` first.
+
+The models are committed through **Git LFS** (`.gitattributes` at the repo
+root). A clone made without LFS installed gets pointer files: the models 404,
+the panel reports fewer than 8 modelled forms, and the generated source carries
+on unaffected. Run `git lfs install && git lfs pull` to fix it.
 
 ## Git
 

@@ -129,6 +129,13 @@ map is (a licensing obligation — see the basemaps spec). It takes a **plate**:
 an 11px `--fg-muted` line on the `--panel` surface with a `--border-subtle`
 border, anchored bottom-right inside the viewport.
 
+It carries up to **three** credits — the basemap's, the tree inventory's, and
+the tree models' — and the third appears only while the modelled mesh source is
+drawing, because that is when its CC BY obligation exists. The plate wraps to a
+second line when all three are present, which is correct: the obligation outranks
+the silhouette of the plate, and shortening a credit to keep one line is not a
+design decision that is ours to make.
+
 A plate rather than the outlined-glyph treatment the source language uses for
 scene labels, because the cases are opposite: that treatment exists for ~100
 transient labels where a plate each would be a grid of rectangles over the
@@ -228,8 +235,9 @@ than a poster with controls over it.
   sliding lamp toggle; a flag is a checkbox, and the lamp was a bespoke control
   carrying no information the checkbox does not.
 - **Segmented control** (`.segmented`): equal-width buttons in one group, for the
-  four basemaps, the four ramp choices (three palettes plus Flat) and the four
-  tree-kind choices (All / Street / Park / Custom). Selected is `.active`
+  four basemaps, the four ramp choices (three palettes plus Flat), the four
+  tree-kind choices (All / Street / Park / Custom) and the two tree mesh sources
+  (Generated / Modelled — the one `--2` use). Selected is `.active`
   (blue) with `aria-pressed`. The ramp variant carries a small gradient swatch per segment,
   drawn from the palette's own stops — the one place a component shows a data
   colour. Column count is explicit — `--2`, `--3`, `--4` — and must match the

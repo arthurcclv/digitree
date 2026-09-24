@@ -6,6 +6,10 @@ change first.
 Modules:
 - `src/layers/tree/index.ts` — the two GeoLibre records (owns the description)
 - `src/layers/tree/treeLayer.ts` — the MapLibre custom layer (owns the pixels)
+- `src/layers/tree/models.ts` — the form → glTF table, the loader, and the
+  normalisation that makes a downloaded model instanceable
+- `src/layers/tree/placement.ts` — per-tree variation derived from `tree_id`
+  (owns the fact that no tree is identical to its neighbour)
 
 ## Purpose
 
@@ -16,6 +20,9 @@ into that stack — at two levels of detail:
 - **points**, as MapLibre circles, from z14 across the whole city;
 - **mesh**, as instanced three.js geometry, from z16 within the viewport, in
   one of **eight shapes** chosen from the tree's species (see *Form classes*).
+  Each shape is drawn from one of **two sources** — built in code, or loaded
+  from a glTF model — and the panel switches between them (see *Two mesh
+  sources*).
 
 The three.js half is registered **with** GeoLibre rather than bolted on beside
 it: GeoLibre owns stacking order, visibility and opacity; three.js owns
@@ -238,26 +245,107 @@ with a `NULL` `height_m` uses `TREE_FALLBACK_HEIGHT_M` = **9.1** — the measure
 median of the inventory — and the layer MUST NOT substitute anything else: not
 zero, not a neighbouring tree's height, not a random value.
 
+Rotation is a **yaw only** — about the local frame's `y`, which is up — by an
+angle in `[0, 2π)` that belongs to the tree. Without it a street of 榕樹 is the
+same mesh stamped forty times at forty spacings, and the repetition reads as a
+rendering artefact rather than as a row of trees. There is no pitch and no roll:
+a leaning tree is a thing the survey does not record, and inventing one would be
+inventing data.
+
 `diameter_cm` is carried as a property and used by the points record, but does
 **not** drive mesh geometry. Nine thousand park rows record a diameter of zero,
 and a trunk width derived from bad data reads as a rendering bug.
 
-### Sixteen meshes, two materials
+#### Rotation is hashed, not random
+
+The angle is a **pure function of the tree's `tree_id`**, computed by
+`rotationOf` in `placement.ts`, and the layer MUST NOT call `Math.random` to
+produce it — or to produce anything else, anywhere.
+
+This is the per-instance form of the rule the geometry builders already follow.
+Their offsets are fixed constants so that a form yields the same shape on every
+reload; an instance's yaw is hashed from its identity so that a *tree* keeps the
+same orientation on every reload. A random angle would redecorate the whole city
+on every refresh — and the refresh runs on `idle`, so trees would visibly spin
+as you panned.
+
+`tree_id` is the right seed because it is already the layer's notion of which
+tree this is: it is the property instances are deduped by, it is published for
+exactly that reason, and a custom drop-in carries one like any other row. Seeding
+from the coordinate instead would tie a tree's orientation to its position, so
+two trees planted at the same spot in different datasets would be
+indistinguishable, and correcting a survey coordinate by a metre would spin the
+tree.
+
+Three consequences follow, and all three are wanted:
+
+- **A tree's rotation is the same under both mesh sources.** The hash reads the
+  tree, not the geometry, so switching source re-orients nothing. Invariant 13
+  covers where a tree stands and how tall it is; rotation now joins that list.
+- **It survives re-anchoring.** The anchor moves with the viewport on every
+  refresh, and position is expressed relative to it — but the yaw is absolute,
+  so panning cannot change it.
+- **It is stable across reloads only as far as `tree_id` is.** If `infra`
+  reloads the inventory and a row's `tree_id` changes, that tree gets a new
+  orientation. That is the honest behaviour: the layer has been told it is a
+  different tree.
+
+The hash is FNV-1a over the id's UTF-16 code units in 32-bit integer
+arithmetic, **followed by murmur3's `fmix32` finalizer**, scaled to `[0, 2π)`.
+
+The finalizer is load-bearing, not polish. The inventory's ids are sequential —
+`BT0015000001`, `BT0015000002`, … — and trees along one street carry consecutive
+ones. Two ids differing by 1 in the last digit leave FNV-1a differing by exactly
+one multiple of the prime, which is 0.39% of the circle: measured on the real
+ids, consecutive trees came out **1.4° apart**. A boulevard would have drawn as
+one mesh stamped forty times, all facing the same way — the artefact this
+rotation exists to remove, reintroduced by the hash meant to remove it.
+
+What plain FNV-1a got right was the *distribution*: 20,000 ids already spread
+evenly over the circle. The defect was **local correlation** between neighbouring
+ids, which a histogram cannot see. So the test for this measures the angular gap
+between consecutive ids, not just the spread — a uniformity check alone passes
+the broken version.
+
+The whole function is written out rather than pulled from a dependency, because
+the *exact* arithmetic is the contract: changing the constants, the traversal or
+the finalizer is not a refactor, it is a reshuffle of every tree in Taipei.
+
+### Meshes and materials
 
 `buildForm(form)` produces two merged geometries — bark and canopy — drawn as two
 `THREE.InstancedMesh`es sharing one instance list. Each of the eight forms owns
-such a pair, so the scene holds sixteen meshes.
+such a pair, so the procedural source holds sixteen meshes.
 
-They are two per form rather than one merged mesh so that the layer keeps **one
+A **modelled** form holds one `InstancedMesh` per part instead — between one and
+five of them, depending on how the asset was authored — all sharing that form's
+single instance list. Whichever source is active the rule is the same: **a form
+is a list of meshes over one instance list, and the whole list is written and
+counted together.** The bark/canopy pair is simply the procedural case of it.
+
+The meshes are per part rather than merged per form so that the layer keeps **one
 material per geometry**, which is what `setOpacity` iterates over. Collapsing
-them would break the GeoLibre paint bridge.
+them would break the GeoLibre paint bridge — and for a modelled form it could not
+be done at all, because its parts do not share a material.
 
-The sixteen meshes share **two** material instances — one bark, one canopy —
-across all forms. That is what keeps the bridge intact as the form count grows:
-`setOpacity` still iterates two materials, exactly as it did with one form,
-rather than sixteen that could drift apart. Per-form materials are therefore
-forbidden; a form that needs its own colour needs vertex colours, not its own
-material.
+#### The material registry
+
+The rule this replaces — *the sixteen meshes share exactly two material
+instances* — cannot survive a source whose materials come out of a file. Sixteen
+procedural meshes share two; eight modelled forms bring twenty-odd of their own,
+authored by someone else.
+
+So the constraint moves from **how many** materials there are to **where they
+are**. The layer keeps a **registry** of every material it draws with: the two
+procedural ones are in it from construction, and a model's materials are added
+to it as that model loads. `setOpacity` iterates the registry; `dispose` disposes
+it.
+
+The invariant that replaces the count: **a material the layer draws with is a
+material in the registry.** A mesh built against a material the registry does not
+hold is invisible to the paint bridge — it stays at full opacity while the rest
+of the canopy fades, which reads as a rendering bug and is a contract bug.
+Per-form materials are no longer forbidden; unregistered ones are.
 
 ### Shared GL context
 
@@ -351,19 +439,198 @@ string that is not a key draws `generic` — the honest outcome, and the same on
 an unclassified city species gets. There is no separate path and no warning: the
 layer cannot tell a typo from a species it has not classified yet.
 
-## Geometry
+## Two mesh sources
+
+A form is a silhouette. *Drawing* that silhouette is a separate question, and the
+layer now answers it two ways:
+
+| source | `meshSource` | what it draws |
+| --- | --- | --- |
+| procedural | `"procedural"` (default) | the eight shapes `formGeometry.ts` builds out of icosahedra, cylinders and boxes |
+| modelled | `"model"` | one authored glTF model per form, loaded from `public/models/trees/` |
+
+The switch is per map, not per tree: every tree in view changes source together.
+There is no per-form and no per-species override, because the reason to switch is
+to compare two renderings of the same city — not to assemble a third one out of
+both halves.
+
+### Neither source is "real"
+
+The control is labelled **Generated** and **Modelled**, and the setting's values
+are `"procedural"` and `"model"`. It is tempting to call the second one *real*;
+this spec forbids it, for the same reason the form classes are not named after
+taxa. A modelled tree is a stock asset of a beech or a spruce, picked because its
+silhouette matches a form. It is not a portrait of the 榕樹 standing at that
+coordinate and is no more a likeness of it than the icosahedra are. What is real
+under both sources is the position and the surveyed height; the shape is a
+stand-in either way. Labelling one source *real* would claim otherwise, on every
+tree, in the panel.
+
+### What the two sources share
+
+Everything except geometry and materials. Under either source, trees:
+
+- are placed by the same instance list, in the same local metre frame;
+- scale by `height_m / baseHeightM`, where `baseHeightM` is **measured from the
+  built or loaded geometry, never hand-written** (see *Base height is per form*);
+- fall a `NULL` height back to `TREE_FALLBACK_HEIGHT_M` = 9.1, and to nothing
+  else;
+- are yawed by the same angle, hashed from the same `tree_id`;
+- obey the same `MAX_INSTANCES` cull, applied globally before form bucketing;
+- take opacity and visibility through the GeoLibre paint bridge.
+
+Switching source therefore cannot change which trees are drawn, or where, or how
+tall. That is the property the toggle is worth having for: two pictures of one
+dataset, not two datasets.
+
+## The model table
+
+`src/layers/tree/models.ts` holds `FORM_MODELS`, one file per form:
+
+| form | file | modelled height | note |
+| --- | --- | --- | --- |
+| `spreading` | `oak_tree.glb` | 8.83 m | a 10.5 m dome — the 榕樹 / 樟樹 stand-in |
+| `upright` | `beech_tree.glb` | 3.80 m | ovoid, clearly taller than wide |
+| `tiered` | `acacia_tree.glb` | 6.90 m | contested — an umbrella, not whorled layers |
+| `columnar` | `bamboo.glb` | 4.40 m | contested — the only narrow shape with foliage to the ground |
+| `conic` | `spruce.glb` | 10.52 m | a tapering spire |
+| `palm-feather` | `coconut_palm.glb` | 6.28 m | bare trunk, pinnate crown |
+| `palm-fan` | `date_palm.glb` | 7.34 m | contested — the set contains no fan palm |
+| `generic` | `maple_tree.glb` | 5.78 m | an unremarkable broadleaf |
+
+Each row is **one file per level**: `oak_tree.glb` and, today, `oak_tree.L1.glb`
+— a decimated copy for trees far enough away that nobody can count its
+triangles. See *Levels of detail*.
+
+The heights are **documentation of what the files contain, not input to the
+code**: the loader measures each model and this column is never read. A number
+that is only ever printed cannot drift the map the way `TREE_BASE_HEIGHT_M` did.
+
+Three assignments are marked contested, and are worth stating plainly, because
+the modelled source is where the form vocabulary stops being able to hide:
+
+- **`palm-fan` → `date_palm`** is a feather palm standing in for a fan palm.
+  蒲葵 and 華盛頓椰子 are 1.21% of the inventory and nothing in the set is
+  palmate. The choice was this or folding `palm-fan` into `palm-feather`
+  whenever the modelled source is on, and a form that silently merges is worse
+  than one that is visibly approximate.
+- **`columnar` → `bamboo`** draws 福木 and 龍柏 as culms. Wrong in detail, right
+  in silhouette, and the only candidate with foliage to the ground.
+- **`tiered` → `acacia_tree`** is a flat umbrella where 黑板樹 is a whorled
+  pagoda. The procedural `tiered` shape is the better of the two here — which is
+  itself an argument for keeping both sources rather than replacing one.
+
+Nine further models sit in the same folder unreferenced: `birch_tree`,
+`pine_tree`, `fir_tree`, `old_tree`, `curly_palm`, `banana_plant`,
+`tropical_plant_2`, `tropical_plant_monstera_deliciosa` and `daisies`. They are
+the shelf this table is retuned from. Nothing fetches them, so an unreferenced
+model costs disk and nothing else — measured, a session over Da'an requests
+exactly the eight files the table names.
+
+As with `SPECIES_FORMS`, **the table is data and this spec owns the forms.**
+Changing which file a form loads is a judgement correction and needs no spec
+change. Adding, removing or renaming a *form* still does.
+
+## The assets
+
+### Where they live
+
+`app/public/models/trees/`, served by Vite at `/models/trees/<file>.glb`. They
+are **not** imported: a seventeen-file binary set has no business in the module
+graph, and `public/` is the one directory Vite copies through verbatim.
+
+They are committed, through **Git LFS** — `app/public/models/trees/*.glb` is an
+LFS pattern. A clone made without LFS gets pointer files, every model load fails,
+and the modelled source reports itself unavailable while the procedural source
+carries on untouched. That is a degradation, not a broken app, and it is the
+same shape as *When the server is down*.
+
+### They are prepared, not the files that were downloaded
+
+`app/tools/prepare-tree-models.py` reads an original GLB and writes **one served
+file per level of the ladder** — today `<name>.glb` and `<name>.L1.glb`. For
+each it does exactly two things:
+
+1. **Resizes every texture to at most 512 px on its long edge and re-encodes it
+   as WebP**, declaring `EXT_texture_webp`. The originals carry three
+   uncompressed 1024² PNGs per material — six to fifteen images, 4–11 MB a file,
+   124 MB across the set. A tree on this map is tens of pixels wide at z16 and a
+   few hundred at z20, so the second half of that resolution is never resolved
+   and is pure transfer and VRAM. Prepared, the folder is **13.5 MB** across
+   both levels, of which the eight forms a session can actually load are
+   **7.2 MB** — 6.3 MB at level 0 and 0.94 MB at level 1. WebP rather than
+   JPEG because the foliage is `alphaMode: MASK` and the cutout lives in the
+   baseColor alpha channel, which JPEG does not carry.
+2. **Preserves `asset.extras` byte for byte.** That block holds each model's
+   author, licence and source URL, and is the only record of them inside the
+   file. A prep step that dropped it would turn a documented CC-BY asset into an
+   anonymous one.
+
+### Decimation, and why welding comes first
+
+Every level above 0 is produced by `gltf-transform` (meshoptimizer) at
+`--ratio 0.1 --error 0.15`, and its textures are prepared at **128 px** rather
+than 512 — a tree beyond 300 m resolves neither the geometry nor the texels.
+That makes a level-1 model 39–212 KB against level 0's 0.3–1.6 MB, so the whole
+rung adds under 1 MB to what a session loads.
+
+Across the eight forms in the table, decimation takes **69,998 triangles to
+11,640** — 6.0× overall, and 10× on most. Three fall short of the ratio:
+`beech_tree` 4.1×, `spruce` 6.5×, `date_palm` 2.2×. That is **topology, not the
+error bound** — the numbers are identical at `--error` 0.15, 0.3 and 0.6, and
+`--lock-border false` is already the default. Those models' foliage is
+disconnected cards that meshoptimizer will not collapse further. Loosening the
+error further buys nothing, so it is not set higher on the strength of looking
+like it might.
+
+**The `weld` pass before `simplify` is load-bearing, not tidying.** These are
+Sketchfab exports with split vertices, and meshoptimizer will not collapse an
+edge across a split. Run without welding, the leaf mesh obeyed the ratio
+(7,340 → 673 triangles) while the trunk did not move **at all** — 1,024 before
+and 1,024 after, at every ratio tried. Welded first, the same command reaches
+the target on every primitive: oak_tree goes 8,364 → 775 triangles, a 10.8×
+reduction. A prep step that silently declines to simplify an eighth of the
+geometry is the kind of thing that only shows up in a frame-time graph.
+
+The originals are not kept in the repo. `CREDITS.md` records the source URL of
+every model, which is what keeps them re-fetchable, and the decimated file is
+covered by the same credit as the model it is derived from — a decimated CC BY
+asset is still a CC BY asset.
+
+### Licensing
+
+Every served model is **CC BY 4.0, by evolveduk** — the layer's **third**
+attribution obligation, after OpenStreetMap and Taipei's open data.
+`MODELS_ATTRIBUTION` MUST be rendered in the status bar whenever a modelled tree
+is on screen, and `CREDITS.md` — title, author, licence and source URL per file,
+generated by the prep script from `asset.extras` and never typed — ships beside
+the models.
+
+One model that arrived with the set, `stylized_tropical_pack.glb`, is under the
+**Sketchfab Standard License** rather than CC BY, and is deliberately absent.
+That licence does not permit redistributing the model file, and everything under
+`public/` is downloadable by definition. The layer's tests assert the absence
+rather than trusting it: every GLB in the folder must declare a CC-BY licence in
+`asset.extras`, so re-adding that file fails `npm test` instead of shipping.
+
+## Geometry — the procedural source
 
 `buildForm(form)` returns a `{ bark, canopy }` pair of merged geometries for each
 of the eight forms, lit by one hemisphere light and one directional light. The
-builders are **procedural**, so the app still carries no model asset, no loader,
-no async step and no third attribution obligation. Offsets and rotations remain
-**fixed constants, never `Math.random`**: the same form yields the same geometry
-on every reload.
+builders are **procedural**: no asset, no loader, no async step, no licence.
+Offsets and rotations remain **fixed constants, never `Math.random`**: the same
+form yields the same geometry on every reload.
 
-Keeping it procedural is what makes this change cheap, and it is also what makes
-a later glTF swap cheap: **form is the axis that turns a per-species asset
-problem (471) into a per-form one (8).** That swap remains the intended extension
-point; it is now a tractable one.
+This is the default source and the one that always works. It is what the map
+draws before any model has loaded, from a clone made without Git LFS, and after
+a model fails to load.
+
+**Form is what made the glTF swap tractable — the axis that turns a per-species
+asset problem (471) into a per-form one (8).** The swap this section once named
+as the intended extension point has now been taken; see *Geometry — the modelled
+source*. It was cheap for exactly that reason, and it did **not** replace this
+source. Eight files is a small enough number that keeping both and letting the
+panel choose costs less than picking one.
 
 ### Base height is per form
 
@@ -392,16 +659,199 @@ roughly 40 MB of buffer to draw a viewport that holds a few thousand trees.
 So each form's mesh pair is allocated **lazily** at first use and **grows** in
 powers of two from 1,024, never shrinking, capped at `MAX_INSTANCES`. A viewport
 that is entirely palms is therefore served, and one that is entirely banyans
-never allocates a palm buffer at all. Growth reallocates the pair's
+never allocates a palm buffer at all. Growth reallocates the form's
 `InstancedMesh`es — the old ones are disposed and replaced in the group — which
 is why it is bounded to at most five doublings per form.
+
+Capacity is a property of the **form**, not of a mesh, and a modelled form's
+parts share one instance-matrix attribute between them. A five-part model
+therefore costs the same matrix buffer as the procedural pair does, and the
+ceiling above stays a statement about trees rather than about how finely someone
+else split their asset.
 
 ### What form does not touch
 
 The `tree-points` half is unchanged. Circles remain coloured by `kind` and sized
 by `height_m`; form is a property of the mesh geometry and reaches nothing else.
-`TreeSettings` gains no field — there is no filter by form and no control for it,
+`TreeSettings` gains no field for it — there is no filter by form and no
+control for one,
 because a form is not a thing a reader of the map has asked to isolate.
+
+## Geometry — the modelled source
+
+### Loading
+
+`GLTFLoader`, from `three/examples/jsm/loaders/GLTFLoader.js` — the same `three`
+package `formGeometry.ts` already takes `mergeGeometries` from, so the modelled
+source adds **no dependency**.
+
+Loading is **lazy and per form**. Nothing is fetched until `meshSource` is first
+set to `"model"`; from then each form's file is requested once, in parallel with
+the others, and cached for the session. A form with no tree in view is never
+fetched, so a session spent over a palm-lined boulevard downloads two files
+rather than eight — the same reasoning that allocates a form's buffers lazily.
+
+**A form keeps drawing procedurally until its model arrives.** This does not
+contradict *When the server is down*, because nothing is being invented: the
+position and the height are the data, both are already on screen, and both are
+unchanged. Only the silhouette is pending, and the shape the layer drew a moment
+ago is a better answer for the next second than a hole in the canopy. A tile that
+never arrives means a tree we cannot claim exists; a model that has not arrived
+yet means a tree we are still drawing the other way.
+
+**A load that fails leaves that form procedural for the rest of the session.** No
+retry loop, and no substitute: a form never borrows another form's file. The
+panel reports how many forms are modelled, so a permanent failure is visible
+rather than silent — a canopy quietly missing its palms is exactly the kind of
+thing nobody notices.
+
+### Normalisation
+
+A downloaded model is not instanceable as it arrives. The loader fixes three
+things before it is:
+
+1. **The node tree is flattened.** Each mesh primitive's world matrix is baked
+   into a clone of its geometry, so the form becomes a flat list of
+   `{ geometry, material }` parts with no transform left to apply. Sketchfab
+   exports carry their Y-up correction as a root rotation, and baking is what
+   absorbs it.
+2. **The parts are moved onto the origin.** The union bounding box is measured
+   and every part translated so that the box's **minimum Y is 0** and its X/Z
+   centre is 0. The models do not agree about this on their own — `old_tree`
+   sits with 1.21 m of root below its origin — and an unmoved model plants its
+   trees at the wrong depth.
+3. **`baseHeightM` is the measured height of that box**, exactly as for a
+   procedural form. *The model table* prints the number; the code never reads
+   it.
+
+Steps 2 and 3 are why *Base height is per form* is written the way it is. The
+rule that a modelled height is measured and never declared was load-bearing
+before there was a downloaded model to measure.
+
+### Levels of detail
+
+A modelled form is a **ladder** of geometries numbered from 0, and a tree draws
+the lowest-numbered level whose reach covers its distance from the camera. The
+last rung has no reach and catches everything beyond it.
+
+| level | file | drawn when | oak_tree |
+| --- | --- | --- | --- |
+| 0 | `<name>.glb` | within 300 m of the camera | 8,364 tris |
+| 1 | `<name>.L1.glb` | beyond 300 m | 775 tris |
+
+Level 0 is the authored model and keeps the plain name; every decimated level
+carries its number.
+
+**The ladder is data** — `MODEL_LODS` in `models.ts`, `LEVELS` in the prep
+script — so adding an `L2` tier beyond, say, 600 m is a row in each rather than
+a change to this design. Nothing in the layer names a level; it indexes one, and
+the bucket a tree lands in is `<form>|<level>`.
+
+That is why the levels are numbered and not called `near` and `far`. A two-value
+name is a two-value ceiling — in the file name and in the type behind it alike —
+and it would have to be unpicked by whoever adds the third rung. The cost of
+avoiding that now is an integer.
+
+The procedural source is a single level and needs no ladder: it is around 130
+triangles a tree already.
+
+The ladder exists because instancing was never the bottleneck. Measured over
+Da'an at z17.2 and pitch 65, the modelled source drew 11,607 trees in **22 draw
+calls** — instancing doing exactly its job — and **95.2 million triangles a
+frame**, which took the map from 120 fps to 13. One mesh was 61% of it:
+oak_tree's canopy, 7,340 triangles against 7,866 instances, because `spreading`
+is 46% of the inventory. These are hero assets authored to look right as *one*
+tree.
+
+With the ladder in place the same view draws **11.5 million triangles at
+10.5 ms a frame — 95 fps**, and z20 at pitch 70 is 9.8 million at 8.8 ms.
+
+Frame times are the median of three fresh-page trials, because a single
+measurement of this is not worth much: an early one-off reading of this same
+view came back 40% slower and did not reproduce. The triangle and instance
+counts are exact.
+
+**Level 0's reach is nearly free.** At 150 m the same two views ran 10.4 ms and
+8.3 ms; at 300 m they run 10.5 ms and 8.8 ms — 1% and 6%. The expensive part was
+never the near tier, which is small by construction; it was the 95 million
+triangles that existed before there was a far tier at all.
+
+#### Level 0 is for very few trees, and that is correct
+
+Measured on fresh pages, the split is lopsided: **34 of 11,607** trees are at
+level 0 at z17.2 and pitch 65, and **151 of 9,293** at z20 and pitch 70. The
+reason is geometry, not a mis-set threshold — the camera stands 644 m from the
+viewport centre at z17.2 and 80 m at z20, and at this map's pitch most of the
+visible ground is a long way off, so only the nearest slice of the frustum is
+inside 300 m.
+
+Widening the reach moves this less than it looks like it should. At 150 m the
+z17.2 view had *no* level-0 trees at all and z20 had 31; tripling the reach to
+300 m bought 34 and 151. The frustum is deep and most of what is in it is far,
+so reach buys detail slowly and costs frame time slowly — which is what makes
+this number a comfortable one to choose rather than a knife edge.
+
+The counts move with pitch and with which tiles happen to be loaded — the same
+z20 view at pitch 65 holds 367 trees rather than 9,293 — which is invariant 5
+showing through: the scene depends on the viewport. The *ratio* is the durable
+part.
+
+This is what a level of detail is *for*: full geometry exactly where it can be
+resolved. It does mean the level-0 models are 6.3 MB to draw a few dozen trees
+at a time, which is the honest cost of them looking right when you descend into
+a street. Widening level 0's reach would put more of that download to work and
+give back most of the frame time; the number is a judgement, and this paragraph
+exists so the next person changes it knowingly.
+
+#### Distance is measured from the camera, not the anchor
+
+The obvious implementation is wrong. Instance positions are already metres from
+the **anchor**, which is the viewport centre — so `x² + z²` is free, and using
+it would be a mistake. At the pitch this map is built for, the trees nearest the
+eye are in the foreground, a hundred metres or more *in front of* the viewport
+centre, and they are the largest things on screen. Ranking by anchor distance
+would hand them the decimated mesh and keep the full one for the specks on the
+horizon.
+
+So the camera's own position is taken from `map.getFreeCameraOptions().position`
+and converted into the same local metre frame, and the test is a true 3D
+distance — the camera's altitude matters at high pitch.
+
+#### What a level change must not do
+
+A tree's level depends on where the camera is, so it changes as you move. It
+must change **nothing else**: not the position, not the rotation, and above all
+not the height.
+
+Height is the one that takes care: decimation moves a model's bounding box a
+little, so a decimated level measured on its own would stand a fraction of a
+percent shorter than level 0, and every tree would twitch as it crossed a
+threshold. Every level above 0 is therefore **scaled to level 0's measured
+height** at load, and the whole ladder shares one `baseHeightM` — level 0's. A
+form's declared height is a property of the form, not of the rung.
+
+Levels are re-evaluated on refresh, which runs on `idle`. Crossing the threshold
+during a gesture therefore cannot flicker: the swap happens once, after the
+movement settles.
+
+### Materials
+
+A model's materials arrive from the file and are **kept as authored**. The
+foliage is `alphaMode: MASK` with a per-model cutoff and is double-sided; both
+are what make a leaf card read as leaves, and overriding either would be
+redecorating someone else's asset into a worse one. Two things are done to them,
+and only two:
+
+1. **`premultipliedAlpha` is set to `true`** on every one, for the reason in
+   *Shared GL context*. `GLTFLoader` has no idea it is loading into MapLibre's
+   context, so nothing else will do it.
+2. **They are added to the material registry**, which is what the paint bridge
+   iterates. A model material that is loaded but not registered does not fade
+   with the rest of the layer.
+
+Lighting is shared: the same hemisphere and directional light that light the
+procedural forms light these, because they are in the same scene and a source
+switch must not read as a change in the weather.
 
 ## Lifecycle
 
@@ -427,6 +877,7 @@ until tiles reload. The refresh on `idle` covers this; no special case is needed
 | --- | --- | --- |
 | `pointsVisible` | `true` | `tree-points` record → circle opacity (**not** `visible` — see above) |
 | `meshVisible` | `true` | `tree-mesh` record → paint bridge → `setVisibility` |
+| `meshSource` | `"procedural"` | app → `setMeshSource` directly |
 | `opacity` | `1` | `tree-points` record → circle paint; `tree-mesh` → paint bridge → `setOpacity` |
 | `heightScale` | `1` | app → `setHeightScale` directly |
 | `kind` | `"all"` | `tree-points` → `filterExpression`; `tree-mesh` → app → `setKind` directly |
@@ -437,6 +888,17 @@ loaded, which is the honest outcome: an empty result for an empty dataset, not a
 hidden control. Adding a value here means adding it to `TreeKindFilter` in
 `index.ts` *and* to `TreeKind` in `treeLayer.ts`, which mirrors it to avoid a
 module cycle.
+
+`meshSource` is `"procedural"` or `"model"` — two segments, so the control is
+`columns={2}`, labelled **Generated** and **Modelled**. It reaches the mesh layer
+directly rather than through GeoLibre, for the same reason `heightScale` does:
+which geometry a plugin draws is not a GeoLibre concept, and a record field for
+it would be silently inert.
+
+It does not touch the `tree-points` record at all. The circles are the same
+circles under either source, and redrawing them on a source switch would be
+claiming the data had changed when only the rendering did. This is the one
+setting in the table that reaches exactly one of the two halves on purpose.
 
 `heightScale` **replaces** the old absolute `height` control. An absolute height
 is meaningless once every tree carries its own; the control now exaggerates, the
@@ -465,6 +927,17 @@ visible. Removing it is a licensing regression, not a style choice.
 > The exact required wording is set by the dataset's licence page on Taipei's
 > open-data platform and must be confirmed against it before release.
 
+The modelled source adds a **third** obligation. Every glTF model the layer
+serves is CC BY 4.0 by evolveduk, and CC BY requires the author, the licence and
+a link. `MODELS_ATTRIBUTION` MUST therefore be rendered beside the other two
+whenever a modelled tree can be on screen — that is, whenever `meshVisible` and
+`meshSource === "model"` — and `public/models/trees/CREDITS.md` carries the
+per-file detail the status bar has no room for.
+
+This one is conditional where the other two are not, and that is the point: the
+obligation exists only while the assets are being used. Showing it under the
+procedural source would credit evolveduk for icosahedra.
+
 ## Retired
 
 - `TREE_LOCATION` is gone. The layer no longer has a location; `lib/viewpoints.ts`
@@ -482,9 +955,10 @@ visible. Removing it is a licensing regression, not a style choice.
 2. The custom layer is re-added on every `style.load`.
 3. Only `defaultProjectionData.mainMatrix` is used for projection.
 4. Visibility and opacity reach three.js through GeoLibre's paint bridge.
-5. The mesh **geometry** is deterministic — the same form yields the same shape
-   every reload. The **scene** is not: it depends on the viewport, and that is
-   the point.
+5. The mesh **geometry** is deterministic — a form yields the same shape every
+   reload, under either source — and so is every tree's **rotation**, which is
+   hashed from its `tree_id`. The **scene** is not: it depends on the viewport,
+   and that is the point.
 6. Instances are deduped by `tree_id`.
 7. The layer never invents data. A missing height renders at
    `TREE_FALLBACK_HEIGHT_M`, and nothing else is substituted anywhere.
@@ -496,3 +970,17 @@ visible. Removing it is a licensing regression, not a style choice.
     `generic`. The layer never guesses a form from a neighbouring tree, a
     substring match, or a genus.
 12. The `MAX_INSTANCES` cull runs before form bucketing, never within a form.
+13. `meshSource` changes what a tree looks like and never which trees are drawn,
+    where they stand, how tall they are, or which way they face.
+14. Every material the layer draws with is in the material registry.
+15. A form whose model has not loaded, or has failed to load, draws
+    procedurally. It never borrows another form's model and never vanishes.
+16. `MODELS_ATTRIBUTION` is displayed whenever a modelled tree can be on screen,
+    and not while the procedural source is the one drawing.
+17. Every GLB under `public/models/trees/` declares a CC-BY licence in
+    `asset.extras`, and the test suite enforces it.
+18. The layer never calls `Math.random`. Per-tree variation is hashed from
+    `tree_id`; per-form variation is a fixed constant.
+19. A level-of-detail change alters a tree's triangle count and nothing else —
+    not where it stands, how tall it draws, or which way it faces. Every level
+    of a form shares one `baseHeightM`, measured from level 0.
