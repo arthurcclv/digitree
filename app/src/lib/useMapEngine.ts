@@ -26,6 +26,14 @@ import {
   type SunlightSettings,
   type SunlightStatus,
 } from "../layers/sunlight";
+import {
+  AO_LAYER_ID,
+  AO_NATIVE_LAYER_ID,
+  ambientOcclusionRecord,
+  ThreeAoLayer,
+  type AmbientOcclusionSettings,
+  type AoState,
+} from "../layers/ambient-occlusion";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker
@@ -69,6 +77,7 @@ export function useMapEngine(
   settings: BuildingSettings,
   treeSettings: TreeSettings,
   sunlightSettings: SunlightSettings,
+  aoSettings: AmbientOcclusionSettings,
   onProbe: (result: ProbeResult) => void,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -82,6 +91,9 @@ export function useMapEngine(
   const sunlightRef = useRef<ThreeSunlightLayer | null>(null);
   const sunlightSettingsRef = useRef(sunlightSettings);
   sunlightSettingsRef.current = sunlightSettings;
+  const aoRef = useRef<ThreeAoLayer | null>(null);
+  const aoSettingsRef = useRef(aoSettings);
+  aoSettingsRef.current = aoSettings;
   const onProbeRef = useRef(onProbe);
   onProbeRef.current = onProbe;
   // `map.isStyleLoaded()` is false until every source settles, which is long
@@ -105,6 +117,7 @@ export function useMapEngine(
     total: 0,
   });
   const [sunlightStatus, setSunlightStatus] = useState<SunlightStatus | null>(null);
+  const [aoState, setAoState] = useState<AoState>("off");
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
@@ -118,9 +131,12 @@ export function useMapEngine(
     // tree circles and both above the extrusions. The mesh layer reads its data
     // back out of the source this same call creates for `tree-points`. The
     // sunlight overlay sits between the extrusions and the circles; it fetches
-    // its own tiles, so it depends on neither source being shown.
+    // its own tiles, so it depends on neither source being shown. Ambient
+    // occlusion multiplies over the extrusions and the ground right after they
+    // are drawn, so nothing above it — overlay, circles, meshes — is darkened.
     sync.sync([
       buildingsLayer(settingsRef.current),
+      ambientOcclusionRecord(aoSettingsRef.current, settingsRef.current),
       sunlightRecord(sunlightSettingsRef.current),
       treePointsLayer(treeSettingsRef.current),
       treeMeshRecord(treeSettingsRef.current),
@@ -128,7 +144,8 @@ export function useMapEngine(
     // `createLayerSync` always appends on top, which is what we want by
     // default; only drop below the labels when the user asks for it.
     if (settingsRef.current.labelsOnTop) {
-      anchorUnderLabels(map, BUILDINGS_STYLE_LAYER_IDS);
+      // The occlusion goes with the buildings, so labels stay undarkened.
+      anchorUnderLabels(map, [...BUILDINGS_STYLE_LAYER_IDS, AO_NATIVE_LAYER_ID]);
     }
   }, []);
 
@@ -167,6 +184,13 @@ export function useMapEngine(
       setOpacity: (opacity) => sunlight.setOpacity(opacity),
       setVisibility: (visible) => sunlight.setVisibility(visible),
     });
+    const ao = new ThreeAoLayer();
+    aoRef.current = ao;
+    ao.onStatus = setAoState;
+    setExternalNativePaintBridge(AO_LAYER_ID, {
+      setOpacity: (opacity) => ao.setOpacity(opacity),
+      setVisibility: (visible) => ao.setVisibility(visible),
+    });
     if (import.meta.env.DEV) {
       (window as unknown as { __map?: MapLibreMap }).__map = map;
     }
@@ -181,6 +205,9 @@ export function useMapEngine(
       }
       if (!map.getLayer(SUNLIGHT_NATIVE_LAYER_ID) && sunlightRef.current) {
         map.addLayer(sunlightRef.current);
+      }
+      if (!map.getLayer(AO_NATIVE_LAYER_ID) && aoRef.current) {
+        map.addLayer(aoRef.current);
       }
       try {
         map.setLight({
@@ -231,6 +258,9 @@ export function useMapEngine(
       clearExternalNativePaintBridge(SUNLIGHT_LAYER_ID);
       sunlight.dispose();
       sunlightRef.current = null;
+      clearExternalNativePaintBridge(AO_LAYER_ID);
+      ao.dispose();
+      aoRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -253,7 +283,18 @@ export function useMapEngine(
   // Any control change re-describes the layers and diff-syncs them.
   useEffect(() => {
     applyLayers();
-  }, [applyLayers, settings, treeSettings, sunlightSettings.visible, sunlightSettings.opacity]);
+  }, [applyLayers, settings, treeSettings, sunlightSettings.visible, sunlightSettings.opacity, aoSettings.enabled]);
+
+  // Strength and reach are the layer's own; the buildings' exaggeration and
+  // filter reach it here too, so its redrawn prisms match the extrusions.
+  useEffect(() => {
+    aoRef.current?.setParams({
+      intensity: aoSettings.intensity,
+      radiusM: aoSettings.radiusM,
+      heightScale: settings.heightScale,
+      minHeight: settings.minHeight,
+    });
+  }, [aoSettings.intensity, aoSettings.radiusM, settings.heightScale, settings.minHeight]);
 
   // The sun time is the sunlight layer's own control; a new sun is a new pass.
   useEffect(() => {
@@ -320,6 +361,7 @@ export function useMapEngine(
     error,
     modelStatus,
     sunlightStatus,
+    aoState,
     exportSunlight,
     flyTo,
     zoomBy,

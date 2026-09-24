@@ -43,15 +43,26 @@ src/
     sunlight/
       index.ts        sunlightRecord() GeoLibre record, SunlightSettings
       sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe, export
-      tiles.ts        TileStore — its own tree/building tile fetch + cache
       sun.ts, state.ts, transmittance.ts, frame.ts, tileGrid.ts, geotiff.ts
                       the pure parts: sun position, state gate, α table,
                       grid/shear maths, tile planning/coverage, GeoTIFF writer
       *.test.ts
       specs/spec.md
+    ambient-occlusion/
+      index.ts        ambientOcclusionRecord() GeoLibre record,
+                      AmbientOcclusionSettings
+      aoLayer.ts      ThreeAoLayer — G-buffer, SSAO, blur, multiply composite
+      kernel.ts, geometry.ts, state.ts
+                      the pure parts: sample kernel + composite factor,
+                      tile planning + prism placement, state gate
+      *.test.ts
+      specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
     viewpoints.ts     the eight Taipei VIEWPOINTS
+    tiles/            shared by the self-fetching layers (sunlight, AO): z14
+                      grid, TileStore (fetch + decode + cache), building
+                      prisms, ground footprint; *.test.ts beside them
   ui/
     Panel.tsx       Panel / Toggle / Slider primitives
     Compass.tsx     bearing rose
@@ -90,9 +101,9 @@ Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
 `npm test` covers only what is pure — the species table, the geometry builders,
-`normalizeModel`, the sunlight layer's pure modules and its tile store (on a
-fake `fetch`), and assertions about the served model folder itself (every
-`.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
+`normalizeModel`, the sunlight and ambient-occlusion layers' pure modules, the
+shared tile store (on a fake `fetch`) and building prisms, and assertions about
+the served model folder itself (every `.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
 so anything needing a map or a GL context — including whether a model actually
 loads — is still checked in the browser.
 
@@ -120,7 +131,7 @@ drift, tests, docs current). These are the app's own:
 - **Every new layer, plugin, or extension ships a spec.** A new
   `src/layers/<name>/` folder is incomplete without its `specs/spec.md`, written
   and approved before the layer's implementation lands.
-- **Tests live beside the code, inside the layer folder.** `<module>.test.ts`,
-  not a parallel `test/` tree. A test may import a layer's internals directly —
+- **Tests live beside the code, inside the layer folder** (or beside the
+  `src/lib` module they cover). `<module>.test.ts`, not a parallel `test/` tree. A test may import a layer's internals directly —
   the one exception to the `index.ts`-only rule, because it is inside the folder
   rather than reaching into it.

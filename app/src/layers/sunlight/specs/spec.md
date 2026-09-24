@@ -4,9 +4,12 @@ Source of truth for the ground light-penetration overlay. Behaviour changes
 here require this file to change first.
 
 Modules: `src/layers/sunlight/` — `index.ts` (record, settings, exports),
-`sunlightLayer.ts` (the custom layer), `tiles.ts` (its own tile fetching), and
+`sunlightLayer.ts` (the custom layer), and
 the pure modules `sun.ts`, `state.ts`, `transmittance.ts`, `frame.ts`,
-`tileGrid.ts`, `geotiff.ts`.
+`tileGrid.ts`, `geotiff.ts`. Its tile fetching, the z14 grid, the
+per-tile building triangulation and the ground footprint live in
+`src/lib/tiles/`, shared with the ambient-occlusion layer; this spec still
+defines their behaviour (*Data*, *Coverage*, *Recompute*).
 
 ## Purpose
 

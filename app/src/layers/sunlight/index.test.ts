@@ -10,7 +10,7 @@ import {
 } from "./index";
 import * as THREE from "three";
 import { canopyHullOf, rotationOf } from "../tree";
-import { addPrism, crownMatrix } from "./sunlightLayer";
+import { crownMatrix } from "./sunlightLayer";
 
 describe("Taipei time", () => {
   test("round-trips a date and minute of day", () => {
@@ -42,52 +42,6 @@ describe("sunlightRecord", () => {
       paintMode: "plugin",
     });
     expect(r.source).toEqual({});
-  });
-});
-
-describe("addPrism", () => {
-  const square: [number, number][] = [
-    [0, 0],
-    [10, 0],
-    [10, 10],
-    [0, 10],
-  ];
-
-  test("floors cover the footprint once, and the prism is closed", () => {
-    const prism: number[] = [];
-    const floor: number[] = [];
-    addPrism([square], 20, prism, floor);
-    // Two floor triangles; floor + roof + 4 walls × 2 in the prism.
-    expect(floor.length / 9).toBe(2);
-    expect(prism.length / 9).toBe(2 + 2 + 8);
-    const area = (tris: number[]) => {
-      let a = 0;
-      for (let i = 0; i < tris.length; i += 9) {
-        const [x1, y1, , x2, y2, , x3, y3] = tris.slice(i, i + 9);
-        a += Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)) / 2;
-      }
-      return a;
-    };
-    expect(area(floor)).toBeCloseTo(100, 9);
-    // Every z is the ground or the roof.
-    for (let i = 2; i < prism.length; i += 3) expect([0, 20]).toContain(prism[i]);
-  });
-
-  test("a hole is left out of the floor", () => {
-    const hole: [number, number][] = [
-      [3, 3],
-      [3, 7],
-      [7, 7],
-      [7, 3],
-    ];
-    const floor: number[] = [];
-    addPrism([square, hole], 5, [], floor);
-    let a = 0;
-    for (let i = 0; i < floor.length; i += 9) {
-      const [x1, y1, , x2, y2, , x3, y3] = floor.slice(i, i + 9);
-      a += Math.abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)) / 2;
-    }
-    expect(a).toBeCloseTo(100 - 16, 9);
   });
 });
 

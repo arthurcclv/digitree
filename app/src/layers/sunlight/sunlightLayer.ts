@@ -36,7 +36,15 @@ import { writeGeoTiff } from "./geotiff";
 import { blockedState, readoutSun, type SunlightState } from "./state";
 import { MIN_SUN_ELEVATION_DEG, sunPosition } from "./sun";
 import { classifyByTiles, planTiles, tileKey, tileSquareLocal, type TileId } from "./tileGrid";
-import { TileStore, type BuildingFeature, type TileCounts } from "./tiles";
+import {
+  groundFootprint,
+  placeTile,
+  TileStore,
+  triangulateTile,
+  type BuildingFeature,
+  type TileCounts,
+  type TilePrisms,
+} from "../../lib/tiles";
 import { alphaOf, BUILDING_TAU, tauOf } from "./transmittance";
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
@@ -245,22 +253,10 @@ export function crownMatrix(x: number, y: number, h: number, yaw: number, out = 
 }
 
 /**
- * One tile's buildings, triangulated once, in tile units (0..TILE_UNITS across
- * the tile, x east, y south as in Mercator) with z in metres. Placing them in a
- * domain's frame is then a scale and an offset per vertex, not a triangulation.
- */
-interface TilePrisms {
-  prism: Float32Array;
-  floor: Float32Array;
-  count: number;
-}
-const TILE_UNITS = 4096;
-
-/**
  * A MapLibre custom layer that computes the direct-sun index for the ground in
  * view and draws it as an overlay. See `specs/spec.md`.
  *
- * Unlike the tree layer it fetches its own tiles (`tiles.ts`): the shade at
+ * Unlike the tree layer it fetches its own tiles (`src/lib/tiles`): the shade at
  * the viewport's sunward edge is cast from ground MapLibre never loaded.
  */
 export class ThreeSunlightLayer implements CustomLayerInterface {
@@ -578,30 +574,9 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
    * z12 view is ±8 km) is kept and clipped, not walked. See *Coverage*.
    */
   private footprint(domain: Domain): Vec2[] {
-    const map = this.map!;
-    const canvas = map.getCanvas();
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    const limit = domain.domainM / 2;
-    const ground = (px: number, py: number): Vec2 | null => {
-      const ll = map.unproject([px, py]);
-      if (!Number.isFinite(ll.lng) || !Number.isFinite(ll.lat)) return null;
-      // Above the horizon, unproject does not fail: it returns a mirrored point
-      // behind the camera. A real ground point projects back onto its pixel.
-      const back = map.project(ll);
-      if (Math.hypot(back.x - px, back.y - py) > 1) return null;
-      return toLocal(domain, ll.lng, ll.lat);
-    };
-    const corner = (px: number): Vec2 | null => {
-      for (let step = 0; step <= 50; step++) {
-        const p = ground(px, (step / 50) * h);
-        if (p) return p;
-      }
-      return null;
-    };
-    const quad = [ground(0, h), ground(w, h), corner(w), corner(0)].filter((p): p is Vec2 => p !== null);
+    const quad = groundFootprint(this.map!).map(([lng, lat]) => toLocal(domain, lng, lat));
     if (quad.length < 3) return [];
-    return counterClockwise(clipToSquare(counterClockwise(quad), limit));
+    return counterClockwise(clipToSquare(counterClockwise(quad), domain.domainM / 2));
   }
 
   /** Gather every covered tile's occluders into the current frame. */
@@ -666,31 +641,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     const features = this.store.buildingsOf(tile);
     const cached = this.prismCache.get(features);
     if (cached) return cached;
-    const n = 2 ** tile.z;
-    const toTile = (lng: number, lat: number): Vec2 => {
-      const mx = (180 + lng) / 360;
-      const my = (180 - (180 / Math.PI) * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))) / 360;
-      return [(mx * n - tile.x) * TILE_UNITS, (my * n - tile.y) * TILE_UNITS];
-    };
-    const prism: number[] = [];
-    const floor: number[] = [];
-    let count = 0;
-    for (const b of features) {
-      let used = false;
-      for (const rings of b.polygons) {
-        const local = rings.map((ring) => {
-          const pts = ring.map(([lng, lat]) => toTile(lng, lat));
-          // GeoJSON rings repeat their first point.
-          if (pts.length > 1) pts.pop();
-          return pts;
-        });
-        if (!local[0] || local[0].length < 3) continue;
-        addPrism(local, b.heightM, prism, floor);
-        used = true;
-      }
-      if (used) count++;
-    }
-    const out = { prism: new Float32Array(prism), floor: new Float32Array(floor), count };
+    const out = triangulateTile(tile, features);
     this.prismCache.set(features, out);
     return out;
   }
@@ -972,47 +923,4 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 function setPositions(geometry: THREE.BufferGeometry, positions: number[] | Float32Array): void {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setDrawRange(0, positions.length / 3);
-}
-
-/**
- * Copy a tile's vertices from tile units into a domain's local metres at
- * `out[at…]`; returns the next free index. Tile y runs south, local y north.
- */
-function placeTile(d: Domain, tile: TileId, src: Float32Array, out: Float32Array, at: number): number {
-  const n = 2 ** tile.z;
-  const scale = 1 / (n * TILE_UNITS * d.metre);
-  const ox = (tile.x / n - d.origin.x) / d.metre;
-  const oy = -(tile.y / n - d.origin.y) / d.metre;
-  for (let i = 0; i < src.length; i += 3) {
-    out[at + i] = ox + src[i] * scale;
-    out[at + i + 1] = oy - src[i + 1] * scale;
-    out[at + i + 2] = src[i + 2];
-  }
-  return at + src.length;
-}
-
-/**
- * One footprint (outer ring, then holes) as a closed prism into `prism`, and
- * its floor alone into `floor`.
- */
-export function addPrism(rings: Vec2[][], h: number, prism: number[], floor: number[]): void {
-  const [outer, ...holes] = rings;
-  const contour = outer.map(([x, y]) => new THREE.Vector2(x, y));
-  const holeVecs = holes.filter((r) => r.length >= 3).map((r) => r.map(([x, y]) => new THREE.Vector2(x, y)));
-  const tris = THREE.ShapeUtils.triangulateShape(contour, holeVecs);
-  // Indices run over the outer ring then each hole, as triangulated.
-  const all = [...contour, ...holeVecs.flat()];
-  for (const [a, b, c] of tris) {
-    for (const i of [a, b, c]) floor.push(all[i].x, all[i].y, 0);
-    for (const i of [a, b, c]) prism.push(all[i].x, all[i].y, 0);
-    for (const i of [a, b, c]) prism.push(all[i].x, all[i].y, h);
-  }
-  for (const ring of [outer, ...holes]) {
-    for (let i = 0; i < ring.length; i++) {
-      const [ax, ay] = ring[i];
-      const [bx, by] = ring[(i + 1) % ring.length];
-      prism.push(ax, ay, 0, bx, by, 0, bx, by, h);
-      prism.push(ax, ay, 0, bx, by, h, ax, ay, h);
-    }
-  }
 }

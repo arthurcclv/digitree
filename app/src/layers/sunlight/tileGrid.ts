@@ -2,37 +2,14 @@
  * The z14 tile grid the layer fetches on, and the tile-based coverage test.
  * Pure — no fetch, no GL. See *Data* and *Coverage* in `specs/spec.md`.
  */
-import {
-  lngLatToMercator,
-  MIN_SUN_ELEVATION_REACH_M,
-  type Domain,
-  type MercatorPoint,
-  type Vec2,
-} from "./frame";
+import { TILE_ZOOM, tileKey, tileOfMercator, type TileId } from "../../lib/tiles";
+import { MIN_SUN_ELEVATION_REACH_M, type Domain, type MercatorPoint, type Vec2 } from "./frame";
 
-/** Both sources are fetched on this one grid. It is the buildings' max zoom. */
-export const TILE_ZOOM = 14;
+// The grid itself is shared with the ambient-occlusion layer.
+export { TILE_ZOOM, tileIntersects, tileKey, tileOfLngLat, tileOfMercator, type TileId } from "../../lib/tiles";
 
 /** Margin fetched on every side: the reach of a 150 m occluder at the lowest sun. */
 export const FETCH_MARGIN_M = MIN_SUN_ELEVATION_REACH_M;
-
-export interface TileId {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export const tileKey = (t: TileId) => `${t.z}/${t.x}/${t.y}`;
-
-/** The tile holding a Mercator point. */
-export function tileOfMercator(p: MercatorPoint, z = TILE_ZOOM): TileId {
-  const n = 2 ** z;
-  return { x: Math.floor(p.x * n), y: Math.floor(p.y * n), z };
-}
-
-export function tileOfLngLat(lng: number, lat: number, z = TILE_ZOOM): TileId {
-  return tileOfMercator(lngLatToMercator(lng, lat), z);
-}
 
 /** A tile's square in a domain's local frame: `[west, south, east, north]` in metres. */
 export function tileSquareLocal(d: Domain, t: TileId): [number, number, number, number] {
@@ -93,15 +70,4 @@ export function classifyByTiles(d: Domain, covered: ReadonlySet<string>, reach: 
   const at = (x: number, y: number) => covered.has(tileKey(tileOfMercator(localToMercator(d, x, y))));
   if (!at(p[0], p[1])) return "outside";
   return at(p[0] + reach[0], p[1] + reach[1]) ? "complete" : "incomplete";
-}
-
-/** Is a tile inside a lng/lat box (`[west, south, east, north]`)? */
-export function tileIntersects(t: TileId, bounds: [number, number, number, number]): boolean {
-  const n = 2 ** t.z;
-  const west = (t.x / n) * 360 - 180;
-  const east = ((t.x + 1) / n) * 360 - 180;
-  const lat = (y: number) => (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n)));
-  const north = lat(t.y);
-  const south = lat(t.y + 1);
-  return east > bounds[0] && west < bounds[2] && north > bounds[1] && south < bounds[3];
 }

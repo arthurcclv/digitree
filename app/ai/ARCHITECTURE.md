@@ -29,12 +29,14 @@ layer, and it does touch the map (see below).
 const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
 const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
 const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
+const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
 const [probe, setProbe] = useState<ProbeResult | null>(null);
-useMapEngine(basemap, settings, tree, sun, setProbe);   // the engine reports probe clicks back
+useMapEngine(basemap, settings, tree, sun, ao, setProbe);   // the engine reports probe clicks back
 
 // useMapEngine.ts — applyLayers()
 sync.sync([
   buildingsLayer(settings),
+  ambientOcclusionRecord(ao, settings), // shown only while the buildings are
   sunlightRecord(sun),          // fetches its own tiles; shares no source
   treePointsLayer(treeSettings),
   treeMeshRecord(treeSettings),
@@ -47,7 +49,7 @@ re-runs `applyLayers`, the layer records are rebuilt from scratch, and
 path from a control to a style property, and no state lives in the map that is
 not derivable from `App.tsx`.
 
-`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef` exist only so that `applyLayers` can stay a
+`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef`/`aoSettingsRef` exist only so that `applyLayers` can stay a
 stable `useCallback` and still be called from the `style.load` handler, which was
 registered once at map creation.
 
@@ -56,16 +58,17 @@ registered once at map creation.
 Exactly two places:
 
 1. **`lib/useMapEngine.ts`** — constructs the map, owns the style-load lifecycle,
-   drives the camera, holds the `LayerSync` and the `ThreeTreeLayer` and
-   `ThreeSunlightLayer` instances.
+   drives the camera, holds the `LayerSync` and the `ThreeTreeLayer`,
+   `ThreeSunlightLayer` and `ThreeAoLayer` instances.
 2. **`layers/basemaps/index.ts`** — `hideBasemapBuildings`, `firstLabelLayerId`,
    `anchorUnderLabels`. These are style surgery, not layer description, and they
    are called *by* `useMapEngine`.
 
-The two custom-layer classes, `ThreeTreeLayer` and `ThreeSunlightLayer`, are
-handed the map by MapLibre in `onAdd` and use it only for what a custom layer
-needs: the camera, repaints, and — for the sunlight layer — `idle`, to replan
-its tiles when the view settles. They are constructed and added by
+The three custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer` and
+`ThreeAoLayer`, are handed the map by MapLibre in `onAdd` and use it only for
+what a custom layer needs: the camera, repaints, and — for the two
+self-fetching layers — `idle` and `unproject`, to replan their tiles when the
+view settles. They are constructed and added by
 `useMapEngine`, never by anything else.
 
 Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
@@ -82,14 +85,27 @@ Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 Current folders: `basemaps` (extension — produces no record), `buildings`
 (vector-tile extrusion record), `tree` (external-native record + the custom
 layer class), `sunlight` (external-native record + a second custom layer that
-computes the direct-sun index from the tree and building tiles).
+computes the direct-sun index from the tree and building tiles),
+`ambient-occlusion` (external-native record + a third custom layer that
+darkens the drawn buildings by screen-space ambient occlusion).
 
 **Two ways to get data.** The tree mesh reads MapLibre's own parsed tiles back
 with `querySourceFeatures`, so it sees exactly the viewport. The sunlight
 overlay cannot: the shade at the sunward edge of the view, and on the far ground
 of a pitched view, comes from tiles MapLibre never loads. So it fetches its own
-(`tiles.ts`), from the same two endpoints, and depends on no other layer being
-shown.
+(`src/lib/tiles`), from the same two endpoints, and depends on no other layer
+being shown. The ambient-occlusion layer fetches the building tiles the same
+way, into a buildings-only store of its own, because MapLibre's depth buffer
+cannot be sampled and it must redraw the buildings itself.
+
+**`src/lib/tiles` is shared, not a layer.** It holds what both self-fetching
+layers need: the z14 grid and Mercator formulas (`grid.ts`), the `TileStore`
+(`store.ts` — fetch, decode with `@mapbox/vector-tile`, LRU cache, with a
+per-source switch), per-tile building triangulation and placement
+(`prisms.ts`), and the viewport's ground footprint (`footprint.ts`). Each layer
+holds its own store instance; the browser's HTTP cache answers the second
+request for a building tile. It imports the tile URLs from the `tree` and
+`basemaps` index files, as the layers did.
 
 `tree` is the one folder with a real internal split, and the split is by
 dependency rather than by topic:
@@ -124,8 +140,7 @@ tested, one module for the GL:
 | `state.ts` | `SunlightState`, `SUNLIGHT_MIN_ZOOM`, `blockedState()` (what stops all work), `readoutSun()` | **no** |
 | `transmittance.ts` | `FORM_ALPHA`, `SPECIES_ALPHA`, `alphaOf`, `tauOf` | **no** |
 | `frame.ts` | the two domain grids, local frame, shadow shear, footprint polygon helpers | **no** |
-| `tileGrid.ts` | the z14 tile grid, fetch planning, tile-based coverage | **no** |
-| `tiles.ts` | `TileStore` — fetch, decode (`@mapbox/vector-tile`), LRU cache | no |
+| `tileGrid.ts` | fetch planning and tile-based coverage (re-exports the grid from `src/lib/tiles`) | **no** |
 | `geotiff.ts` | the hand-written GeoTIFF writer | **no** |
 | `sunlightLayer.ts` | `ThreeSunlightLayer` — the light pass, overlay, probe, export | yes |
 
@@ -135,6 +150,20 @@ It borrows the crown shape from the tree layer through `canopyHullOf(form)`
 `TREES_BOUNDS`), all from the tree's `index.ts`. So the shadow and the drawn
 tree share a shape and a facing, and nothing else of the tree layer's internals
 is reached.
+
+`ambient-occlusion` has the same split:
+
+| Module | Owns | Imports three.js |
+| --- | --- | --- |
+| `index.ts` | the GeoLibre record, `AmbientOcclusionSettings` | no |
+| `state.ts` | `AoState`, `AO_MIN_ZOOM`, `aoState()` | **no** |
+| `kernel.ts` | the hemisphere kernel, the 4 × 4 rotation tile, `compositeFactor` | **no** |
+| `geometry.ts` | tile planning, prism placement with exaggeration and the min-height filter | **no** |
+| `aoLayer.ts` | `ThreeAoLayer` — G-buffer, AO, blur, composite | yes |
+
+It reads the buildings' `heightScale` and `minHeight` (set on it by
+`useMapEngine`), so its redrawn prisms match the extrusions; it reaches
+nothing of the `buildings` folder but the settings type.
 
 `formGeometry.ts` and `models.ts` are the two **mesh sources**, and they are
 interchangeable on purpose: each hands `treeLayer.ts` a list of
@@ -160,8 +189,9 @@ style.load
   → hideBasemapBuildings(map)          // kill the basemap's own buildings
   → re-add ThreeTreeLayer if missing   // sync only *moves* native layers
   → re-add ThreeSunlightLayer if missing
+  → re-add ThreeAoLayer if missing
   → map.setLight(...)                  // tolerated to throw
-  → applyLayers()                      // sync([buildings, sunlight, tree…]) + re-anchor
+  → applyLayers()                      // sync([buildings, ao, sunlight, tree…]) + re-anchor
   → setReady(true)
 ```
 
@@ -195,6 +225,12 @@ It also uses MapLibre's `prerender` hook — the offscreen pass — for its ligh
 pass and for every readback (probe, export), so no GL work of its own ever runs
 between MapLibre's draws. The sun time is driven by an effect, like height.
 
+The ambient-occlusion layer is a third member, with its own paint bridge
+(`AO_LAYER_ID`, visibility only). Its G-buffer, AO and blur passes run in
+`prerender`; `render` only multiplies the result over the frame. Intensity,
+radius and the buildings' exaggeration and filter reach it through
+`setParams`, driven by an effect.
+
 ## Module inventory
 
 | Module | Owns |
@@ -203,6 +239,7 @@ between MapLibre's draws. The sun time is driven by an effect, like height.
 | `src/App.tsx` | all control state, the chrome, viewpoint selection, telemetry |
 | `src/lib/useMapEngine.ts` | map lifecycle, layer sync, camera, the sunlight probe click and export hand-off; exports `Camera`, `Viewpoint`, `HOME` |
 | `src/lib/viewpoints.ts` | the eight `VIEWPOINTS` (imports `HOME` and `TREE_LOCATION`) |
+| `src/lib/tiles/` | the self-fetching layers' shared tile grid, `TileStore`, building prisms and ground footprint |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |
 | `src/ui/LayerMenu.tsx` | the viewport's layer-visibility popover; owns only its own open/closed state |

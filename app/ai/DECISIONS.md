@@ -6,6 +6,48 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-24 — Building ambient occlusion is screen-space, from a redrawn G-buffer
+
+**Problem.** MapLibre 6.10's `fill-extrusion` has no ambient-occlusion
+property (that is Mapbox-only), and GeoLibre 3.0.0 exposes only the
+`vertical-gradient` it hardcodes on. A custom layer cannot sample MapLibre's
+depth buffer either, since the default framebuffer's depth is not a texture in
+WebGL.
+
+**Decision.** A new `ambient-occlusion` layer, a third three.js custom layer:
+- It fetches the z14 building tiles itself, and redraws them into a
+  half-resolution G-buffer (eye-relative position and normal, RGBA32F).
+- It runs 16-sample hemisphere SSAO with a range check, then a 4 × 4
+  depth-aware blur.
+- It multiplies the result over the frame by **redrawing the prisms and a
+  ground plane** with a polygon offset. The prisms test `LESS` and write depth,
+  so a building repeated by the tile buffer darkens once. The ground never
+  writes depth, so the direct-sun overlay still meets the ground's depth.
+- It works from z14 up only. There MapLibre draws the same overzoomed z14
+  tiles, so the redrawn prisms match the extrusions.
+- It follows the display controls (exaggeration, min height, buildings
+  hidden). It is decoration, not physics, unlike the direct-sun index.
+
+**Also decided.** `TileStore`, the tile grid, the building triangulation and
+the ground footprint moved from `sunlight/` into `src/lib/tiles/`, and the
+store gained a per-source switch. Each layer keeps its own store instance: one
+store has a single wanted set, so sharing would let one layer's plan cancel the
+other's. The layer ships **on**.
+
+**Rejected.**
+- *Ground contact AO only* (a blurred footprint halo): cheap, but it cannot
+  darken walls or inner corners.
+- *Baked per-building AO* (one tone per building, from PostGIS): static, and
+  it needs an infra pipeline.
+- *A full-screen composite writing `gl_FragDepth`*: MapLibre gives 3D layers
+  their own depth range, which `gl_FragDepth` bypasses.
+
+**Revisit if** MapLibre gains a native extrusion AO, or exposes a sampleable
+depth texture to custom layers. Either would remove the redraw. Revisit too if
+the G-buffer's cost shows on low-end GPUs, where `AO_SCALE` is the knob.
+
+---
+
 ## 2026-09-24 — The direct-sun overlay starts at z12, with a zoom-adaptive near grid
 
 **Decision.** `SUNLIGHT_MIN_ZOOM` is 12. Below z15 the near grid is 4,096 m at

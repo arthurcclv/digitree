@@ -2,6 +2,15 @@ import { useState } from "react";
 import { BASEMAPS, OSM_ATTRIBUTION } from "./layers/basemaps";
 import { DEFAULT_BUILDING_SETTINGS, type BuildingSettings } from "./layers/buildings";
 import {
+  AO_INTENSITY_MAX,
+  AO_MIN_ZOOM,
+  AO_RADIUS_MAX_M,
+  AO_RADIUS_MIN_M,
+  DEFAULT_AO_SETTINGS,
+  type AmbientOcclusionSettings,
+  type AoState,
+} from "./layers/ambient-occlusion";
+import {
   DEFAULT_TREE_SETTINGS,
   MODELS_ATTRIBUTION,
   TREES_ATTRIBUTION,
@@ -60,6 +69,14 @@ const SUNLIGHT_STATE_TEXT: Record<SunlightState, string | null> = {
   ready: null,
 };
 
+/** Why no occlusion is drawn, in the panel's words. */
+const AO_STATE_TEXT: Record<AoState, string | null> = {
+  off: null,
+  zoom: `zoom in to z${AO_MIN_ZOOM}`,
+  unsupported: "GPU lacks float targets",
+  ready: null,
+};
+
 /** The tile readout: the covered count, then what is loading or failed. */
 const tilesText = ({ covered, pending, failed }: TileCounts): string =>
   `${covered}` + (pending ? ` · ${pending} loading` : "") + (failed ? ` · ${failed} failed` : "");
@@ -108,6 +125,7 @@ export default function App() {
   const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
   const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
   const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
+  const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
   const [exporting, setExporting] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [activeView, setActiveView] = useState(VIEWPOINTS[0].id);
@@ -121,12 +139,15 @@ export default function App() {
     error,
     modelStatus,
     sunlightStatus,
+    aoState,
     exportSunlight,
     flyTo,
     zoomBy,
     setPitch,
     resetNorth,
-  } = useMapEngine(basemap, settings, tree, sun, setProbe);
+  } = useMapEngine(basemap, settings, tree, sun, ao, setProbe);
+
+  const patchAo = (next: Partial<AmbientOcclusionSettings>) => setAo((prev) => ({ ...prev, ...next }));
 
   const patchSun = (next: Partial<SunlightSettings>) => {
     // A probe answers for one computed result; a new sun or the overlay
@@ -262,6 +283,39 @@ export default function App() {
               onChange={(labelsOnTop) => patch({ labelsOnTop })}
               title="Off by default: labels styled for a dark ground are unreadable over lit building faces."
             />
+            <CheckboxRow
+              label="Ambient occlusion"
+              checked={ao.enabled}
+              onChange={(enabled) => patchAo({ enabled })}
+              title="Darkens inner corners, narrow gaps and the ground at the foot of walls."
+            />
+            {ao.enabled ? (
+              <>
+                <Slider
+                  label="Intensity"
+                  value={Math.round(ao.intensity * 100)}
+                  min={0}
+                  max={AO_INTENSITY_MAX * 100}
+                  step={5}
+                  unit="%"
+                  title="100% multiplies by the occlusion; above it the darkening is steeper and saturates at black."
+                  onChange={(v) => patchAo({ intensity: v / 100 })}
+                />
+                <Slider
+                  label="Radius"
+                  value={ao.radiusM}
+                  min={AO_RADIUS_MIN_M}
+                  max={AO_RADIUS_MAX_M}
+                  step={1}
+                  unit="m"
+                  title="How far from a wall the occlusion reaches, in ground metres."
+                  onChange={(radiusM) => patchAo({ radiusM })}
+                />
+                {settings.visible && AO_STATE_TEXT[aoState] ? (
+                  <StatLine k="Occlusion" v={AO_STATE_TEXT[aoState]!} plain />
+                ) : null}
+              </>
+            ) : null}
           </Panel>
 
           <Panel title="Trees">

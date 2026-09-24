@@ -10,7 +10,7 @@ export {
 } from "./sunlightLayer";
 export { SUNLIGHT_MIN_ZOOM, type SunlightState } from "./state";
 export { MIN_SUN_ELEVATION_DEG } from "./sun";
-export type { TileCounts } from "./tiles";
+export type { TileCounts } from "../../lib/tiles";
 
 /** GeoLibre record id. */
 export const SUNLIGHT_LAYER_ID = "sunlight";

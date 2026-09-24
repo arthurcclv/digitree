@@ -157,6 +157,26 @@ rebuild: the layer is reachable as
 `__map.getLayer("threejs-sunlight-native").implementation`, whose `probe()` and
 `status()` are the same calls the panel makes.
 
+## Checking ambient occlusion
+
+At z16–17 over dense blocks (Xinyi, Ximending), toggle **Buildings → Ambient
+occlusion** and compare:
+- **Where it darkens.** The ground along each wall's foot, inner corners, and
+  narrow gaps get darker. An open roof and open pavement are unchanged. Diffing
+  two screenshots makes a subtle result obvious.
+- **What it never darkens.** Tree meshes, tree circles and the direct-sun
+  overlay are not darkened. None of them should appear in the diff.
+- **No seams, no halos.** Look for a stripe along a tile edge, which means a
+  duplicated building darkened twice. Look for a dark rim around a tall
+  building against the ground behind it, which means the range check has gone.
+- **Controls.** Height exaggeration and min height move the shading with the
+  buildings. Below z14, the panel reads "zoom in to z14" and the frame is
+  identical to AO off.
+
+The layer is reachable as
+`__map.getLayer("threejs-ambient-occlusion-native").implementation`. Its
+`state` and `buildings` fields say whether it is drawing.
+
 ## Preparing tree models
 
 The `.glb` files under `public/models/trees/` are not the files that were

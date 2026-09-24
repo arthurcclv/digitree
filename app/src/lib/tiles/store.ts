@@ -1,16 +1,17 @@
 import { VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
-import { OSM_TILEJSON } from "../basemaps";
-import { TREES_BOUNDS, TREES_SOURCE_LAYER, TREES_TILES } from "../tree";
-import { tileIntersects, tileKey, type TileId } from "./tileGrid";
+import { OSM_TILEJSON } from "../../layers/basemaps";
+import { TREES_BOUNDS, TREES_SOURCE_LAYER, TREES_TILES } from "../../layers/tree";
+import { tileIntersects, tileKey, type TileId } from "./grid";
 
 /**
- * The layer's own tiles. See *Data* in `specs/spec.md`: this layer does not
- * read MapLibre's parsed tiles, because MapLibre loads only the viewport and
- * the shade at the viewport's sunward edge is cast from outside it.
+ * Tiles fetched by a layer itself rather than read from MapLibre. See *Data*
+ * in the sunlight spec: MapLibre loads only the viewport, and the shade at the
+ * viewport's sunward edge is cast from outside it. The ambient-occlusion layer
+ * uses a buildings-only store of its own.
  *
- * Decoded features are kept in lng/lat; placing them in a domain's frame is
- * the layer's job and changes every time the view moves.
+ * Decoded features are kept in lng/lat; placing them in a frame is the
+ * layer's job and changes every time the view moves.
  */
 
 export interface TreeFeature {
@@ -30,7 +31,7 @@ export interface BuildingFeature {
 /** Decoded tiles kept per source for the session. */
 export const TILE_CACHE_SIZE = 256;
 
-/** Requests in flight at once, across both sources. */
+/** Requests in flight at once, across a store's sources. */
 export const FETCH_CONCURRENCY = 6;
 
 type Entry<T> = { state: "ready"; features: T[] } | { state: "pending" } | { state: "failed" };
@@ -75,15 +76,25 @@ function decodeTrees(buf: ArrayBuffer, t: TileId): TreeFeature[] {
   return out;
 }
 
+/**
+ * A building feature's height, or `null` when it is not drawn in 3D at all:
+ * OSM marks it `hide_3d`, or it has no positive `render_height`. The
+ * extrusion's own filter drops the same features.
+ */
+export function buildingHeight(props: Record<string, unknown>): number | null {
+  if (props.hide_3d === true) return null;
+  const h = Number(props.render_height);
+  return h > 0 ? h : null;
+}
+
 function decodeBuildings(buf: ArrayBuffer, t: TileId): BuildingFeature[] {
   const layer = new VectorTile(new PbfReader(buf)).layers[BUILDINGS_SOURCE_LAYER];
   if (!layer) return [];
   const out: BuildingFeature[] = [];
   for (let i = 0; i < layer.length; i++) {
     const vf = layer.feature(i);
-    if (vf.properties.hide_3d === true) continue;
-    const h = Number(vf.properties.render_height);
-    if (!(h > 0)) continue;
+    const h = buildingHeight(vf.properties);
+    if (h === null) continue;
     const g = vf.toGeoJSON(t.x, t.y, t.z).geometry;
     const polygons =
       g.type === "Polygon"
@@ -106,8 +117,10 @@ export interface TileCounts {
  * What differs between the two sources: where a tile lives, how it decodes,
  * and which tiles can hold anything at all.
  */
+export type TileSourceName = "trees" | "buildings";
+
 interface Source<T> {
-  name: "trees" | "buildings";
+  name: TileSourceName;
   cache: Lru<Entry<T>>;
   /** The URL template, or `null` when it cannot be had (an unreadable TileJSON). */
   template: () => Promise<string | null>;
@@ -117,9 +130,12 @@ interface Source<T> {
 }
 
 /**
- * Fetches, decodes and caches both sources on one tile grid. `want()` is the
+ * Fetches, decodes and caches its sources on one tile grid. `want()` is the
  * only way in: it names the tiles the layer needs now, and anything not yet
  * held is queued. `onChange` fires when a tile lands or fails.
+ *
+ * A store holds both sources unless told otherwise; a tile counts as covered
+ * once every source the store holds has it.
  */
 export class TileStore {
   private readonly trees: Source<TreeFeature> = {
@@ -143,7 +159,14 @@ export class TileStore {
 
   onChange: (() => void) | null = null;
 
-  constructor(private readonly fetchFn: typeof fetch = (...a) => fetch(...a)) {}
+  private readonly sources: ReadonlySet<TileSourceName>;
+
+  constructor(
+    private readonly fetchFn: typeof fetch = (...a) => fetch(...a),
+    sources: TileSourceName[] = ["trees", "buildings"],
+  ) {
+    this.sources = new Set(sources);
+  }
 
   /** Replace the wanted set; queue whatever is missing. Failed tiles are retried. */
   want(tiles: TileId[]): void {
@@ -169,12 +192,9 @@ export class TileStore {
     this.pump();
   }
 
-  /** The wanted tiles whose both sources are ready. */
+  /** The wanted tiles every held source has ready. */
   covered(): TileId[] {
-    return this.wanted.filter((t) => {
-      const k = tileKey(t);
-      return this.trees.cache.get(k)?.state === "ready" && this.buildings.cache.get(k)?.state === "ready";
-    });
+    return this.wanted.filter((t) => this.states(t).every((s) => s === "ready"));
   }
 
   counts(): TileCounts {
@@ -182,14 +202,20 @@ export class TileStore {
     let pending = 0;
     let failed = 0;
     for (const t of this.wanted) {
-      const k = tileKey(t);
-      const a = this.trees.cache.get(k)?.state;
-      const b = this.buildings.cache.get(k)?.state;
-      if (a === "failed" || b === "failed") failed++;
-      else if (a === "ready" && b === "ready") covered++;
+      const states = this.states(t);
+      if (states.includes("failed")) failed++;
+      else if (states.every((s) => s === "ready")) covered++;
       else pending++;
     }
     return { covered, pending, failed };
+  }
+
+  /** One tile's state in each held source. */
+  private states(t: TileId): (Entry<unknown>["state"] | undefined)[] {
+    const k = tileKey(t);
+    const out: (Entry<unknown>["state"] | undefined)[] = [];
+    this.eachSource((src) => out.push(src.cache.get(k)?.state));
+    return out;
   }
 
   treesOf(t: TileId): TreeFeature[] {
@@ -205,10 +231,10 @@ export class TileStore {
     return e?.state === "ready" ? e.features : [];
   }
 
-  /** Both sources, each with its own feature type — a union array would lose it. */
+  /** The held sources, each with its own feature type — a union array would lose it. */
   private eachSource(fn: <T>(src: Source<T>) => void): void {
-    fn(this.trees);
-    fn(this.buildings);
+    if (this.sources.has("trees")) fn(this.trees);
+    if (this.sources.has("buildings")) fn(this.buildings);
   }
 
   private templateFor(): Promise<string | null> {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { tileOfLngLat, type TileId } from "./tileGrid";
-import { FETCH_CONCURRENCY, TileStore } from "./tiles";
+import { tileOfLngLat, type TileId } from "./grid";
+import { buildingHeight, FETCH_CONCURRENCY, TileStore } from "./store";
 
 const TILEJSON = "https://tiles.openfreemap.org/planet";
 const inTaipei = tileOfLngLat(121.55, 25.04);
@@ -118,5 +118,24 @@ describe("TileStore", () => {
     await drain(store);
     expect(store.counts().covered).toBe(16);
     expect(peak).toBeLessThanOrEqual(FETCH_CONCURRENCY);
+  });
+
+  test("a buildings-only store never asks for trees, and covers on buildings alone", async () => {
+    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : empty()));
+    const store = new TileStore(fn, ["buildings"]);
+    store.want([inTaipei]);
+    await drain(store);
+    expect(calls.some((u) => u.startsWith("/tiles/trees"))).toBe(false);
+    expect(store.counts()).toEqual({ covered: 1, pending: 0, failed: 0 });
+  });
+});
+
+describe("buildingHeight", () => {
+  test("drops hide_3d and non-positive heights, as the extrusion filter does", () => {
+    expect(buildingHeight({ render_height: 30 })).toBe(30);
+    expect(buildingHeight({ render_height: "12.5" })).toBe(12.5);
+    expect(buildingHeight({ render_height: 30, hide_3d: true })).toBeNull();
+    expect(buildingHeight({ render_height: 0 })).toBeNull();
+    expect(buildingHeight({})).toBeNull();
   });
 });

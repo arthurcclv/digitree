@@ -1,3 +1,4 @@
+import { lngLatToMercator, metreInMercator, type MercatorPoint } from "../../lib/tiles";
 import { MIN_SUN_ELEVATION_DEG } from "./sun";
 
 /**
@@ -88,37 +89,19 @@ export function applyRowMajor(m: number[], x: number, y: number, z: number): Vec
 }
 
 // ---------------------------------------------------------------------------
-// Web Mercator, matching MapLibre's own `MercatorCoordinate` formulas so the
-// local frame placed on the map and the one computed here are the same frame.
+// Web Mercator. The formulas shared with the other self-fetching layers live in
+// `src/lib/tiles`; this file adds the inverse and the export's own sphere.
 
-const EARTH_RADIUS_M = 6_371_008.8;
-const EARTH_CIRCUMFERENCE_M = 2 * Math.PI * EARTH_RADIUS_M;
+export { lngLatToMercator, metreInMercator, type MercatorPoint };
 
 /** EPSG:3857's sphere, which is not MapLibre's — used only for export. */
 const WEB_MERCATOR_EXTENT_M = 2 * Math.PI * 6_378_137;
-
-export interface MercatorPoint {
-  x: number;
-  y: number;
-}
-
-export function lngLatToMercator(lng: number, lat: number): MercatorPoint {
-  return {
-    x: (180 + lng) / 360,
-    y: (180 - (180 / Math.PI) * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))) / 360,
-  };
-}
 
 export function mercatorToLngLat(p: MercatorPoint): [number, number] {
   const lng = p.x * 360 - 180;
   const y2 = 180 - p.y * 360;
   const lat = (360 / Math.PI) * Math.atan(Math.exp((y2 * Math.PI) / 180)) - 90;
   return [lng, lat];
-}
-
-/** Mercator units per metre on the ground at a latitude. */
-export function metreInMercator(lat: number): number {
-  return 1 / (EARTH_CIRCUMFERENCE_M * Math.cos((lat * Math.PI) / 180));
 }
 
 /**

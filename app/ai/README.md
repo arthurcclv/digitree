@@ -22,6 +22,7 @@ These explain the product, the structure, and the process around the specs.
 | `buildings` | [`src/layers/buildings/specs/spec.md`](../src/layers/buildings/specs/spec.md) |
 | `tree` | [`src/layers/tree/specs/spec.md`](../src/layers/tree/specs/spec.md) |
 | `sunlight` | [`src/layers/sunlight/specs/spec.md`](../src/layers/sunlight/specs/spec.md) |
+| `ambient-occlusion` | [`src/layers/ambient-occlusion/specs/spec.md`](../src/layers/ambient-occlusion/specs/spec.md) |
 
 ## Keeping these honest
 
