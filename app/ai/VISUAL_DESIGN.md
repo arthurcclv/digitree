@@ -98,6 +98,7 @@ three places for it to drift.
 | Tree bark / leaf materials | `buildTree()` in `src/layers/tree/treeLayer.ts` |
 | Tree light rig (hemisphere + directional) | `buildLights()` in the same file |
 | MapLibre extrusion light | the `map.setLight` call in `useMapEngine.ts` |
+| Direct-sun ramp and incomplete hatch | `RAMP` / `INCOMPLETE_GREY` in `src/layers/sunlight/sunlightLayer.ts`, tabled in its spec |
 
 **The ramps deliberately do not reuse the chrome palette.** A ramp answers a
 question — *how tall is this building* — and a ramp drawn in interface blues
@@ -110,6 +111,13 @@ current basemap's `buildingColor` (`ai/DECISIONS.md`, 2026-09-24). The ramps
 stay in the layer and keep these rules for whatever exposes them next; the
 swatch that used to sit beside each ramp name — the one place a component showed
 a data colour — is drawn by no control at present.
+
+**The direct-sun ramp is the second data ramp**, and follows the same rule:
+it encodes a quantity and borrows nothing from the chrome. Deep indigo is shade,
+pale gold is full sun, and alpha falls with the index — full sun is a light wash,
+so the overlay never hides the ground it is describing. Cells it cannot vouch
+for are hatched grey rather than coloured, because a confident colour on an
+incomplete value is the one mistake this overlay must not make.
 
 ### Viewport lighting
 
@@ -216,6 +224,11 @@ than a poster with controls over it.
 
 ## Component patterns
 
+- **Date field** (`.field-date`): the only date control, in the Direct sun
+  card. It is a slider's own `.field__row` and `.field__label`, with the date
+  input styled exactly like the slider's value box (`--bg` fill,
+  `--border-subtle`, `--r-sm`, 12px tabular) and `color-scheme: dark`, so the
+  browser's own picker matches.
 - **Panel** (`.panel`): the base card — `--panel` surface, `--border-subtle`
   border, 8px radius, an uppercase `.panel-title`, then rows. No numbered index,
   no hatched header, no entrance animation. `.panel-title.subhead` is a

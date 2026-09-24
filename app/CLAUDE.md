@@ -31,13 +31,23 @@ src/
       index.ts        both GeoLibre records (treePointsLayer, treeMeshRecord),
                       TreeSettings
       treeLayer.ts    ThreeTreeLayer — the MapLibre custom layer + instanced mesh
-      formGeometry.ts the eight procedural form shapes + the shared materials
+      formGeometry.ts the eight procedural form shapes + the shared materials,
+                      and canopyHullOf() — each form's convex canopy hull
       models.ts       FORM_MODELS, the glTF loader, normalizeModel — the other
                       mesh source; interchangeable with formGeometry.ts
       forms.ts        TreeForm, the species -> silhouette table, formOf()
       placement.ts    rotationOf() — each tree's yaw, hashed from its tree_id
       constants.ts    the Martin source contract, shared by the two above
       *.test.ts       vitest, beside the modules they cover
+      specs/spec.md
+    sunlight/
+      index.ts        sunlightRecord() GeoLibre record, SunlightSettings
+      sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe, export
+      tiles.ts        TileStore — its own tree/building tile fetch + cache
+      sun.ts, state.ts, transmittance.ts, frame.ts, tileGrid.ts, geotiff.ts
+                      the pure parts: sun position, state gate, α table,
+                      grid/shear maths, tile planning/coverage, GeoTIFF writer
+      *.test.ts
       specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
@@ -80,7 +90,8 @@ Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
 `npm test` covers only what is pure — the species table, the geometry builders,
-`normalizeModel`, and assertions about the served model folder itself (every
+`normalizeModel`, the sunlight layer's pure modules and its tile store (on a
+fake `fetch`), and assertions about the served model folder itself (every
 `.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
 so anything needing a map or a GL context — including whether a model actually
 loads — is still checked in the browser.

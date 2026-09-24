@@ -11,8 +11,10 @@ comment.
   `import type { GeoLibreLayer } from "@geolibre/core"` or
   `import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core"`.
 - `isolatedModules` is on: re-export types with `export type`.
-- No `any`. Where a foreign API forces a cast, cast narrowly and comment it —
-  the one instance is the MapLibre matrix hand-off in `treeLayer.ts`.
+- No `any`. Where a foreign API forces a cast, cast narrowly and comment it.
+  The model is the MapLibre matrix hand-off in `treeLayer.ts`; `sunlightLayer.ts`
+  repeats it, and adds the one read of three.js's private
+  `__webglFramebuffer`.
 - Exported settings shapes are `interface`; unions and tuples are `type`.
 - No default exports except the React page component (`App.tsx`).
 

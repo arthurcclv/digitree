@@ -24,11 +24,17 @@ export { formOf, SPECIES_FORMS, type TreeForm } from "./forms";
 /** Per-tree variation. See "Rotation is hashed, not random". */
 export { rotationOf } from "./placement";
 
+/** The shape each form casts a shadow with. See *The canopy hull*. */
+export { canopyHullOf, TREE_FORMS } from "./formGeometry";
+
 export {
   MODELS_ATTRIBUTION,
   TREES_ATTRIBUTION,
+  // The source contract, for a layer that fetches the tree tiles itself (sunlight).
+  TREES_BOUNDS,
   TREES_MIN_ZOOM,
   TREES_SOURCE_LAYER,
+  TREES_TILES,
   TREES_TOTAL,
   TREE_LAYER_ID,
   TREE_POINTS_LAYER_ID,

@@ -11,8 +11,10 @@ removing one means editing this file in the same change (and usually
 | `@geolibre/map` | `3.0.0` (pinned) | `createLayerSync`, `installMapTransformCompat` — the headless half of GeoLibre |
 | `@geolibre/core` | `3.0.0` (pinned) | `DEFAULT_LAYER_STYLE`, the `GeoLibreLayer` / `LayerStyle` types, `setExternalNativePaintBridge` / `clearExternalNativePaintBridge` |
 | `maplibre-gl` | `^6.7.0` | the renderer GeoLibre drives; also `MercatorCoordinate`, `CustomLayerInterface` |
-| `three` | `^0.186.0` | draws the trees inside a MapLibre custom layer; `examples/jsm` supplies both `mergeGeometries` and the `GLTFLoader` the modelled mesh source uses |
+| `three` | `^0.186.0` | draws the trees inside a MapLibre custom layer; `examples/jsm` supplies `mergeGeometries`, the `ConvexGeometry` the canopy hulls are built with, and the `GLTFLoader` the modelled mesh source uses |
 | `react` / `react-dom` | `^19.2.0` | the chrome |
+| `@mapbox/vector-tile` | `^3.0.0` | decodes the MVT tiles the sunlight layer fetches for itself; the same decoder MapLibre uses internally, which does not export it |
+| `pbf` | `^5.1.2` | the protobuf reader `@mapbox/vector-tile` reads through |
 
 The two GeoLibre packages are **pinned exactly**. They are the subject of the
 app, their external-native path is the seam the tree depends on, and
@@ -52,10 +54,13 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
   `useState` in `App.tsx`. The app makes **no `fetch()` call of its own by
   default** — all network traffic is tiles. The tree layer's 3D half reads back
   the vector tiles MapLibre already parsed (`querySourceFeatures`) rather than
-  fetching anything, which is what keeps that true now that the app has a
-  backend. The one exception is opt-in: choosing the **modelled** mesh source
-  makes `GLTFLoader` fetch eight files from the app's own `public/`. No
-  data-fetching library was added for it — `three` already ships the loader.
+  fetching anything. There are two opt-in exceptions:
+  - the **modelled** mesh source makes `GLTFLoader` fetch eight files from the
+    app's own `public/`;
+  - the **direct-sun overlay** fetches its own z14 tree and building tiles,
+    with plain `fetch`, because it needs ground MapLibre never loads.
+
+  Neither needed a data-fetching library.
 - **No linter, no formatter, no CI.** `npm run build` and `npm test` are the
   gates. A test runner *is* now configured — `vitest`, added with the tree form
   classes; see `DECISIONS.md`. It was chosen for costing nothing: it reuses the

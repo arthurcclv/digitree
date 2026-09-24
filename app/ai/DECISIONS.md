@@ -6,6 +6,146 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-24 — The direct-sun overlay starts at z12, with a zoom-adaptive near grid
+
+**Decision.** `SUNLIGHT_MIN_ZOOM` is 12. Below z15 the near grid is 4,096 m at
+1 m cells, not 2,048 m at 0.5 m, in the same 4096² target. The footprint
+**clips** distant canvas corners to the far grid instead of rejecting them.
+
+**Why the grid adapts.** At z14 a flat view is ~4 km across and a pixel is
+~4.3 m. A fixed 2 km near grid would leave three-quarters of the view on 8 m
+cells, where small crowns vanish, with a seam at 2 km. At z12 (~17 m per
+pixel) the 8 m far grid is finer than the screen, so no third level is needed.
+
+**Why clip, not reject.** Rejecting corners beyond ±8 km is harmless at z16,
+but at z12 every corner is ~11 km out. The footprint collapses to nothing and
+84% of the view goes undrawn. Only the mirrored above-horizon points are
+rejected.
+
+**Measured**, per fresh page:
+
+| view | tiles | trees | ready | download |
+| --- | --- | --- | --- | --- |
+| z12 flat | 81 | 154k | 3.8 s | 8.5 MB |
+| z12 pitch 60 | 81 | 154k | 21 s | 13.5 MB |
+| z14 flat | 9 | 62k | ~0.5 s | — |
+| z14 pitch 60 | 35 | 141k | 0.8 s | 2.4 MB |
+
+Rebuilds run 80–200 ms. Every ground point within ±8 km was covered at every
+zoom tested.
+
+The slow pitched z12 case is OpenFreeMap latency: single building tiles took up
+to 5 s.
+
+**What it rules out.** Below z12 a flat view outgrows the ±8 km far grid. A
+pitched z12–13 view already shows the grid's square edge, and the ground beyond
+it is not drawn. So the export stays the near grid, at most 4 km; a city-scale
+GeoTIFF would be a batch job, not this overlay.
+
+---
+
+## 2026-09-24 — The direct-sun overlay fetches its own tiles, on two nested grids
+
+**Problem.** Read from MapLibre's viewport tiles, much of the view is left
+uncovered. At pitch 75 about 30% of the canvas lies outside a single 2 km grid.
+At a 17° sun, 54% of even a flat view is hatched "incomplete", because the
+occluders exist only in the viewport's tiles and a 150 m reach at 17° is 494 m.
+
+**Decision.**
+- **Two nested grids.** A far grid of 16 km at 8 m cells sits around the near
+  grid.
+- **The layer fetches its own z14 tiles.** It requests Martin's trees and
+  OpenFreeMap's buildings for the visible footprint plus an 851 m margin on
+  every side (the 150 m reach at the 10° minimum sun). It decodes them with
+  `@mapbox/vector-tile` and caches 256 tiles per source.
+- **Coverage is the set of fetched tiles**, drawn into a third channel of each
+  target. Verified in the browser across pitch 0–85 and suns of 10–64°: every
+  ground sample within ±8 km is covered, with none incomplete.
+
+**Why not MapLibre's tiles, like the tree mesh.** Reading them back keeps the
+app free of its own network code, and for this layer it makes correctness
+impossible. The tree mesh keeps that design, because it only ever draws what is
+in view.
+
+**Costs, measured.**
+- 160 MB of GPU memory for two targets.
+- A 10 ms pass for both levels.
+- A rebuild of ~30–40 ms per view change once tiles are cached. Buildings are
+  triangulated once per tile, and without that it is ~110 ms.
+- On first sight, 9–15 z14 tiles per source.
+
+**Found on the way.** Above the horizon MapLibre's `unproject` returns a
+mirrored point *behind* the camera rather than failing, which sent the fetch
+plan south of a north-facing view. A ground point is accepted only if it
+projects back onto its own pixel.
+
+**What it rules out.** The overlay stops at ±8 km. Its far ground is 8 m cells,
+where a small crown can be sub-cell and cast nothing. Export is the near grid
+only. Revisit if a far-horizon analysis is ever wanted.
+
+---
+
+## 2026-09-24 — Direct sun is accumulated optical depth, drawn straight into a ground grid
+
+**Decision.** The sunlight layer computes, per ground cell, `exp(−Σ τ)` over
+every occluder the sun ray crosses (τ = −ln α). It does **not** use a shadow
+map. One GPU pass shears every occluder vertex along the sun onto the ground and
+rasterises it additively into a north-up half-float grid. Crowns are each
+form's canopy hull, instanced; buildings are prisms at τ = 1000. Everything is
+drawn double-sided at τ / 2.
+
+**Why not a shadow map.** A depth map keeps only the nearest occluder, so it
+answers "lit or not" and cannot multiply: two α = 0.5 crowns would read 0.5, not
+0.25. Accumulating τ is the product, without 8-bit quantisation.
+
+**Why a ground grid, not the light's view.** In the sun's own view a ground cell
+stretches by 1/sin(el) along the azimuth — 5.8× at 10°. The shear writes
+straight into a north-up grid, so every cell is the same size whatever the sun,
+and the overlay and the export sample it without resampling.
+
+**Why double-sided at τ / 2.** Every ray crosses a closed surface an even
+number of times, so a convex crown contributes exactly τ with no assumption
+about face winding under a shear and a mirrored Mercator axis.
+
+**Why each form's canopy hull.** A crown is the convex hull of its form's
+procedural canopy (`canopyHullOf(form)`, from the tree layer), normalised to
+height 1, scaled by the surveyed height and yawed by the tree layer's own
+`rotationOf(tree_id)`. So the shadow has the drawn crown's outline and faces
+its way. It is a hull, not the canopy itself, because τ / 2 per crossing is
+"once per tree" only for a closed convex volume. The canopy is overlapping
+blobs and stacked cones, so drawn as-is it would count one tree two or more
+times where they overlap, a darker core under a lone tree. The hull keeps the
+outline and loses only the gaps between blobs and fronds, which α already
+stands for. A symmetric proxy (an ellipsoid in the canopy's bounding box) was
+considered: right in size, wrong in outline, and unable to face the way the
+tree does. At 20–76 triangles a hull is also cheaper than a smooth ellipsoid.
+
+**Checked.**
+- **Unit tests:** every form's hull is closed, convex, contains every canopy
+  vertex and fits the unit height, and a hull instance lands exactly where the
+  tree layer's matrix puts the tree.
+- **In the browser:** every probed lone-crown point reads 0.500 and every
+  two-crown point 0.250. Around lone trees every sample reads 1, 0.5 or 0
+  (buildings); the only 0.25s were all explained by a neighbouring 75 m "tree",
+  one of the inventory's keyed heights. The two-level pass measured 4–9 ms.
+
+**It ignores every display control.** Exaggeration, the kind filter, the mesh
+source and layer visibility do not change a value. The glTF models' leaf
+textures play no part either, because α already carries all of a crown's
+porosity; letting the textures cast shade as well would count it twice.
+
+**What it rules out.** Diffuse sky, terrain, path length through a crown, and
+leaf-off (all in the spec's *Out of scope*). Concave crowns and frond gaps
+casting their own shade, and modelled (glTF) trees casting their own shapes: a
+shadow is always the form's procedural hull. An exact-silhouette variant (one
+fragment per tree per texel, through a per-instance depth and a `NOTEQUAL`
+test) would lift that, at the cost of a depth buffer per level. It also rules
+out syncing the decorative tree and extrusion lights to the sun time; that is a
+separate change to the tree layer. The α values are placeholders (0.5
+everywhere) until real ones are supplied.
+
+---
+
 ## 2026-09-24 — Cards state figures as stat lines, not prose
 
 **Decision.** The Trees card's closing paragraph is gone. The number it carried

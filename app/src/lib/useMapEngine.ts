@@ -17,6 +17,15 @@ import {
   type ModelStatus,
   type TreeSettings,
 } from "../layers/tree";
+import {
+  SUNLIGHT_LAYER_ID,
+  SUNLIGHT_NATIVE_LAYER_ID,
+  sunlightRecord,
+  ThreeSunlightLayer,
+  type ProbeResult,
+  type SunlightSettings,
+  type SunlightStatus,
+} from "../layers/sunlight";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker
@@ -59,6 +68,8 @@ export function useMapEngine(
   basemap: Basemap,
   settings: BuildingSettings,
   treeSettings: TreeSettings,
+  sunlightSettings: SunlightSettings,
+  onProbe: (result: ProbeResult) => void,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -68,6 +79,11 @@ export function useMapEngine(
   settingsRef.current = settings;
   const treeSettingsRef = useRef(treeSettings);
   treeSettingsRef.current = treeSettings;
+  const sunlightRef = useRef<ThreeSunlightLayer | null>(null);
+  const sunlightSettingsRef = useRef(sunlightSettings);
+  sunlightSettingsRef.current = sunlightSettings;
+  const onProbeRef = useRef(onProbe);
+  onProbeRef.current = onProbe;
   // `map.isStyleLoaded()` is false until every source settles, which is long
   // after the style itself is usable; track the style.load event instead.
   const styleReadyRef = useRef(false);
@@ -88,6 +104,7 @@ export function useMapEngine(
     failed: 0,
     total: 0,
   });
+  const [sunlightStatus, setSunlightStatus] = useState<SunlightStatus | null>(null);
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
@@ -99,9 +116,12 @@ export function useMapEngine(
     // the native layer we added rather than trying to create or paint it.
     // Later entries end up higher in the stack, so the meshes sit above the
     // tree circles and both above the extrusions. The mesh layer reads its data
-    // back out of the source this same call creates for `tree-points`.
+    // back out of the source this same call creates for `tree-points`. The
+    // sunlight overlay sits between the extrusions and the circles; it fetches
+    // its own tiles, so it depends on neither source being shown.
     sync.sync([
       buildingsLayer(settingsRef.current),
+      sunlightRecord(sunlightSettingsRef.current),
       treePointsLayer(treeSettingsRef.current),
       treeMeshRecord(treeSettingsRef.current),
     ]);
@@ -139,6 +159,14 @@ export function useMapEngine(
       setOpacity: (opacity) => tree.setOpacity(opacity),
       setVisibility: (visible) => tree.setVisibility(visible),
     });
+    const sunlight = new ThreeSunlightLayer();
+    sunlightRef.current = sunlight;
+    sunlight.setSunTime(sunlightSettingsRef.current.sunTime);
+    sunlight.onStatus = setSunlightStatus;
+    setExternalNativePaintBridge(SUNLIGHT_LAYER_ID, {
+      setOpacity: (opacity) => sunlight.setOpacity(opacity),
+      setVisibility: (visible) => sunlight.setVisibility(visible),
+    });
     if (import.meta.env.DEV) {
       (window as unknown as { __map?: MapLibreMap }).__map = map;
     }
@@ -150,6 +178,9 @@ export function useMapEngine(
       // layers that already exist — so re-add ours before every sync.
       if (!map.getLayer(TREE_NATIVE_LAYER_ID) && treeRef.current) {
         map.addLayer(treeRef.current);
+      }
+      if (!map.getLayer(SUNLIGHT_NATIVE_LAYER_ID) && sunlightRef.current) {
+        map.addLayer(sunlightRef.current);
       }
       try {
         map.setLight({
@@ -176,8 +207,16 @@ export function useMapEngine(
       });
     };
 
+    // A click probes the overlay; with the overlay off it does nothing.
+    const onClick = (e: { lngLat: { lng: number; lat: number } }) => {
+      const layer = sunlightRef.current;
+      if (!layer || !sunlightSettingsRef.current.visible) return;
+      layer.probe(e.lngLat.lng, e.lngLat.lat).then((r) => onProbeRef.current(r));
+    };
+
     map.on("style.load", onStyleLoad);
     map.on("move", onMove);
+    map.on("click", onClick);
     map.on("error", (e: ErrorEvent) => {
       const message = e.error?.message;
       if (message) setError(message);
@@ -189,6 +228,9 @@ export function useMapEngine(
       clearExternalNativePaintBridge(TREE_LAYER_ID);
       tree.dispose();
       treeRef.current = null;
+      clearExternalNativePaintBridge(SUNLIGHT_LAYER_ID);
+      sunlight.dispose();
+      sunlightRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -211,7 +253,17 @@ export function useMapEngine(
   // Any control change re-describes the layers and diff-syncs them.
   useEffect(() => {
     applyLayers();
-  }, [applyLayers, settings, treeSettings]);
+  }, [applyLayers, settings, treeSettings, sunlightSettings.visible, sunlightSettings.opacity]);
+
+  // The sun time is the sunlight layer's own control; a new sun is a new pass.
+  useEffect(() => {
+    sunlightRef.current?.setSunTime(sunlightSettings.sunTime);
+  }, [sunlightSettings.sunTime]);
+
+  const exportSunlight = useCallback(
+    (): Promise<Blob | null> => sunlightRef.current?.exportGeoTiff() ?? Promise.resolve(null),
+    [],
+  );
 
   // Height exaggeration is the app's own control, not something GeoLibre models.
   useEffect(() => {
@@ -267,6 +319,8 @@ export function useMapEngine(
     ready,
     error,
     modelStatus,
+    sunlightStatus,
+    exportSunlight,
     flyTo,
     zoomBy,
     setPitch,

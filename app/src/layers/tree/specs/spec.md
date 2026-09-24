@@ -129,6 +129,10 @@ So `visible` is `pointsVisible || meshVisible`, and "points off" is expressed as
 **zero circle opacity** instead. This is the price of the one-source design and
 the only place the two records are not independent.
 
+The sunlight layer does **not** read these tiles: it fetches its own copy of
+the same Martin source (see its spec, *Data*), using `TREES_TILES` and
+`TREES_BOUNDS`, which `index.ts` exports for that purpose.
+
 ### `tree-mesh` — `treeMeshRecord(settings)`
 
 Unchanged in shape from the record this layer had before: `metadata` opts into
@@ -650,6 +654,22 @@ existed. A declared number can drift again; a measured one cannot.
 *data* — the measured median of the inventory — not a property of any geometry,
 and invariant 7 still governs it: a missing height renders at 9.1 m in whatever
 form the species maps to, and nothing else is substituted anywhere.
+
+### The canopy hull
+
+`canopyHullOf(form)`, exported from `index.ts`, is the convex hull of the form's
+procedural canopy. It is a closed `BufferGeometry` in this layer's Y-up frame,
+normalised to a tree of height 1: the canopy's vertices divided by the form's
+`baseHeightM`.
+
+It is **measured from the built geometry, like `baseHeightM`**, and built once
+per form and cached; callers must not dispose it. The sunlight layer casts its
+shadows with it, placed with this layer's own `rotationOf`. So the shadow's
+outline and the drawn crown agree, down to which way the crown faces.
+
+It describes the procedural source only. A modelled tree's shadow is its form's
+procedural hull, which is correct: the index takes nothing from the drawn mesh
+(see the sunlight spec).
 
 ### The instance budget
 

@@ -12,6 +12,21 @@ import {
   type TreeMeshSource,
   type TreeSettings,
 } from "./layers/tree";
+import {
+  DEFAULT_SUNLIGHT_SETTINGS,
+  fromTaipei,
+  MIN_SUN_ELEVATION_DEG,
+  SUN_TIME_MAX,
+  SUN_TIME_MIN,
+  SUN_TIME_STEP,
+  SUNLIGHT_MIN_ZOOM,
+  taipeiDate,
+  taipeiMinutes,
+  type ProbeResult,
+  type SunlightSettings,
+  type SunlightState,
+  type TileCounts,
+} from "./layers/sunlight";
 import { useMapEngine } from "./lib/useMapEngine";
 import { VIEWPOINTS } from "./lib/viewpoints";
 import { Compass } from "./ui/Compass";
@@ -30,6 +45,43 @@ import {
 const dms = (value: number, axis: "lat" | "lng") => {
   const hemi = axis === "lat" ? (value >= 0 ? "N" : "S") : value >= 0 ? "E" : "W";
   return `${Math.abs(value).toFixed(4)}° ${hemi}`;
+};
+
+const hhmm = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+/** Why nothing is drawn, in the panel's words. `ready` says nothing. */
+const SUNLIGHT_STATE_TEXT: Record<SunlightState, string | null> = {
+  off: null,
+  zoom: `zoom in to z${SUNLIGHT_MIN_ZOOM}`,
+  "low-sun": `sun below ${MIN_SUN_ELEVATION_DEG}°`,
+  unsupported: "GPU lacks float targets",
+  waiting: "computing…",
+  ready: null,
+};
+
+/** The tile readout: the covered count, then what is loading or failed. */
+const tilesText = ({ covered, pending, failed }: TileCounts): string =>
+  `${covered}` + (pending ? ` · ${pending} loading` : "") + (failed ? ` · ${failed} failed` : "");
+
+/** `direct-sun-20260621T0400Z.tif` for the export's sun time. */
+const exportName = (sunTime: number): string =>
+  `direct-sun-${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z.tif`;
+
+const probeText = (p: ProbeResult | null): string => {
+  if (!p) return "click the map";
+  switch (p.kind) {
+    case "value":
+      return p.index.toFixed(3);
+    case "roof":
+      return "roof, not ground";
+    case "incomplete":
+      return "incomplete here";
+    case "outside":
+      return "outside the computed area";
+    default:
+      return "no result";
+  }
 };
 
 const basemapItems: SegmentedItem[] = BASEMAPS.map((b) => ({ id: b.id, label: b.label }));
@@ -55,12 +107,52 @@ export default function App() {
   const [basemapId, setBasemapId] = useState(BASEMAPS[0].id);
   const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
   const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
+  const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
+  const [exporting, setExporting] = useState(false);
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [activeView, setActiveView] = useState(VIEWPOINTS[0].id);
   const [collapsed, setCollapsed] = useState(false);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
-  const { containerRef, camera, ready, error, modelStatus, flyTo, zoomBy, setPitch, resetNorth } =
-    useMapEngine(basemap, settings, tree);
+  const {
+    containerRef,
+    camera,
+    ready,
+    error,
+    modelStatus,
+    sunlightStatus,
+    exportSunlight,
+    flyTo,
+    zoomBy,
+    setPitch,
+    resetNorth,
+  } = useMapEngine(basemap, settings, tree, sun, setProbe);
+
+  const patchSun = (next: Partial<SunlightSettings>) => {
+    // A probe answers for one computed result; a new sun or the overlay
+    // switching makes it stale.
+    if ("sunTime" in next || "visible" in next) setProbe(null);
+    setSun((prev) => ({ ...prev, ...next }));
+  };
+
+  const sunState = sunlightStatus?.state ?? "off";
+  const sunMinutes = taipeiMinutes(sun.sunTime);
+
+  const downloadSunlight = async () => {
+    setExporting(true);
+    try {
+      const blob = await exportSunlight();
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = exportName(sun.sunTime);
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const patch = (next: Partial<BuildingSettings>) =>
     setSettings((prev) => ({ ...prev, ...next }));
@@ -236,6 +328,77 @@ export default function App() {
                 }
               />
             ) : null}
+          </Panel>
+
+          <Panel title="Direct sun">
+            <CheckboxRow
+              label="Overlay"
+              checked={sun.visible}
+              onChange={(visible) => patchSun({ visible })}
+              title="Fraction of direct sunlight reaching the ground through trees and past buildings. Diffuse skylight is not included."
+            />
+            <label className="field__row field-date">
+              <span className="field__label">Date</span>
+              <input
+                type="date"
+                value={taipeiDate(sun.sunTime)}
+                onChange={(e) => {
+                  const date = e.currentTarget.value;
+                  if (date) patchSun({ sunTime: fromTaipei(date, sunMinutes) });
+                }}
+              />
+            </label>
+            <Slider
+              label="Time (Taipei)"
+              value={sunMinutes / 60}
+              min={SUN_TIME_MIN / 60}
+              max={SUN_TIME_MAX / 60}
+              step={SUN_TIME_STEP / 60}
+              decimals={2}
+              unit="h"
+              title="Local time in Asia/Taipei (UTC+8)."
+              onChange={(h) =>
+                patchSun({ sunTime: fromTaipei(taipeiDate(sun.sunTime), Math.round(h * 60)) })
+              }
+            />
+            <Slider
+              label="Opacity"
+              value={Math.round(sun.opacity * 100)}
+              min={10}
+              max={100}
+              step={2}
+              unit="%"
+              onChange={(v) => patchSun({ opacity: v / 100 })}
+            />
+            <div className="panel__rule" />
+            <StatLine k="Local time" v={`${hhmm(sunMinutes)} +08`} />
+            {sunlightStatus ? (
+              <StatLine
+                k="Sun"
+                v={`az ${sunlightStatus.azimuthDeg.toFixed(1)}° · el ${sunlightStatus.elevationDeg.toFixed(1)}°`}
+              />
+            ) : null}
+            {sun.visible && SUNLIGHT_STATE_TEXT[sunState] ? (
+              <StatLine k="State" v={SUNLIGHT_STATE_TEXT[sunState]!} plain />
+            ) : null}
+            {sun.visible && (sunState === "ready" || sunState === "waiting") && sunlightStatus ? (
+              <>
+                <StatLine k="Cell" v={`${sunlightStatus.cellM.toFixed(2)} m`} />
+                <StatLine k="Tiles" v={tilesText(sunlightStatus.tiles)} />
+                <StatLine
+                  k="Occluders"
+                  v={`${sunlightStatus.trees.toLocaleString("en-US")} trees · ${sunlightStatus.buildings.toLocaleString("en-US")} bldg`}
+                />
+                <StatLine k="Direct sun here" v={probeText(probe)} />
+              </>
+            ) : null}
+            <button
+              className="btn secondary"
+              disabled={!sun.visible || sunState !== "ready" || exporting}
+              onClick={downloadSunlight}
+            >
+              {exporting ? "Exporting…" : "Export GeoTIFF"}
+            </button>
           </Panel>
         </div>
 

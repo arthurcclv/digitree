@@ -31,6 +31,7 @@ The app answers all three by being a working thing, not a README.
 | OSM building extrusions | the payload — real city data, coloured by height |
 | Four basemaps | that a full `setStyle()` teardown is survivable |
 | The three.js tree | that a foreign renderer can ride in the same `sync()` call |
+| The direct-sun overlay | that the scene is data, not decoration: the same trees and buildings, analysed live |
 | Eight viewpoints | that Taipei is legible from ground level, not just overhead |
 | Camera readout | that the camera is real and the data has a source |
 
@@ -80,10 +81,14 @@ The app answers all three by being a working thing, not a README.
 - No accounts, no analytics, no network calls beyond tiles and the tree models.
   The app made no `fetch()` call of its own for a long time, including after it
   gained a data source of its own — the 3D trees read back the vector tiles
-  MapLibre had already parsed. The **modelled** mesh source is the one
-  exception, and it is opt-in: choosing it loads eight glTF files from the app's
-  own `public/`. The default source fetches nothing, so the sentence above still
-  describes the app you get on load.
+  MapLibre had already parsed. Two exceptions exist, and both are opt-in:
+  - the **modelled** mesh source loads eight glTF files from the app's own
+    `public/`;
+  - the **direct-sun overlay** fetches tiles itself, the same trees and
+    buildings from the same endpoints, beyond the viewport.
+
+  With both off — the default — nothing is fetched but what MapLibre asks
+  for, so the sentence above still describes the app you get on load.
 
 ## Where the design pressure is
 

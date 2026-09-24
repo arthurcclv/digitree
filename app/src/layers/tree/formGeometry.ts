@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { TreeForm } from "./forms";
 
@@ -203,6 +204,38 @@ export function buildForm(form: TreeForm): FormGeometry {
   canopy.computeBoundingBox();
   const baseHeightM = Math.max(bark.boundingBox!.max.y, canopy.boundingBox!.max.y);
   return { bark, canopy, baseHeightM };
+}
+
+const hulls = new Map<TreeForm, THREE.BufferGeometry>();
+
+/**
+ * A form's canopy as a convex hull, normalised to a tree of height 1, in this
+ * layer's Y-up frame: the shape the sunlight layer casts shadows with. See
+ * *The canopy hull* in this layer's spec, and *Trees* in the sunlight spec.
+ * Cached; do not dispose.
+ *
+ * Convex because the light pass counts a closed convex surface exactly once
+ * per ray; the canopy itself is overlapping blobs and stacked cones, which it
+ * would count two or more times. Measured from the canopy, for the same reason
+ * `baseHeightM` is: a declared shape would drift from the one that is drawn.
+ */
+export function canopyHullOf(form: TreeForm): THREE.BufferGeometry {
+  const cached = hulls.get(form);
+  if (cached) return cached;
+  const { bark, canopy, baseHeightM } = buildForm(form);
+  const pos = canopy.getAttribute("position");
+  const points: THREE.Vector3[] = [];
+  for (let i = 0; i < pos.count; i++) {
+    points.push(new THREE.Vector3().fromBufferAttribute(pos, i).divideScalar(baseHeightM));
+  }
+  const hull = new ConvexGeometry(points);
+  // Only the shape is wanted: the light pass reads positions, nothing else.
+  hull.deleteAttribute("normal");
+  hull.computeBoundingBox();
+  bark.dispose();
+  canopy.dispose();
+  hulls.set(form, hull);
+  return hull;
 }
 
 /**

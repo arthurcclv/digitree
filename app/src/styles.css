@@ -387,6 +387,27 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   border: 1px solid rgb(0 0 0 / 45%);
 }
 
+/* -------------------------------------------------------------- date field */
+/* A slider row (`.field__row`, `.field__label`) with a value box styled like
+   the slider's on the right — the one date control in the app (the sunlight
+   panel). */
+.field-date input[type="date"] {
+  padding: 3px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+
+.field-date input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
 /* ----------------------------------------------------------------- buttons */
 .btn {
   padding: 6px 12px;

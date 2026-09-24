@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import * as THREE from "three";
-import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
+import { buildForm, buildMaterials, canopyHullOf, TREE_FORMS, type FormGeometry } from "./formGeometry";
 import type { TreeForm } from "./forms";
 
 function box(geometry: THREE.BufferGeometry): THREE.Box3 {
@@ -156,5 +156,61 @@ describe("buildMaterials", () => {
       expect(material.premultipliedAlpha).toBe(true);
       expect(material.flatShading).toBe(true);
     }
+  });
+});
+
+describe("canopyHullOf", () => {
+  /** A position-keyed edge → count map over a non-indexed triangle soup. */
+  function edgeCounts(g: THREE.BufferGeometry): Map<string, number> {
+    const pos = g.getAttribute("position");
+    const key = (i: number) => [pos.getX(i), pos.getY(i), pos.getZ(i)].map((v) => v.toFixed(6)).join(",");
+    const counts = new Map<string, number>();
+    for (let t = 0; t < pos.count; t += 3) {
+      for (const [a, b] of [[t, t + 1], [t + 1, t + 2], [t + 2, t]]) {
+        const e = [key(a), key(b)].sort().join("|");
+        counts.set(e, (counts.get(e) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  test.each(TREE_FORMS)("%s is closed: every edge is shared by two triangles", (form) => {
+    for (const n of edgeCounts(canopyHullOf(form)).values()) expect(n).toBe(2);
+  });
+
+  test.each(TREE_FORMS)("%s is convex, and contains the whole canopy", (form) => {
+    const hull = canopyHullOf(form);
+    const pos = hull.getAttribute("position");
+    const planes: THREE.Plane[] = [];
+    for (let t = 0; t < pos.count; t += 3) {
+      const [a, b, c] = [t, t + 1, t + 2].map((i) => new THREE.Vector3().fromBufferAttribute(pos, i));
+      planes.push(new THREE.Plane().setFromCoplanarPoints(a, b, c));
+    }
+    const { canopy, baseHeightM } = buildForm(form);
+    const cp = canopy.getAttribute("position");
+    const outside = (p: THREE.Vector3) => planes.some((pl) => pl.distanceToPoint(p) > 1e-6);
+    // Every hull vertex behind every face: convex.
+    for (let i = 0; i < pos.count; i++) expect(outside(new THREE.Vector3().fromBufferAttribute(pos, i))).toBe(false);
+    // Every canopy vertex inside, once normalised to height 1.
+    for (let i = 0; i < cp.count; i++) {
+      expect(outside(new THREE.Vector3().fromBufferAttribute(cp, i).divideScalar(baseHeightM))).toBe(false);
+    }
+  });
+
+  test.each(TREE_FORMS)("%s lies within the tree's unit height", (form) => {
+    const b = canopyHullOf(form).boundingBox!;
+    expect(b.min.y).toBeGreaterThanOrEqual(-1e-6);
+    expect(b.max.y).toBeLessThanOrEqual(1 + 1e-6);
+    expect(b.max.y).toBeGreaterThan(b.min.y);
+  });
+
+  test.each(TREE_FORMS)("%s has 20–76 triangles", (form) => {
+    const triangles = canopyHullOf(form).getAttribute("position").count / 3;
+    expect(triangles).toBeGreaterThanOrEqual(20);
+    expect(triangles).toBeLessThanOrEqual(76);
+  });
+
+  test("is built once per form", () => {
+    expect(canopyHullOf("spreading")).toBe(canopyHullOf("spreading"));
   });
 });

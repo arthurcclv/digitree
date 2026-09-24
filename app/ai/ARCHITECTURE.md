@@ -28,10 +28,17 @@ layer, and it does touch the map (see below).
 // App.tsx
 const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
 const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
-useMapEngine(basemap, settings, tree);
+const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
+const [probe, setProbe] = useState<ProbeResult | null>(null);
+useMapEngine(basemap, settings, tree, sun, setProbe);   // the engine reports probe clicks back
 
 // useMapEngine.ts — applyLayers()
-sync.sync([buildingsLayer(settings), treeLayerRecord(treeSettings)]);
+sync.sync([
+  buildingsLayer(settings),
+  sunlightRecord(sun),          // fetches its own tiles; shares no source
+  treePointsLayer(treeSettings),
+  treeMeshRecord(treeSettings),
+]);
 ```
 
 Every control is a `setState`. React re-renders, the effect in `useMapEngine`
@@ -40,7 +47,7 @@ re-runs `applyLayers`, the layer records are rebuilt from scratch, and
 path from a control to a style property, and no state lives in the map that is
 not derivable from `App.tsx`.
 
-`settingsRef`/`treeSettingsRef` exist only so that `applyLayers` can stay a
+`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef` exist only so that `applyLayers` can stay a
 stable `useCallback` and still be called from the `style.load` handler, which was
 registered once at map creation.
 
@@ -49,10 +56,17 @@ registered once at map creation.
 Exactly two places:
 
 1. **`lib/useMapEngine.ts`** — constructs the map, owns the style-load lifecycle,
-   drives the camera, holds the `LayerSync` and the `ThreeTreeLayer` instance.
+   drives the camera, holds the `LayerSync` and the `ThreeTreeLayer` and
+   `ThreeSunlightLayer` instances.
 2. **`layers/basemaps/index.ts`** — `hideBasemapBuildings`, `firstLabelLayerId`,
    `anchorUnderLabels`. These are style surgery, not layer description, and they
    are called *by* `useMapEngine`.
+
+The two custom-layer classes, `ThreeTreeLayer` and `ThreeSunlightLayer`, are
+handed the map by MapLibre in `onAdd` and use it only for what a custom layer
+needs: the camera, repaints, and — for the sunlight layer — `idle`, to replan
+its tiles when the view settles. They are constructed and added by
+`useMapEngine`, never by anything else.
 
 Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 
@@ -67,7 +81,15 @@ Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 
 Current folders: `basemaps` (extension — produces no record), `buildings`
 (vector-tile extrusion record), `tree` (external-native record + the custom
-layer class).
+layer class), `sunlight` (external-native record + a second custom layer that
+computes the direct-sun index from the tree and building tiles).
+
+**Two ways to get data.** The tree mesh reads MapLibre's own parsed tiles back
+with `querySourceFeatures`, so it sees exactly the viewport. The sunlight
+overlay cannot: the shade at the sunward edge of the view, and on the far ground
+of a pitched view, comes from tiles MapLibre never loads. So it fetches its own
+(`tiles.ts`), from the same two endpoints, and depends on no other layer being
+shown.
 
 `tree` is the one folder with a real internal split, and the split is by
 dependency rather than by topic:
@@ -78,7 +100,7 @@ dependency rather than by topic:
 | `constants.ts` | the Martin source contract | no |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
 | `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
-| `formGeometry.ts` | the eight procedural shapes and the two shared materials | yes |
+| `formGeometry.ts` | the eight procedural shapes, the two shared materials, and `canopyHullOf` | yes |
 | `models.ts` | `FORM_MODELS`, the glTF loader, `normalizeModel`, the LOD rule | yes |
 | `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam | yes |
 
@@ -91,6 +113,28 @@ They also divide along the same line: both answer a question about the *tree*
 rather than about the mesh. `forms.ts` says which shape it takes, `placement.ts`
 says which way it faces — and because neither reads the geometry, a source
 switch changes neither.
+
+`sunlight` splits the same way — pure modules for everything that can be
+tested, one module for the GL:
+
+| Module | Owns | Imports three.js |
+| --- | --- | --- |
+| `index.ts` | the GeoLibre record, `SunlightSettings`, Taipei-time helpers | no |
+| `sun.ts` | `sunPosition()` — the NOAA solar position formulas | **no** |
+| `state.ts` | `SunlightState`, `SUNLIGHT_MIN_ZOOM`, `blockedState()` (what stops all work), `readoutSun()` | **no** |
+| `transmittance.ts` | `FORM_ALPHA`, `SPECIES_ALPHA`, `alphaOf`, `tauOf` | **no** |
+| `frame.ts` | the two domain grids, local frame, shadow shear, footprint polygon helpers | **no** |
+| `tileGrid.ts` | the z14 tile grid, fetch planning, tile-based coverage | **no** |
+| `tiles.ts` | `TileStore` — fetch, decode (`@mapbox/vector-tile`), LRU cache | no |
+| `geotiff.ts` | the hand-written GeoTIFF writer | **no** |
+| `sunlightLayer.ts` | `ThreeSunlightLayer` — the light pass, overlay, probe, export | yes |
+
+It borrows the crown shape from the tree layer through `canopyHullOf(form)`
+(the convex hull of the procedural canopy), the per-tree yaw through
+`rotationOf`, and the tree source's URL and bounds (`TREES_TILES`,
+`TREES_BOUNDS`), all from the tree's `index.ts`. So the shadow and the drawn
+tree share a shape and a facing, and nothing else of the tree layer's internals
+is reached.
 
 `formGeometry.ts` and `models.ts` are the two **mesh sources**, and they are
 interchangeable on purpose: each hands `treeLayer.ts` a list of
@@ -115,8 +159,9 @@ style.load
   → styleReadyRef = true
   → hideBasemapBuildings(map)          // kill the basemap's own buildings
   → re-add ThreeTreeLayer if missing   // sync only *moves* native layers
+  → re-add ThreeSunlightLayer if missing
   → map.setLight(...)                  // tolerated to throw
-  → applyLayers()                      // sync([buildings, tree]) + re-anchor
+  → applyLayers()                      // sync([buildings, sunlight, tree…]) + re-anchor
   → setReady(true)
 ```
 
@@ -144,13 +189,19 @@ registered once per map in `useMapEngine` and cleared on teardown. Height is not
 a GeoLibre concept, so `setHeight` is driven directly by an effect in
 `useMapEngine`. Full contract: `src/layers/tree/specs/spec.md`.
 
+The sunlight overlay is a second member on the same path, with its own paint
+bridge (`SUNLIGHT_LAYER_ID`) and its own `WebGLRenderer` on the shared context.
+It also uses MapLibre's `prerender` hook — the offscreen pass — for its light
+pass and for every readback (probe, export), so no GL work of its own ever runs
+between MapLibre's draws. The sun time is driven by an effect, like height.
+
 ## Module inventory
 
 | Module | Owns |
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, viewpoint selection, telemetry |
-| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, camera; exports `Camera`, `Viewpoint`, `HOME` |
+| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, camera, the sunlight probe click and export hand-off; exports `Camera`, `Viewpoint`, `HOME` |
 | `src/lib/viewpoints.ts` | the eight `VIEWPOINTS` (imports `HOME` and `TREE_LOCATION`) |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |

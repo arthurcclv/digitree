@@ -16,8 +16,11 @@ no CI. The build is a real gate — `tsc -b` runs under `strict` with
 `noUnusedLocals`/`noUnusedParameters`, so dead code fails it — and `tsc -b`
 covers the test files too, since `tsconfig.json` includes all of `src`.
 
-`npm test` covers what can be tested without a map: the species → form table and
-the geometry builders. It cannot cover a GL context, a MapLibre source or the
+`npm test` covers what can be tested without a map: the species → form table,
+the geometry builders and canopy hulls, and the sunlight layer's pure parts —
+sun, frame, state gate, tile planning and coverage, the tile store (on a fake
+`fetch`), α table, GeoTIFF writer, record and Taipei-time helpers. It cannot
+cover a GL context, a MapLibre source or the
 paint bridge, so it does not replace the browser check below.
 
 **Always run `npm run build` before calling a change done**, especially any
@@ -123,6 +126,36 @@ above z16, where the meshes start. Then:
 - **Opacity reaches them.** Pull Opacity down with Modelled selected. A model's
   own materials fade only if they made it into the layer's material registry;
   a part left opaque while the rest of the canopy fades is a registry bug.
+
+## Checking the direct-sun overlay
+
+Turn on **Direct sun → Overlay** at z12 or above. The first view at z12
+fetches most of the city (about 80 tiles per source), so expect a few seconds
+before *Tiles* stops showing "loading". The pure parts are tested; these are
+the parts only a GPU can show:
+
+- **Shadows fall away from the sun.** At 10:00 they point west, at 15:00 east.
+- **The whole view is covered.** Once *Tiles* shows no "loading", every piece of
+  ground in view is coloured, at any pitch and down to a 10° sun, out to ±8 km.
+  Hatching now means a tile failed or is still loading, never "near the edge".
+  Ground that stays uncoloured with nothing loading means the fetch plan missed
+  it. The classic cause is a canvas corner above the horizon, where
+  `unproject` returns a mirrored point behind the camera.
+- **Probe values multiply.** Click a lone street tree's shadow: `0.500` with the
+  placeholder α. Where two crowns overlap: `0.250`. Open pavement: `1.000`.
+  Anything else under a lone crown means a crown is being counted more or less
+  than once per ray.
+- **Display controls change nothing.** Probe a point, then hide the buildings
+  and the trees, change the kind filter and both exaggerations, and probe
+  again: the number must not move. The overlay fetches its own tiles, so a
+  change means it has started reading display state.
+- **Export.** The GeoTIFF opens in QGIS or `gdalinfo` as EPSG:3857 with NoData
+  `-1` and the sun time in its metadata.
+
+A browser harness for all of this (Playwright, reading `window.__map`) is easy to
+rebuild: the layer is reachable as
+`__map.getLayer("threejs-sunlight-native").implementation`, whose `probe()` and
+`status()` are the same calls the panel makes.
 
 ## Preparing tree models
 
