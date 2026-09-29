@@ -308,12 +308,6 @@ export default function App() {
               onChange={(minHeight) => patch({ minHeight })}
             />
             <CheckboxRow
-              label="Labels over buildings"
-              checked={settings.labelsOnTop}
-              onChange={(labelsOnTop) => patch({ labelsOnTop })}
-              title="Off by default: labels styled for a dark ground are unreadable over lit building faces."
-            />
-            <CheckboxRow
               label="Ambient occlusion"
               checked={ao.enabled}
               onChange={(enabled) => patchAo({ enabled })}
@@ -586,12 +580,6 @@ export default function App() {
                     label: "Tree meshes",
                     checked: tree.meshVisible,
                     onChange: (meshVisible) => patchTree({ meshVisible }),
-                  },
-                  {
-                    id: "labels",
-                    label: "Labels over buildings",
-                    checked: settings.labelsOnTop,
-                    onChange: (labelsOnTop) => patch({ labelsOnTop }),
                   },
                 ]}
               />

@@ -261,7 +261,7 @@ than a poster with controls over it.
   becomes both the hover text and the `aria-label` — one string reaching a pointer
   and a screen reader.
 - **Checkbox row** (`.checkbox-row`): inline checkbox + 12px label. This is the
-  form every flag takes — Extrusion, Labels over, Tree mesh. It replaces the
+  form every flag takes — Extrusion, Ambient occlusion, Tree mesh. It replaces the
   sliding lamp toggle; a flag is a checkbox, and the lamp was a bespoke control
   carrying no information the checkbox does not.
 - **Segmented control** (`.segmented`): equal-width buttons in one group, for the
@@ -288,7 +288,7 @@ than a poster with controls over it.
   never the only cue.
 - **Layer menu** (`.layer-menu`, a `.menu` popover): the eye button opens a
   checklist of layer-visibility rows (checkbox + glyph + label) — **Buildings**,
-  **Tree**, **Labels over**. Toggling keeps the menu open; it closes on
+  **Tree points**, **Tree meshes**. Toggling keeps the menu open; it closes on
   outside-click, Escape, or re-click. The same flags also appear in their panels;
   the menu is the fast path, not a second source of truth.
 - **Trees card readouts**: the `.stat-line` form under a `.panel__rule` —
