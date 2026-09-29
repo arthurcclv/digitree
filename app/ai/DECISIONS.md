@@ -6,6 +6,24 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — The direct-sun overlay computes down to a 5° sun
+
+**Decision.** `MIN_SUN_ELEVATION_DEG` drops from 10° to 5°, so the overlay and
+the temperature layer built on it keep working into early morning and late
+afternoon. The fetch margin follows the constant: the 150 m reach at 5° is
+~1,714 m on every side, up from ~851 m.
+
+**Costs.** About one more ring of z14 tiles around a mid- or high-zoom view on
+first sight. At z12 the wider margin mostly falls outside the ±8 km far grid,
+so the plan barely grows. Shadows at 5° are ~11.5× their occluder's height, so
+the map is mostly shade near the cutoff.
+
+**What would make us revisit it.** Tile counts overrunning the 256-tile cache,
+or a need to go lower still: below a few degrees the margin grows without
+bound and the far grid no longer contains a tall building's shadow.
+
+---
+
 ## 2026-09-29 — The right column is gone; the camera is a status bar
 
 **Decision.** The right sidebar (the Viewpoints and Camera cards) is removed.

@@ -148,8 +148,8 @@ describe("coverage", () => {
   });
 
   test("the fetch margin is the reach at the lowest sun", () => {
-    expect(MIN_SUN_ELEVATION_REACH_M).toBeCloseTo(150 / Math.tan((10 * Math.PI) / 180), 9);
-    expect(Math.hypot(...reachVector(123, 10))).toBeCloseTo(MIN_SUN_ELEVATION_REACH_M, 9);
+    expect(MIN_SUN_ELEVATION_REACH_M).toBeCloseTo(150 / Math.tan((5 * Math.PI) / 180), 9);
+    expect(Math.hypot(...reachVector(123, 5))).toBeCloseTo(MIN_SUN_ELEVATION_REACH_M, 9);
   });
 });
 

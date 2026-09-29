@@ -12,7 +12,7 @@ export interface SunPosition {
 }
 
 /** Below this the layer computes nothing. */
-export const MIN_SUN_ELEVATION_DEG = 10;
+export const MIN_SUN_ELEVATION_DEG = 5;
 
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;

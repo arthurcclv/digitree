@@ -35,7 +35,7 @@ export const FAR_GRID_SIZE = 2048;
 /** How tall an unseen occluder outside the fetched tiles is assumed able to be. */
 export const SHADOW_REACH_M = 150;
 
-/** How far a `SHADOW_REACH_M` occluder reaches at the lowest sun: ~851 m. */
+/** How far a `SHADOW_REACH_M` occluder reaches at the lowest sun: ~1,714 m. */
 export const MIN_SUN_ELEVATION_REACH_M =
   SHADOW_REACH_M / Math.tan((MIN_SUN_ELEVATION_DEG * Math.PI) / 180);
 

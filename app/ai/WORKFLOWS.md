@@ -139,7 +139,7 @@ the parts only a GPU can show:
 
 - **Shadows fall away from the sun.** At 10:00 they point west, at 15:00 east.
 - **The whole view is covered.** Once *Tiles* shows no "loading", every piece of
-  ground in view is coloured, at any pitch and down to a 10° sun, out to ±8 km.
+  ground in view is coloured, at any pitch and down to a 5° sun, out to ±8 km.
   Hatching now means a tile failed or is still loading, never "near the edge".
   Ground that stays uncoloured with nothing loading means the fetch plan missed
   it. The classic cause is a canvas corner above the horizon, where

@@ -63,9 +63,9 @@ north. It is evaluated once per recompute, at the domain centre.
 
 | constant | value | meaning |
 | --- | --- | --- |
-| `MIN_SUN_ELEVATION_DEG` | 10 | below this the layer computes nothing and reports `low-sun` |
+| `MIN_SUN_ELEVATION_DEG` | 5 | below this the layer computes nothing and reports `low-sun` |
 
-At 10° a 100 m building casts a 567 m shadow. Below it the map is shade almost
+At 5° a 100 m building casts a 1,143 m shadow. Below it the map is shade almost
 everywhere, and the fetch margin (below) grows without bound.
 
 ## Occluders
@@ -158,7 +158,7 @@ the near domain, expanded on every side by the fetch margin, and clipped to
 the far domain:
 
 ```
-FETCH_MARGIN_M = SHADOW_REACH_M / tan(MIN_SUN_ELEVATION_DEG) ≈ 851 m
+FETCH_MARGIN_M = SHADOW_REACH_M / tan(MIN_SUN_ELEVATION_DEG) ≈ 1,714 m
 ```
 
 The margin surrounds the region in every direction, not just sunward. A new sun
@@ -528,7 +528,7 @@ checked in the browser.
    two overlapping crowns reads the product of their α. A point inside a lone
    tree's hull shadow reads exactly that tree's α, with no darker core. Once the planned tiles
    have arrived, every visible ground point within ±8 km of the centre is
-   drawn, and none is hatched, at any pitch and at any sun from 10° up.
+   drawn, and none is hatched, at any pitch and at any sun from 5° up.
 9. A tall building's shadow runs away from the sun, with length ≈
     `h / tan(el)`.
 10. Changing a display control (exaggeration, kind filter, mesh source,
