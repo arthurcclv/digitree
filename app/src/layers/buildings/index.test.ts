@@ -7,6 +7,8 @@ const FOREIGN: BuildingSource = {
   tileJson: "https://tiles.example.test/elsewhere.json",
   sourceLayer: "footprints",
   attribution: "© Somewhere Else",
+  name: "Somewhere Buildings",
+  sourceKind: "fixture",
 };
 
 describe("default settings", () => {
@@ -23,6 +25,12 @@ describe("default settings", () => {
 });
 
 describe("buildingsLayer", () => {
+  test("is named and labelled by the descriptor, not by the layer", () => {
+    const r = buildingsLayer(DEFAULT_BUILDING_SETTINGS, FOREIGN);
+    expect(r.name).toBe(FOREIGN.name);
+    expect(r.metadata).toMatchObject({ sourceKind: FOREIGN.sourceKind });
+  });
+
   test("takes every source field from the descriptor it is given", () => {
     expect(buildingsLayer(DEFAULT_BUILDING_SETTINGS, FOREIGN).source).toEqual({
       url: FOREIGN.tileJson,

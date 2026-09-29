@@ -14,7 +14,7 @@ const SETTINGS: AmbientOcclusionMountSettings = {
   extrusion: { visible: true, heightScale: 1, minHeight: 0 },
 };
 
-const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "", name: "", sourceKind: "" };
 
 const mount = () => {
   const f = fakeMap();

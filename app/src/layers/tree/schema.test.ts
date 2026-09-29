@@ -11,6 +11,9 @@ export const FOREIGN_TREES: TreeSource = {
   maxzoom: 18,
   bounds: [2.22, 48.81, 2.47, 48.91],
   attribution: "Ville de Paris",
+  name: "Arbres",
+  sourceKind: "fixture",
+  fallbackHeightM: 7,
 };
 
 const point = (lng: number, lat: number) => ({ type: "Point", coordinates: [lng, lat] });
@@ -62,5 +65,11 @@ describe("treePointsLayer", () => {
       bounds: FOREIGN_TREES.bounds,
     });
     expect(r.style.minZoom).toBe(FOREIGN_TREES.minzoom);
+  });
+
+  test("is named and labelled by the descriptor, not by the layer", () => {
+    const r = treePointsLayer(DEFAULT_TREE_SETTINGS, FOREIGN_TREES);
+    expect(r.name).toBe(FOREIGN_TREES.name);
+    expect(r.metadata).toMatchObject({ sourceKind: FOREIGN_TREES.sourceKind });
   });
 });

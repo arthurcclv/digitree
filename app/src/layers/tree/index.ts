@@ -6,7 +6,6 @@ export { mountTree, type TreeMount } from "./mount";
 
 export {
   ThreeTreeLayer,
-  TREE_FALLBACK_HEIGHT_M,
   TREE_MESH_MIN_ZOOM,
   TREE_NATIVE_LAYER_ID,
   MAX_INSTANCES,

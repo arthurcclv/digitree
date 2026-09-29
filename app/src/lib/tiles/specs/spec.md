@@ -41,6 +41,9 @@ interface TreeSource {
   maxzoom: number;
   bounds: [number, number, number, number]; // west, south, east, north
   attribution: string;
+  name: string;           // the points record's display name
+  sourceKind: string;     // the points record's metadata.sourceKind, a free label
+  fallbackHeightM: number; // a tree with no surveyed height is drawn and cast at this
 }
 
 // layers/buildings — building footprints
@@ -48,6 +51,8 @@ interface BuildingSource {
   tileJson: string;       // a TileJSON URL; its first `tiles` template is used
   sourceLayer: string;
   attribution: string;
+  name: string;           // the extrusion record's display name
+  sourceKind: string;     // its metadata.sourceKind, a free label
 }
 ```
 
@@ -55,10 +60,10 @@ Who takes which:
 
 | consumer | takes |
 | --- | --- |
-| `treePointsLayer(settings, trees)` | the source fields of the record: `tiles`, `sourceLayer`, `minzoom`, `maxzoom`, `bounds` |
-| `mountTree(ctx, { trees }, settings, hooks)` | the above; `sourceLayer` is also what the meshes query |
-| `buildingsLayer(settings, buildings)` | `tileJson` as the record's `url`, `sourceLayer`, `attribution` |
-| `mountSunlight(ctx, { trees, buildings }, settings, hooks)` | both, for its own `TileStore` |
+| `treePointsLayer(settings, trees)` | the source fields of the record (`tiles`, `sourceLayer`, `minzoom`, `maxzoom`, `bounds`), its `name` and `sourceKind` |
+| `mountTree(ctx, { trees }, settings, hooks)` | the above; `sourceLayer` is also what the meshes query, and `fallbackHeightM` what they draw a tree with no height at |
+| `buildingsLayer(settings, buildings)` | `tileJson` as the record's `url`, `sourceLayer`, `attribution`, `name`, `sourceKind` |
+| `mountSunlight(ctx, { trees, buildings }, settings, hooks)` | both, for its own `TileStore`; `fallbackHeightM` for a tree with no height |
 | `mountAmbientOcclusion(ctx, { buildings }, settings, hooks)` | buildings, for its own `TileStore` |
 | `mountTemperature(ctx, settings, hooks)` | nothing: all its input arrives through the DAG |
 
@@ -91,8 +96,9 @@ Point features with `tree_id` (text, the identity), `kind`, `species`,
 - The meshes (`treeLayer.ts`, over `querySourceFeatures`) and the direct-sun
   layer (over its own tiles) both read trees with it. They then apply their
   own policy: the meshes deduplicate by `id`, filter by `kind`, and replace a
-  `null` height with `TREE_FALLBACK_HEIGHT_M`, and the direct-sun layer does
-  the same with the height. A tree is therefore the same tree in both.
+  `null` height with the descriptor's `fallbackHeightM`, and the direct-sun
+  layer does the same with the height, from the same descriptor. A tree is
+  therefore the same tree in both.
 - The points record's expressions (`["get", "kind"]`, `height_m` for the
   circle size) name the same properties, from the same module's constants.
 - `TreeFeature` moves from `lib/tiles` to `layers/tree`.
@@ -154,9 +160,9 @@ store.featuresOf(name, tile)         // typed by the source under `name`
 
 | export | value |
 | --- | --- |
-| `TREES: TreeSource` | `tiles: "/tiles/trees/{z}/{x}/{y}"` (relative, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"` |
+| `TREES: TreeSource` | `tiles: "/tiles/trees/{z}/{x}/{y}"` (relative, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"`, `name: "Taipei Trees"`, `sourceKind: "postgis-martin"`, `fallbackHeightM: 9.1` (the inventory's measured median height) |
 | `TREES_SURVEYED` | `162_930`, the panel's "Surveyed trees", formerly `TREES_TOTAL` |
-| `BUILDINGS: BuildingSource` | `tileJson: OSM_TILEJSON`, `sourceLayer: "building"`, `attribution: OSM_ATTRIBUTION` |
+| `BUILDINGS: BuildingSource` | `tileJson: OSM_TILEJSON`, `sourceLayer: "building"`, `attribution: OSM_ATTRIBUTION`, `name: "OSM Buildings"`, `sourceKind: "osm-openfreemap"` |
 
 - `BUILDINGS` is built from `basemaps`' `OSM_TILEJSON` and `OSM_ATTRIBUTION`,
   so the basemap and the buildings still share one OSM snapshot (DECISIONS
@@ -214,6 +220,6 @@ added to `devDependencies`, pinned to that version, and recorded in
   second schema adapter. Today there is one dataset per schema, so the seam
   stays hypothetical.
 - Changing the tile grid's zoom per source.
-- AO's dependency on building *settings* (review candidate 4), the shared GL
-  host (candidate 5), and the remaining Taipei-isms: time zone, home view,
-  record names (candidate 6).
+- AO's dependency on building *settings* (review candidate 4) and the shared
+  GL host (candidate 5), since done. The place (time zone, home view) is
+  `src/lib/place/specs/spec.md`.

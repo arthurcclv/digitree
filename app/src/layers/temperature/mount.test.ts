@@ -6,6 +6,9 @@ import { createGraph } from "../../lib/dag";
 import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS, LPI_NODE, mountSunlight } from "../sunlight";
+
+/** A moment for the settings: the host's, so the layer has no default. */
+const SUN = { ...DEFAULT_SUNLIGHT_SETTINGS, sunTime: Date.parse("2026-06-21T04:00:00Z") };
 import { DEFAULT_TEMPERATURE_SETTINGS, type TemperatureStatus } from "./index";
 import { mountTemperature } from "./mount";
 import { TEMPERATURE_LAYER_ID, temperatureRecord } from "./records";
@@ -18,15 +21,18 @@ const TREES: TreeSource = {
   maxzoom: 18,
   bounds: [2.22, 48.81, 2.47, 48.91],
   attribution: "",
+  name: "Arbres",
+  sourceKind: "fixture",
+  fallbackHeightM: 7,
 };
-const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "", name: "", sourceKind: "" };
 
 /** Both layers on one map and one graph, mounted in dependency order. */
 const mountBoth = () => {
   const f = fakeMap();
   const ctx = { map: f.map, graph: createGraph() };
   const statuses: TemperatureStatus[] = [];
-  const sunlight = mountSunlight(ctx, { trees: TREES, buildings: BUILDINGS }, DEFAULT_SUNLIGHT_SETTINGS);
+  const sunlight = mountSunlight(ctx, { trees: TREES, buildings: BUILDINGS }, SUN);
   const temperature = mountTemperature(ctx, DEFAULT_TEMPERATURE_SETTINGS, {
     onStatus: (s) => statuses.push(s),
   });

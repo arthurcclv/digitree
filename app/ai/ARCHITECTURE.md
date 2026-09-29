@@ -174,8 +174,21 @@ owner's `schema.ts`, the single reading every consumer shares:
   expression beside `buildingHeight`, the JS form, plus
   `buildingTiles(source)`.
 
-Another city is a change to `src/sources.ts` only, provided it publishes the
-same schema.
+**The place.** What the app knows about *where it is* is not data either.
+`src/lib/place` (its own spec) is generic: `Place`, `Viewpoint`, and local
+time at a fixed UTC offset (`localDate`, `localMinutes`, `fromLocal`,
+`noonToday`, `offsetLabel`). `src/place.ts` holds the app's `PLACE`: Taipei,
+UTC+8, the Xinyi home view, and the panel's 05:00–19:00. `useMapEngine`
+starts the camera at `PLACE.home`. `App.tsx` gives the sunlight layer its
+moment (`noonToday(PLACE)`) and builds the time labels from `PLACE`. The
+layers name no city: the sunlight layer has no default moment, and the
+dataset facts it used to hold (record names, `sourceKind`, the tree fallback
+height) are descriptor fields.
+
+Another city is a change to `src/sources.ts` and `src/place.ts` only,
+provided its data publishes the same schema. The species tables are the one
+Taipei-specific content left in the layers; see the place spec, *Out of
+scope*.
 
 `tree` is the one folder with a real internal split, and the split is by
 dependency rather than by topic:
@@ -208,7 +221,7 @@ tested, one module for the GL:
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | `SunlightSettings`, Taipei-time helpers, re-exports | no |
+| `index.ts` | `SunlightSettings`, `DEFAULT_SUNLIGHT_SETTINGS` (no moment: the host's), re-exports | no |
 | `records.ts` | the GeoLibre record | no |
 | `mount.ts` | `mountSunlight` — adds `sunlight.lpi`, the bridge, the re-add | yes, via `sunlightLayer.ts` |
 | `sun.ts` | `sunPosition()` — the NOAA solar position formulas | **no** |
@@ -357,20 +370,23 @@ radius and the buildings' exaggeration and filter reach it through
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
-| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
+| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
 | `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, building prisms and ground footprint; the *Data sources* spec |
 | `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`. The only place an endpoint lives |
+| `src/lib/place/` | `Place`, `Viewpoint`, local time at a fixed offset; its own spec |
+| `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Xinyi home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |
 | `src/ui/LayerMenu.tsx` | the viewport's layer-visibility popover; owns only its own open/closed state |
 | `src/styles.css` | the entire design system; no CSS modules, no styled-components |
 
-`Viewpoint` and `HOME` live in `useMapEngine.ts` because the engine is what
-consumes them: `HOME` is the initial camera, and `flyTo` takes a `Viewpoint`.
+`Viewpoint` lives in `src/lib/place` beside `Place`, whose `home` is one. The
+engine consumes both: `PLACE.home` is the initial camera, and `flyTo` takes a
+`Viewpoint`.
 
 ## Build-time coupling
 

@@ -130,7 +130,7 @@ export function buildingsLayer(settings: BuildingSettings, source: BuildingSourc
 
   return {
     id: BUILDINGS_LAYER_ID,
-    name: "OSM Buildings",
+    name: source.name,
     type: "vector-tiles",
     source: {
       url: source.tileJson,
@@ -154,6 +154,6 @@ export function buildingsLayer(settings: BuildingSettings, source: BuildingSourc
       extrusionColorExpression: palette ? colorExpression(palette) : "",
       extrusionHeightExpression: "",
     },
-    metadata: { sourceKind: "osm-openfreemap" },
+    metadata: { sourceKind: source.sourceKind },
   };
 }

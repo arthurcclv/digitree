@@ -51,3 +51,14 @@ describe("the three.js host seam", () => {
     expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
   });
 });
+
+// The city is the app's: `src/place.ts` and `src/sources.ts`. See
+// `src/lib/place/specs/spec.md`, invariant 5.
+describe("the place seam", () => {
+  test("no layer or shared module names the place in a quoted literal", () => {
+    const offenders = [...filesUnder(join(SRC, "layers")), ...filesUnder(join(SRC, "lib"))]
+      .filter((path) => !isTest(path))
+      .filter((path) => /["'][^"'\n]*(Taipei|Asia\/)/.test(readFileSync(path, "utf8")));
+    expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
+  });
+});

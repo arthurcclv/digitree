@@ -6,6 +6,9 @@ import { createGraph } from "../../lib/dag";
 import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS } from "./index";
+
+/** A moment for the settings: the host's, so the layer has no default. */
+const SUN = { ...DEFAULT_SUNLIGHT_SETTINGS, sunTime: Date.parse("2026-06-21T04:00:00Z") };
 import { LPI_NODE } from "./lpi";
 import { mountSunlight } from "./mount";
 import { SUNLIGHT_LAYER_ID, sunlightRecord } from "./records";
@@ -18,13 +21,16 @@ const TREES: TreeSource = {
   maxzoom: 18,
   bounds: [2.22, 48.81, 2.47, 48.91],
   attribution: "",
+  name: "Arbres",
+  sourceKind: "fixture",
+  fallbackHeightM: 7,
 };
-const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "", name: "", sourceKind: "" };
 
 const mount = () => {
   const f = fakeMap();
   const graph = createGraph();
-  return { f, graph, m: mountSunlight({ map: f.map, graph }, { trees: TREES, buildings: BUILDINGS }, DEFAULT_SUNLIGHT_SETTINGS) };
+  return { f, graph, m: mountSunlight({ map: f.map, graph }, { trees: TREES, buildings: BUILDINGS }, SUN) };
 };
 
 describe("mountSunlight", () => {
@@ -36,8 +42,8 @@ describe("mountSunlight", () => {
 
   test("syncs the record the builder makes, visible exactly while demanded", () => {
     const { m } = mount();
-    expect(m.prepareSync()).toEqual([sunlightRecord(DEFAULT_SUNLIGHT_SETTINGS, false)]);
-    const on = { ...DEFAULT_SUNLIGHT_SETTINGS, visible: true };
+    expect(m.prepareSync()).toEqual([sunlightRecord(SUN, false)]);
+    const on = { ...SUN, visible: true };
     m.update(on);
     expect(m.prepareSync()).toEqual([sunlightRecord(on, true)]);
     m.dispose();
@@ -63,9 +69,9 @@ describe("mountSunlight", () => {
     const setSunTime = vi.spyOn(ThreeSunlightLayer.prototype, "setSunTime");
     const { m } = mount();
     setSunTime.mockClear();
-    m.update({ ...DEFAULT_SUNLIGHT_SETTINGS, opacity: 0.2 });
+    m.update({ ...SUN, opacity: 0.2 });
     expect(setSunTime).not.toHaveBeenCalled();
-    m.update({ ...DEFAULT_SUNLIGHT_SETTINGS, sunTime: DEFAULT_SUNLIGHT_SETTINGS.sunTime + 60_000 });
+    m.update({ ...SUN, sunTime: SUN.sunTime + 60_000 });
     expect(setSunTime).toHaveBeenCalledTimes(1);
     m.dispose();
     vi.restoreAllMocks();

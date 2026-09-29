@@ -1,40 +1,22 @@
 import { describe, expect, test } from "vitest";
-import {
-  DEFAULT_SUNLIGHT_SETTINGS,
-  defaultSunTime,
-  fromTaipei,
-  SUNLIGHT_NATIVE_LAYER_ID,
-  sunlightRecord,
-  taipeiDate,
-  taipeiMinutes,
-} from "./index";
+import { DEFAULT_SUNLIGHT_SETTINGS, SUNLIGHT_NATIVE_LAYER_ID, sunlightRecord } from "./index";
 import * as THREE from "three";
 import { canopyHullOf, rotationOf } from "../tree";
 import { crownMatrix } from "./sunlightLayer";
 
-describe("Taipei time", () => {
-  test("round-trips a date and minute of day", () => {
-    const ms = fromTaipei("2026-06-21", 9 * 60 + 15);
-    expect(new Date(ms).toISOString()).toBe("2026-06-21T01:15:00.000Z");
-    expect(taipeiDate(ms)).toBe("2026-06-21");
-    expect(taipeiMinutes(ms)).toBe(555);
-  });
+/** Any moment will do: the record does not read it. */
+const SETTINGS = { ...DEFAULT_SUNLIGHT_SETTINGS, sunTime: Date.parse("2026-06-21T04:00:00Z") };
 
-  test("a late-evening UTC instant is already tomorrow in Taipei", () => {
-    const ms = Date.parse("2026-06-21T20:00:00Z");
-    expect(taipeiDate(ms)).toBe("2026-06-22");
-    expect(taipeiMinutes(ms)).toBe(4 * 60);
-  });
-
-  test("the default is noon today, Taipei time", () => {
-    const now = Date.parse("2026-09-24T17:30:00Z"); // 01:30 on the 25th in Taipei
-    expect(new Date(defaultSunTime(now)).toISOString()).toBe("2026-09-25T04:00:00.000Z");
+describe("DEFAULT_SUNLIGHT_SETTINGS", () => {
+  // The moment is the host's: which noon is "today" depends on where it is.
+  test("carries no moment", () => {
+    expect("sunTime" in DEFAULT_SUNLIGHT_SETTINGS).toBe(false);
   });
 });
 
 describe("sunlightRecord", () => {
   test("is an external-native three.js record, off by default", () => {
-    const r = sunlightRecord(DEFAULT_SUNLIGHT_SETTINGS);
+    const r = sunlightRecord(SETTINGS);
     expect(r.visible).toBe(false);
     expect(r.metadata).toMatchObject({
       customLayerType: "threejs",
@@ -46,8 +28,8 @@ describe("sunlightRecord", () => {
 
   test("stays visible to MapLibre while a dependent demands the index", () => {
     // MapLibre runs no prerender for a hidden layer, and the light pass is there.
-    expect(sunlightRecord(DEFAULT_SUNLIGHT_SETTINGS, true).visible).toBe(true);
-    expect(sunlightRecord({ ...DEFAULT_SUNLIGHT_SETTINGS, visible: true }).visible).toBe(true);
+    expect(sunlightRecord(SETTINGS, true).visible).toBe(true);
+    expect(sunlightRecord({ ...SETTINGS, visible: true }).visible).toBe(true);
   });
 });
 

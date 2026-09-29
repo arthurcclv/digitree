@@ -30,6 +30,11 @@ export const TREES: TreeSource = {
   // A second data source is a second attribution obligation, and MapLibre's
   // own control is disabled — so the app's status bar must render this.
   attribution: "臺北市政府 · Taipei City open data",
+  name: "Taipei Trees",
+  sourceKind: "postgis-martin",
+  // The inventory's measured median height. Used for the ~56 trees whose
+  // surveyed `height_m` was missing or implausible.
+  fallbackHeightM: 9.1,
 };
 
 /**
@@ -50,4 +55,6 @@ export const BUILDINGS: BuildingSource = {
   tileJson: OSM_TILEJSON,
   sourceLayer: "building",
   attribution: OSM_ATTRIBUTION,
+  name: "OSM Buildings",
+  sourceKind: "osm-openfreemap",
 };

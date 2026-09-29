@@ -18,6 +18,9 @@ const TREES: TreeSource = {
   maxzoom: 18,
   bounds: [2.22, 48.81, 2.47, 48.91],
   attribution: "",
+  name: "Arbres",
+  sourceKind: "fixture",
+  fallbackHeightM: 7,
 };
 
 const mount = (settings: TreeSettings = DEFAULT_TREE_SETTINGS) => {

@@ -60,7 +60,7 @@ export function treePointsLayer(settings: TreeSettings, source: TreeSource): Geo
 
   return {
     id: TREE_POINTS_LAYER_ID,
-    name: "Taipei Trees",
+    name: source.name,
     type: "vector-tiles",
     source: {
       tiles: [source.tiles],
@@ -94,7 +94,7 @@ export function treePointsLayer(settings: TreeSettings, source: TreeSource): Geo
       // No halo: at 163k points a stroke merges neighbouring trees into mush.
       strokeWidth: 0,
     },
-    metadata: { sourceKind: "postgis-martin" },
+    metadata: { sourceKind: source.sourceKind },
   };
 }
 

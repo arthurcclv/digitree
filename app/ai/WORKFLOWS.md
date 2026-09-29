@@ -19,7 +19,8 @@ covers the test files too, since `tsconfig.json` includes all of `src`.
 `npm test` covers what can be tested without a map: the species → form table,
 the geometry builders and canopy hulls, and the sunlight layer's pure parts —
 sun, frame, state gate, tile planning and coverage, the tile store (on a fake
-`fetch`), α table, GeoTIFF writer, record and Taipei-time helpers — the
+`fetch`), α table, GeoTIFF writer and record — the local-time helpers in
+`src/lib/place`, the
 derived-layer DAG, and the temperature layer's formula, shader expression,
 ramp, classes and state. It cannot
 cover a GL context, a MapLibre source or the

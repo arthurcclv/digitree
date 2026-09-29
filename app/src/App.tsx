@@ -20,14 +20,8 @@ import {
 } from "./layers/tree";
 import {
   DEFAULT_SUNLIGHT_SETTINGS,
-  fromTaipei,
   MIN_SUN_ELEVATION_DEG,
-  SUN_TIME_MAX,
-  SUN_TIME_MIN,
-  SUN_TIME_STEP,
   SUNLIGHT_MIN_ZOOM,
-  taipeiDate,
-  taipeiMinutes,
   type ProbeResult,
   type SunlightSettings,
   type SunlightState,
@@ -41,6 +35,8 @@ import {
 } from "./layers/temperature";
 import { useMapEngine } from "./lib/useMapEngine";
 import { TREES, TREES_SURVEYED } from "./sources";
+import { fromLocal, localDate, localMinutes, noonToday, offsetLabel } from "./lib/place";
+import { PLACE } from "./place";
 import { cameraReadout } from "./ui/cameraReadout";
 import { Compass } from "./ui/Compass";
 import { LayerMenu } from "./ui/LayerMenu";
@@ -54,6 +50,12 @@ import {
   StatLine,
   type SegmentedItem,
 } from "./ui/Panel";
+
+/** The time slider's step, in minutes. */
+const SUN_TIME_STEP = 15;
+
+/** `+08` as `UTC+8` reads it: the hour's leading zero dropped. */
+const utcLabel = `UTC${offsetLabel(PLACE).replace(/^([+-])0/, "$1")}`;
 
 const hhmm = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -135,7 +137,11 @@ export default function App() {
   const [basemapId, setBasemapId] = useState(BASEMAPS[0].id);
   const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETTINGS);
   const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
-  const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
+  const [sun, setSun] = useState<SunlightSettings>(() => ({
+    ...DEFAULT_SUNLIGHT_SETTINGS,
+    // The moment is the host's: today's noon where the app is.
+    sunTime: noonToday(PLACE),
+  }));
   const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
   const [exporting, setExporting] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
@@ -181,7 +187,7 @@ export default function App() {
   const petState = temperatureStatus?.state ?? "off";
 
   const sunState = sunlightStatus?.state ?? "off";
-  const sunMinutes = taipeiMinutes(sun.sunTime);
+  const sunMinutes = localMinutes(sun.sunTime, PLACE);
 
   const download = async (
     read: () => Promise<Blob | null>,
@@ -416,24 +422,24 @@ export default function App() {
               <span className="field__label">Date</span>
               <input
                 type="date"
-                value={taipeiDate(sun.sunTime)}
+                value={localDate(sun.sunTime, PLACE)}
                 onChange={(e) => {
                   const date = e.currentTarget.value;
-                  if (date) patchSun({ sunTime: fromTaipei(date, sunMinutes) });
+                  if (date) patchSun({ sunTime: fromLocal(date, sunMinutes, PLACE) });
                 }}
               />
             </label>
             <Slider
-              label="Time (Taipei)"
+              label={`Time (${PLACE.name})`}
               value={sunMinutes / 60}
-              min={SUN_TIME_MIN / 60}
-              max={SUN_TIME_MAX / 60}
+              min={PLACE.daylight.fromMin / 60}
+              max={PLACE.daylight.toMin / 60}
               step={SUN_TIME_STEP / 60}
               decimals={2}
               unit="h"
-              title="Local time in Asia/Taipei (UTC+8)."
+              title={`Local time in ${PLACE.timeZone} (${utcLabel}).`}
               onChange={(h) =>
-                patchSun({ sunTime: fromTaipei(taipeiDate(sun.sunTime), Math.round(h * 60)) })
+                patchSun({ sunTime: fromLocal(localDate(sun.sunTime, PLACE), Math.round(h * 60), PLACE) })
               }
             />
             <Slider
@@ -446,7 +452,7 @@ export default function App() {
               onChange={(v) => patchSun({ opacity: v / 100 })}
             />
             <div className="panel__rule" />
-            <StatLine k="Local time" v={`${hhmm(sunMinutes)} +08`} />
+            <StatLine k="Local time" v={`${hhmm(sunMinutes)} ${offsetLabel(PLACE)}`} />
             {sunlightStatus ? (
               <StatLine
                 k="Sun"

@@ -27,6 +27,7 @@ These explain the product, the structure, and the process around the specs.
 | the derived-layer DAG (`src/lib/dag`, not a layer) | [`src/lib/dag/specs/spec.md`](../src/lib/dag/specs/spec.md) |
 | the layer mount (`src/lib/mount`, not a layer) | [`src/lib/mount/specs/spec.md`](../src/lib/mount/specs/spec.md) |
 | the three.js layer host (`src/lib/three`, not a layer) | [`src/lib/three/specs/spec.md`](../src/lib/three/specs/spec.md) |
+| the place (`src/place.ts`, `src/lib/place`) | [`src/lib/place/specs/spec.md`](../src/lib/place/specs/spec.md) |
 | data sources (`src/sources.ts`, `src/lib/tiles`, the schemas) | [`src/lib/tiles/specs/spec.md`](../src/lib/tiles/specs/spec.md) |
 
 ## Keeping these honest

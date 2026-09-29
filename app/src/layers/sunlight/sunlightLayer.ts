@@ -4,7 +4,6 @@ import {
   canopyHullOf,
   formOf,
   rotationOf,
-  TREE_FALLBACK_HEIGHT_M,
   TREE_FORMS,
   treeTiles,
   type TreeFeature,
@@ -266,6 +265,7 @@ export function crownMatrix(x: number, y: number, h: number, yaw: number, out = 
 export class ThreeSunlightLayer extends ThreeLayer {
   readonly id = SUNLIGHT_NATIVE_LAYER_ID;
   private supported = true;
+  private readonly fallbackHeightM: number;
   private readonly store: TileStore<{
     trees: TileSource<TreeFeature>;
     buildings: TileSource<BuildingFeature>;
@@ -337,6 +337,8 @@ export class ThreeSunlightLayer extends ThreeLayer {
   ) {
     super();
     this.store = new TileStore({ trees: treeTiles(sources.trees), buildings: buildingTiles(sources.buildings) });
+    // The same height the meshes draw a tree with none at: one value per inventory.
+    this.fallbackHeightM = sources.trees.fallbackHeightM;
     this.crownMaterial = lightMaterial(CROWN_VERT, CROWN_FRAG, { uLight: { value: new THREE.Matrix4() } });
     this.prismMaterial = lightMaterial(FLAT_VERT, FLAT_FRAG, {
       uLight: { value: new THREE.Matrix4() },
@@ -632,7 +634,7 @@ export class ThreeSunlightLayer extends ThreeLayer {
         seen.add(t.id);
         const [x, y] = toLocal(near, t.lng, t.lat);
         const form = formOf(t.species);
-        trees.push({ id: t.id, x, y, h: t.heightM ?? TREE_FALLBACK_HEIGHT_M, species: t.species, form });
+        trees.push({ id: t.id, x, y, h: t.heightM ?? this.fallbackHeightM, species: t.species, form });
       }
     }
     if (trees.length > SUNLIGHT_MAX_TREES) {

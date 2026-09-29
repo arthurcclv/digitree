@@ -14,7 +14,7 @@ import {
   type ModelPart,
 } from "./models";
 import { rotationOf } from "./placement";
-import { treeOf } from "./schema";
+import { treeOf, type TreeSource } from "./schema";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
 export type TreeKind = "all" | "street" | "park" | "custom";
@@ -31,12 +31,6 @@ export interface ModelStatus {
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
 export const TREE_NATIVE_LAYER_ID = "threejs-tree-native";
-
-/**
- * The inventory's median height. Used for the ~56 trees whose surveyed
- * `height_m` was missing or implausible — and nothing else is ever substituted.
- */
-export const TREE_FALLBACK_HEIGHT_M = 9.1;
 
 /** Below this the meshes are sub-pixel and the instance count explodes. */
 export const TREE_MESH_MIN_ZOOM = 16;
@@ -175,8 +169,11 @@ export class ThreeTreeLayer extends ThreeLayer {
   /** Lets the panel report how much of the modelled source actually arrived. */
   onModelsChanged: (() => void) | null = null;
 
-  /** `sourceLayer`: the MVT layer of the tree source the points record reads. */
-  constructor(private readonly sourceLayer: string) {
+  /**
+   * `source`: the MVT layer the points record reads, and the height a tree
+   * with none is drawn at. See *Data source* in `specs/spec.md`.
+   */
+  constructor(private readonly source: Pick<TreeSource, "sourceLayer" | "fallbackHeightM">) {
     super();
     this.materials = buildMaterials();
     for (const material of this.materials) this.materialRegistry.add(material);
@@ -307,7 +304,7 @@ export class ThreeTreeLayer extends ThreeLayer {
 
     let features;
     try {
-      features = map.querySourceFeatures(src, { sourceLayer: this.sourceLayer });
+      features = map.querySourceFeatures(src, { sourceLayer: this.source.sourceLayer });
     } catch {
       // The source exists but has not finished loading its first tiles.
       this.clear();
@@ -330,7 +327,7 @@ export class ThreeTreeLayer extends ThreeLayer {
       if (seen.has(tree.id)) continue;
       seen.add(tree.id);
 
-      const height = tree.heightM ?? TREE_FALLBACK_HEIGHT_M;
+      const height = tree.heightM ?? this.source.fallbackHeightM;
       instances.push({ id: tree.id, lng: tree.lng, lat: tree.lat, height, form: formOf(tree.species) });
     }
 

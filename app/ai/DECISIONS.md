@@ -6,6 +6,47 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — The layers name no city; the place is `src/place.ts`
+
+**Decision.** What the app knows about where it is moved out of the layers.
+- `src/lib/place` is generic. It holds `Place`, `Viewpoint`, and local time
+  at a fixed UTC offset: `localDate`, `localMinutes`, `fromLocal`,
+  `noonToday`, `offsetLabel`.
+- The app's values are `PLACE` in `src/place.ts`: Taipei, UTC+8, the Xinyi
+  home view, and the panel's 05:00–19:00.
+- The sunlight layer loses its Taipei helpers and its default moment.
+  `DEFAULT_SUNLIGHT_SETTINGS` has no `sunTime`, and the host supplies
+  `noonToday(PLACE)`.
+- Three dataset facts become descriptor fields: the record names, the
+  records' `sourceKind`, and the tree fallback height (9.1 m, the
+  inventory's measured median).
+
+The contract is `src/lib/place/specs/spec.md`.
+
+**Why.** After the source descriptors, the layers named no endpoint but
+still named a city. None of it was how a layer works. Another city is now a
+change to `src/sources.ts` and `src/place.ts`.
+
+**Also decided.**
+- **Fixed offsets, not DST-aware zones.** Asia/Taipei has had no daylight
+  saving since 1979, so the helpers are exact here. A place that observes
+  DST needs an `Intl`-based form.
+- **`sourceKind` moves with the dataset.** GeoLibre acts only on specific
+  values (`annotation`, `pmtiles-url`, `duckdb-query`, …), and ours are free
+  labels.
+- **Nothing visible changes.** Verified in the browser against the previous
+  commit: the camera, status bar, time label and tooltip, date, slider range
+  and `HH:MM +08` readout are identical.
+- **A structure test** fails if a layer or shared module names the place in a
+  quoted literal.
+
+**Rules out, for now.** Making the species → form and species → α tables a
+host input. They are keyed by Taipei's species names and are the one
+Taipei-specific content left in the layers, but there is a single inventory
+to design the seam against. **Revisit when** a second inventory is loaded.
+
+---
+
 ## 2026-09-29 — The four three.js layers extend one `ThreeLayer` host
 
 **Decision.** `ThreeLayer` (`src/lib/three`) is the base of `ThreeTreeLayer`,

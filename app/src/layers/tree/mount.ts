@@ -23,7 +23,7 @@ export function mountTree(
   initial: TreeSettings,
   hooks: TreeMountHooks = {},
 ): TreeMount {
-  const tree = new ThreeTreeLayer(trees.sourceLayer);
+  const tree = new ThreeTreeLayer(trees);
   tree.onModelsChanged = () => hooks.onModelStatus?.(tree.modelStatus());
   // GeoLibre's generic opacity and visibility controls, routed into three.js.
   const native = nativeLayer(map, TREE_LAYER_ID, tree, {

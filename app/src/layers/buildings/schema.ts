@@ -14,6 +14,10 @@ export interface BuildingSource {
   /** The MVT layer inside each tile. */
   sourceLayer: string;
   attribution: string;
+  /** The extrusion record's display name. */
+  name: string;
+  /** Its `metadata.sourceKind`: a free label, none GeoLibre acts on. */
+  sourceKind: string;
 }
 
 /** The feature's height in real metres, as MapLibre reads it. */

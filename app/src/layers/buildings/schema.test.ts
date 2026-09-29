@@ -9,6 +9,8 @@ function keptByExtrusion(props: Record<string, unknown>, minHeight: number): boo
     tileJson: "https://example.test/tiles.json",
     sourceLayer: "building",
     attribution: "",
+    name: "",
+    sourceKind: "",
   });
   const f = featureFilter(record.filterExpression as FilterSpecification, "filter");
   // type 3: a polygon, as a building footprint is.

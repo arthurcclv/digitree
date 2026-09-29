@@ -50,6 +50,8 @@ Martin stack:
 | zoom range (`minzoom`, `maxzoom`) | 14 – 20 |
 | `bounds` | `[121.4619, 24.9771, 121.6268, 25.1606]` |
 | `attribution` | `臺北市政府 · Taipei City open data` |
+| `name`, `sourceKind` | `Taipei Trees`, `postgis-martin` — the points record's display name and metadata label |
+| `fallbackHeightM` | 9.1 — the inventory's measured median height (see *Per-instance transform*) |
 | open-data rows | 162,930, published as `TREES_SURVEYED` in `src/sources.ts` (see *Panel readouts*) |
 
 The schema, which any tree source must publish:
@@ -266,8 +268,9 @@ consequences:
 
 Scale is uniform, `height_m / baseHeightM`, where the divisor belongs to the
 tree's **form** rather than to the layer (see *Base height is per form*). A tree
-with a `NULL` `height_m` uses `TREE_FALLBACK_HEIGHT_M` = **9.1** — the measured
-median of the inventory — and the layer MUST NOT substitute anything else: not
+with a `NULL` `height_m` uses the tree source's `fallbackHeightM` (**9.1** in
+this app — the measured median of the inventory) — and the layer MUST NOT
+substitute anything else: not
 zero, not a neighbouring tree's height, not a random value.
 
 Rotation is a **yaw only** — about the local frame's `y`, which is up — by an
@@ -504,8 +507,8 @@ Everything except geometry and materials. Under either source, trees:
 - are placed by the same instance list, in the same local metre frame;
 - scale by `height_m / baseHeightM`, where `baseHeightM` is **measured from the
   built or loaded geometry, never hand-written** (see *Base height is per form*);
-- fall a `NULL` height back to `TREE_FALLBACK_HEIGHT_M` = 9.1, and to nothing
-  else;
+- fall a `NULL` height back to the source's `fallbackHeightM` (9.1), and to
+  nothing else;
 - are yawed by the same angle, hashed from the same `tree_id`;
 - obey the same `MAX_INSTANCES` cull, applied globally before form bucketing;
 - take opacity and visibility through the GeoLibre paint bridge.
@@ -676,10 +679,12 @@ stood 12.23 m while the layer scaled it as 13, so every tree in the city drew
 about 6% short of its surveyed height, silently and for as long as the constant
 existed. A declared number can drift again; a measured one cannot.
 
-`TREE_FALLBACK_HEIGHT_M` = 9.1 stays global and unchanged. It is a fact about the
+The fallback height stays one value per inventory. It is a fact about the
 *data* — the measured median of the inventory — not a property of any geometry,
-and invariant 7 still governs it: a missing height renders at 9.1 m in whatever
-form the species maps to, and nothing else is substituted anywhere.
+so it is the descriptor's `fallbackHeightM` (9.1 in `TREES`,
+`src/sources.ts`), not a constant of the layer. Invariant 7 still governs it: a
+missing height renders at 9.1 m in whatever form the species maps to, and
+nothing else is substituted anywhere.
 
 ### The canopy hull
 
@@ -1038,8 +1043,8 @@ procedural source would credit evolveduk for icosahedra.
    hashed from its `tree_id`. The **scene** is not: it depends on the viewport,
    and that is the point.
 6. Instances are deduped by `tree_id`.
-7. The layer never invents data. A missing height renders at
-   `TREE_FALLBACK_HEIGHT_M`, and nothing else is substituted anywhere.
+7. The layer never invents data. A missing height renders at the source's
+   `fallbackHeightM`, and nothing else is substituted anywhere.
 8. Points and meshes always show the same subset of the data.
 9. The `tree-points` record is never `visible: false` while `meshVisible` is
    true — that starves the mesh layer of its data.

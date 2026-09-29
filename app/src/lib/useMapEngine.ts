@@ -29,6 +29,8 @@ import {
 } from "../layers/ambient-occlusion";
 import { createGraph } from "./dag";
 import { BUILDINGS, TREES } from "../sources";
+import { PLACE } from "../place";
+import type { Viewpoint } from "./place";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker
@@ -61,26 +63,6 @@ export interface Camera {
   pitch: number;
   bearing: number;
 }
-
-export interface Viewpoint {
-  id: string;
-  label: string;
-  sub: string;
-  center: [number, number];
-  zoom: number;
-  pitch: number;
-  bearing: number;
-}
-
-export const HOME: Viewpoint = {
-  id: "xinyi",
-  label: "Xinyi",
-  sub: "信義 · Taipei 101",
-  center: [121.5608, 25.0345],
-  zoom: 15.4,
-  pitch: 66,
-  bearing: -28,
-};
 
 export function useMapEngine(
   basemap: Basemap,
@@ -119,11 +101,11 @@ export function useMapEngine(
   const syncedRef = useRef<string | null>(null);
 
   const [camera, setCamera] = useState<Camera>({
-    lng: HOME.center[0],
-    lat: HOME.center[1],
-    zoom: HOME.zoom,
-    pitch: HOME.pitch,
-    bearing: HOME.bearing,
+    lng: PLACE.home.center[0],
+    lat: PLACE.home.center[1],
+    zoom: PLACE.home.zoom,
+    pitch: PLACE.home.pitch,
+    bearing: PLACE.home.bearing,
   });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -175,10 +157,10 @@ export function useMapEngine(
     const map = new MapLibreMap({
       container: containerRef.current,
       style: basemap.styleUrl,
-      center: HOME.center,
-      zoom: HOME.zoom,
-      pitch: HOME.pitch,
-      bearing: HOME.bearing,
+      center: PLACE.home.center,
+      zoom: PLACE.home.zoom,
+      pitch: PLACE.home.pitch,
+      bearing: PLACE.home.bearing,
       maxPitch: 85,
       canvasContextAttributes: { antialias: true, powerPreference: "high-performance" },
       attributionControl: false, // the custom status bar carries attribution

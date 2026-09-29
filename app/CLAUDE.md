@@ -48,7 +48,7 @@ src/
       *.test.ts       vitest, beside the modules they cover
       specs/spec.md
     sunlight/
-      index.ts        SunlightSettings, Taipei-time helpers; the entry
+      index.ts        SunlightSettings (the moment is the host's); the entry
       records.ts      sunlightRecord() GeoLibre record
       mount.ts        mountSunlight() — adds the sunlight.lpi node
       sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe, export
@@ -81,7 +81,9 @@ src/
       specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   the host: map lifecycle, the mounts, GeoLibre layer
-                      sync, camera; owns Camera/Viewpoint
+                      sync, camera; owns Camera, starts at PLACE.home
+    place/            Place, Viewpoint, local time at a fixed UTC offset —
+                      generic; its own specs/spec.md
     mount/            LayerMount — how a layer with a custom half attaches
                       to any GeoLibre map; nativeLayer, fakeMap (tests); its
                       own specs/spec.md
@@ -102,6 +104,8 @@ src/
   App.tsx           the interface: control state, panel, status bar, telemetry
   sources.ts        the app's datasets (TREES, BUILDINGS) — the only place
                     an endpoint lives; layers take them as descriptors
+  place.ts          the app's PLACE (Taipei, UTC+8, the Xinyi home view) —
+                    with sources.ts, the only place the city is named
   main.tsx          React root
   styles.css        the design system (all styling lives here; no CSS modules)
 public/             copied verbatim by Vite, never imported

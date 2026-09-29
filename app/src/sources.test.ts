@@ -22,11 +22,20 @@ describe("TREES", () => {
     expect(TREES.sourceLayer).toBe("trees");
     expect([TREES.minzoom, TREES.maxzoom]).toEqual([14, 20]);
   });
+
+  // Facts about this inventory, moved out of the tree layer unchanged.
+  test("names the points record and falls back to the inventory's median height", () => {
+    expect(TREES).toMatchObject({ name: "Taipei Trees", sourceKind: "postgis-martin", fallbackHeightM: 9.1 });
+  });
 });
 
 describe("BUILDINGS", () => {
   // One OSM snapshot for the ground plane and the extrusions.
   test("is the basemaps' own OSM snapshot", () => {
-    expect(BUILDINGS).toEqual({ tileJson: OSM_TILEJSON, sourceLayer: "building", attribution: OSM_ATTRIBUTION });
+    expect(BUILDINGS).toMatchObject({ tileJson: OSM_TILEJSON, sourceLayer: "building", attribution: OSM_ATTRIBUTION });
+  });
+
+  test("names the extrusion as the app always has", () => {
+    expect(BUILDINGS).toMatchObject({ name: "OSM Buildings", sourceKind: "osm-openfreemap" });
   });
 });

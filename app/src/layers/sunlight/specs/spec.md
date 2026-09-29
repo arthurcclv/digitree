@@ -75,8 +75,9 @@ everywhere, and the fetch margin (below) grows without bound.
 - **Source.** Every tree in the layer's own fetched tree tiles (see *Data*).
   Duplicates from the tile buffer are removed by `tree_id`.
 - **No filtering.** Every `kind` is included, and the kind filter is ignored.
-- **Height.** The surveyed `height_m`, or `TREE_FALLBACK_HEIGHT_M` (9.1 m) when
-  missing. Always at true scale.
+- **Height.** The surveyed `height_m`, or the tree source's `fallbackHeightM`
+  (9.1 m in this app) when missing, the same value the meshes use. Always at
+  true scale.
 - **Cap.** At most `SUNLIGHT_MAX_TREES` = 200,000, keeping the tallest. That is
   more than the whole inventory (162,932), so in practice nothing is dropped.
 
@@ -483,15 +484,17 @@ below the PET overlay, and below the circles.
 | --- | --- | --- |
 | `visible` | `false` | overlay on or off; when off and no dependent is demanded, nothing is fetched or computed |
 | `opacity` | `0.8` | overlay opacity |
-| `sunTime` | today, 12:00 Asia/Taipei | the moment, epoch ms |
+| `sunTime` | none; the host's | the moment, epoch ms. `DEFAULT_SUNLIGHT_SETTINGS` has no `sunTime`, because which noon is "today" depends on where the host is. This app starts at `noonToday(PLACE)`: today, 12:00 Asia/Taipei (`src/lib/place/specs/spec.md`) |
 
 The panel shows:
 - a date field;
-- a time-of-day slider from 05:00 to 19:00 Asia/Taipei in 15-minute steps;
+- a time-of-day slider over the place's `daylight` (05:00 to 19:00
+  Asia/Taipei in this app) in 15-minute steps;
 - the opacity slider, from 10% to 100% (0% would be an overlay that is on but
   invisible, which the Overlay toggle already covers);
 - readouts:
-  - the set moment as local time (`HH:MM +08`);
+  - the set moment as local time at the place (`HH:MM +08`, the offset from
+    `offsetLabel(PLACE)`);
   - sun azimuth and elevation;
   - the state when not `ready`;
   - while `waiting` or `ready`: the cell size, the occluder counts, the tiles

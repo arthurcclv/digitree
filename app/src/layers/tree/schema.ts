@@ -17,6 +17,16 @@ export interface TreeSource {
   /** The inventory's extent, west/south/east/north. No tile is asked for outside it. */
   bounds: [number, number, number, number];
   attribution: string;
+  /** The points record's display name. */
+  name: string;
+  /** The points record's `metadata.sourceKind`: a free label, none GeoLibre acts on. */
+  sourceKind: string;
+  /**
+   * The height a tree with no surveyed height is drawn and cast at: a fact
+   * about the inventory (its measured median), and nothing else is ever
+   * substituted.
+   */
+  fallbackHeightM: number;
 }
 
 /** The property names every tree source publishes. */

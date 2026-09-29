@@ -33,10 +33,12 @@ host (`src/lib/tiles/specs/spec.md`). The layer holds no endpoint.
 - `url` — `source.tileJson`
 - `sourceLayer` — `source.sourceLayer`
 - `attribution` — `source.attribution`
+- `name` and `metadata.sourceKind` — `source.name`, `source.sourceKind`
 - Zoom range: `minZoom: 13`, `maxZoom: 24`
 
 This app's descriptor is `BUILDINGS` in `src/sources.ts`: `OSM_TILEJSON` and
-`OSM_ATTRIBUTION` from the basemaps extension, and `sourceLayer: "building"`.
+`OSM_ATTRIBUTION` from the basemaps extension, `sourceLayer: "building"`,
+`name: "OSM Buildings"` and `sourceKind: "osm-openfreemap"`.
 Building it from the basemaps constants keeps one OSM snapshot for ground and
 extrusions.
 
