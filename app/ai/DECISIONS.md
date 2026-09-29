@@ -6,6 +6,49 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — Derived layers go through a DAG; PET is derived from LPI on the GPU
+
+**Decision.** A small pure graph (`src/lib/dag`) carries one layer's output
+to another's. The first edge is `sunlight.lpi` → `temperature.pet`:
+- **Pushing results.** When a node publishes, everything downstream of it
+  is notified.
+- **Pulling demand.** Demand flows the other way: a shown PET overlay makes
+  the direct-sun layer compute even with its own overlay hidden.
+- **Ownership.** The engine owns the one graph per map and adds the nodes.
+  Layers never reference each other.
+
+PET is affine in LPI, so the temperature layer runs **no pass and keeps no
+texture of its own**:
+- It samples the sunlight layer's render targets in its overlay shader,
+  wrapped in `THREE.ExternalTexture`.
+- `G0`, `Ta` and `V` are three uniforms.
+- Probe and export go back through the sunlight layer's own readback, with a
+  per-value transform.
+
+**Also decided.** MapLibre skips `prerender` for a hidden layer. So a derived
+layer's record is visible while its node is demanded. The overlay's drawn
+visibility is set on the layer by `useMapEngine` before each sync, and the
+paint bridge's `setVisibility` is a no-op for these two layers. Found in the
+browser: routing visibility through the bridge left PET "computing…" forever
+with Direct sun off. The PET colour scale is fixed (22–46 °C on the Taiwan
+PET classes), not stretched to the current range.
+
+**Rejected.**
+- *The engine calls the temperature layer when the sunlight one finishes*:
+  works for one edge, and needs new wiring for every derived layer after it.
+- *A PET render target*: another 80 MB of GPU memory, for a value one
+  multiply-add away from the LPI already there.
+- *Reading LPI back to the CPU*: a 4096² readback on every sun-slider move.
+- *Keeping the sunlight layer always visible to MapLibre*: a hidden,
+  undemanded layer would keep running its `prerender`.
+
+**Revisit if** a derived quantity stops being a per-texel function of its
+inputs (a blur, a neighbourhood statistic, a time integral). That needs a
+render target and a pass of its own, and a node that publishes a texture it
+owns.
+
+---
+
 ## 2026-09-24 — Building ambient occlusion is screen-space, from a redrawn G-buffer
 
 **Problem.** MapLibre 6.10's `fill-extrusion` has no ambient-occlusion

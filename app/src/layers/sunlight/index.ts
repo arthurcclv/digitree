@@ -9,6 +9,9 @@ export {
   type SunlightStatus,
 } from "./sunlightLayer";
 export { SUNLIGHT_MIN_ZOOM, type SunlightState } from "./state";
+// The DAG node, for the layers that derive from the index.
+export { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField, type LpiLevel } from "./lpi";
+export type { Domain } from "./frame";
 export { MIN_SUN_ELEVATION_DEG } from "./sun";
 export type { TileCounts } from "../../lib/tiles";
 
@@ -16,7 +19,10 @@ export type { TileCounts } from "../../lib/tiles";
 export const SUNLIGHT_LAYER_ID = "sunlight";
 
 export interface SunlightSettings {
-  /** Overlay on/off. Off means nothing is fetched or computed. */
+  /**
+   * Overlay on/off. Off means nothing is fetched or computed, unless a
+   * dependent (the temperature layer) wants the index.
+   */
   visible: boolean;
   opacity: number;
   /** The moment, in epoch milliseconds. */
@@ -66,7 +72,13 @@ export const DEFAULT_SUNLIGHT_SETTINGS: SunlightSettings = {
  * shows the custom layer we add, and routes opacity and visibility to it
  * through the paint bridge.
  */
-export function sunlightRecord(settings: SunlightSettings): GeoLibreLayer {
+/**
+ * `demanded`: the `sunlight.lpi` node is wanted, by the overlay or a
+ * dependent. It is what MapLibre's visibility follows, because MapLibre runs no
+ * `prerender` for a hidden layer and the light pass lives there. Whether the
+ * overlay is *drawn* is `ThreeSunlightLayer.setVisibility`, set by the engine.
+ */
+export function sunlightRecord(settings: SunlightSettings, demanded = settings.visible): GeoLibreLayer {
   return {
     id: SUNLIGHT_LAYER_ID,
     name: "Direct sun · three.js",
@@ -75,7 +87,7 @@ export function sunlightRecord(settings: SunlightSettings): GeoLibreLayer {
     // Empty on purpose: the layer fetches its own tree and building tiles
     // (tiles.ts), which GeoLibre has no part in.
     source: {},
-    visible: settings.visible,
+    visible: demanded,
     opacity: settings.opacity,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: {

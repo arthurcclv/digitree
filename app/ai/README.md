@@ -23,6 +23,8 @@ These explain the product, the structure, and the process around the specs.
 | `tree` | [`src/layers/tree/specs/spec.md`](../src/layers/tree/specs/spec.md) |
 | `sunlight` | [`src/layers/sunlight/specs/spec.md`](../src/layers/sunlight/specs/spec.md) |
 | `ambient-occlusion` | [`src/layers/ambient-occlusion/specs/spec.md`](../src/layers/ambient-occlusion/specs/spec.md) |
+| `temperature` | [`src/layers/temperature/specs/spec.md`](../src/layers/temperature/specs/spec.md) |
+| the derived-layer DAG (`src/lib/dag`, not a layer) | [`src/lib/dag/specs/spec.md`](../src/lib/dag/specs/spec.md) |
 
 ## Keeping these honest
 

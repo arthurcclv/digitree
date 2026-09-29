@@ -36,6 +36,12 @@ import {
   type SunlightState,
   type TileCounts,
 } from "./layers/sunlight";
+import {
+  DEFAULT_TEMPERATURE_SETTINGS,
+  PET_PARAM_RANGES,
+  type PetProbe,
+  type TemperatureSettings,
+} from "./layers/temperature";
 import { useMapEngine } from "./lib/useMapEngine";
 import { VIEWPOINTS } from "./lib/viewpoints";
 import { Compass } from "./ui/Compass";
@@ -85,19 +91,31 @@ const tilesText = ({ covered, pending, failed }: TileCounts): string =>
 const exportName = (sunTime: number): string =>
   `direct-sun-${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z.tif`;
 
+/** `pet-20260621T0400Z.tif` for the export's sun time. */
+const petExportName = (sunTime: number): string =>
+  `pet-${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z.tif`;
+
+/** A probe's non-value answers, shared by both overlays. */
+const probeKindText = (kind: "roof" | "incomplete" | "outside" | "none"): string =>
+  ({
+    roof: "roof, not ground",
+    incomplete: "incomplete here",
+    outside: "outside the computed area",
+    none: "no result",
+  })[kind];
+
+const petProbeText = (p: PetProbe | null): string => {
+  if (!p) return "click the map";
+  return p.kind === "value" ? `${p.pet.toFixed(1)} °C · ${p.cls}` : probeKindText(p.kind);
+};
+
 const probeText = (p: ProbeResult | null): string => {
   if (!p) return "click the map";
   switch (p.kind) {
     case "value":
       return p.index.toFixed(3);
-    case "roof":
-      return "roof, not ground";
-    case "incomplete":
-      return "incomplete here";
-    case "outside":
-      return "outside the computed area";
     default:
-      return "no result";
+      return probeKindText(p.kind);
   }
 };
 
@@ -128,6 +146,9 @@ export default function App() {
   const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
   const [exporting, setExporting] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
+  const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
+  const [exportingPet, setExportingPet] = useState(false);
   const [activeView, setActiveView] = useState(VIEWPOINTS[0].id);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -140,40 +161,59 @@ export default function App() {
     modelStatus,
     sunlightStatus,
     aoState,
+    temperatureStatus,
     exportSunlight,
+    exportTemperature,
     flyTo,
     zoomBy,
     setPitch,
     resetNorth,
-  } = useMapEngine(basemap, settings, tree, sun, ao, setProbe);
+  } = useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
 
   const patchAo = (next: Partial<AmbientOcclusionSettings>) => setAo((prev) => ({ ...prev, ...next }));
 
   const patchSun = (next: Partial<SunlightSettings>) => {
     // A probe answers for one computed result; a new sun or the overlay
     // switching makes it stale.
-    if ("sunTime" in next || "visible" in next) setProbe(null);
+    if ("sunTime" in next || "visible" in next) {
+      setProbe(null);
+      setPetProbe(null);
+    }
     setSun((prev) => ({ ...prev, ...next }));
   };
+
+  const patchTemp = (next: Partial<TemperatureSettings>) => {
+    // Every field but opacity changes what a PET probe answered.
+    if (Object.keys(next).some((k) => k !== "opacity")) setPetProbe(null);
+    setTemp((prev) => ({ ...prev, ...next }));
+  };
+
+  const petState = temperatureStatus?.state ?? "off";
 
   const sunState = sunlightStatus?.state ?? "off";
   const sunMinutes = taipeiMinutes(sun.sunTime);
 
-  const downloadSunlight = async () => {
-    setExporting(true);
+  const download = async (
+    read: () => Promise<Blob | null>,
+    name: string,
+    setBusy: (busy: boolean) => void,
+  ) => {
+    setBusy(true);
     try {
-      const blob = await exportSunlight();
+      const blob = await read();
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = exportName(sun.sunTime);
+      a.download = name;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
-      setExporting(false);
+      setBusy(false);
     }
   };
+  const downloadSunlight = () => download(exportSunlight, exportName(sun.sunTime), setExporting);
+  const downloadTemperature = () => download(exportTemperature, petExportName(sun.sunTime), setExportingPet);
 
   const patch = (next: Partial<BuildingSettings>) =>
     setSettings((prev) => ({ ...prev, ...next }));
@@ -452,6 +492,68 @@ export default function App() {
               onClick={downloadSunlight}
             >
               {exporting ? "Exporting…" : "Export GeoTIFF"}
+            </button>
+          </Panel>
+
+          <Panel title="Felt temperature (PET)">
+            <CheckboxRow
+              label="Overlay"
+              checked={temp.visible}
+              onChange={(visible) => patchTemp({ visible })}
+              title="Physiological equivalent temperature, derived from the direct-sun index. Not air temperature."
+            />
+            <Slider
+              label="G0 · global irradiance"
+              value={temp.g0}
+              {...PET_PARAM_RANGES.g0}
+              unit="W/m²"
+              onChange={(g0) => patchTemp({ g0 })}
+            />
+            <Slider
+              label="Ta · air temperature"
+              value={temp.ta}
+              {...PET_PARAM_RANGES.ta}
+              decimals={1}
+              unit="°C"
+              onChange={(ta) => patchTemp({ ta })}
+            />
+            <Slider
+              label="V · wind speed"
+              value={temp.v}
+              {...PET_PARAM_RANGES.v}
+              decimals={1}
+              unit="m/s"
+              onChange={(v) => patchTemp({ v })}
+            />
+            <Slider
+              label="Opacity"
+              value={Math.round(temp.opacity * 100)}
+              min={10}
+              max={100}
+              step={5}
+              unit="%"
+              onChange={(v) => patchTemp({ opacity: v / 100 })}
+            />
+            <div className="panel__rule" />
+            {temperatureStatus ? (
+              <StatLine
+                k="PET shade → sun"
+                v={`${temperatureStatus.petRange[0].toFixed(1)} → ${temperatureStatus.petRange[1].toFixed(1)} °C`}
+              />
+            ) : null}
+            <StatLine k="Sun time" v="set in Direct sun" plain />
+            {temp.visible && SUNLIGHT_STATE_TEXT[petState] ? (
+              <StatLine k="State" v={SUNLIGHT_STATE_TEXT[petState]!} plain />
+            ) : null}
+            {temp.visible && petState === "ready" ? (
+              <StatLine k="PET here" v={petProbeText(petProbe)} />
+            ) : null}
+            <button
+              className="btn secondary"
+              disabled={!temp.visible || petState !== "ready" || exportingPet}
+              onClick={downloadTemperature}
+            >
+              {exportingPet ? "Exporting…" : "Export GeoTIFF"}
             </button>
           </Panel>
         </div>

@@ -32,6 +32,7 @@ The app answers all three by being a working thing, not a README.
 | Four basemaps | that a full `setStyle()` teardown is survivable |
 | The three.js tree | that a foreign renderer can ride in the same `sync()` call |
 | The direct-sun overlay | that the scene is data, not decoration: the same trees and buildings, analysed live |
+| The PET overlay | that one analysis can build on another: felt temperature derived from the direct-sun result, recomputed whenever it changes |
 | Eight viewpoints | that Taipei is legible from ground level, not just overhead |
 | Camera readout | that the camera is real and the data has a source |
 

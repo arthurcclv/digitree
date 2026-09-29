@@ -30,14 +30,18 @@ const [settings, setSettings] = useState<BuildingSettings>(DEFAULT_BUILDING_SETT
 const [tree, setTree] = useState<TreeSettings>(DEFAULT_TREE_SETTINGS);
 const [sun, setSun] = useState<SunlightSettings>(DEFAULT_SUNLIGHT_SETTINGS);
 const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
+const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
 const [probe, setProbe] = useState<ProbeResult | null>(null);
-useMapEngine(basemap, settings, tree, sun, ao, setProbe);   // the engine reports probe clicks back
+const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
+// the engine reports probe clicks back
+useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
 
 // useMapEngine.ts — applyLayers()
 sync.sync([
   buildingsLayer(settings),
   ambientOcclusionRecord(ao, settings), // shown only while the buildings are
-  sunlightRecord(sun),          // fetches its own tiles; shares no source
+  sunlightRecord(sun, graph.demanded(LPI_NODE)), // fetches its own tiles; shares no source
+  temperatureRecord(temp),      // derives from sunlight through the DAG
   treePointsLayer(treeSettings),
   treeMeshRecord(treeSettings),
 ]);
@@ -49,7 +53,7 @@ re-runs `applyLayers`, the layer records are rebuilt from scratch, and
 path from a control to a style property, and no state lives in the map that is
 not derivable from `App.tsx`.
 
-`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef`/`aoSettingsRef` exist only so that `applyLayers` can stay a
+`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef`/`aoSettingsRef`/`temperatureSettingsRef` exist only so that `applyLayers` can stay a
 stable `useCallback` and still be called from the `style.load` handler, which was
 registered once at map creation.
 
@@ -58,14 +62,15 @@ registered once at map creation.
 Exactly two places:
 
 1. **`lib/useMapEngine.ts`** — constructs the map, owns the style-load lifecycle,
-   drives the camera, holds the `LayerSync` and the `ThreeTreeLayer`,
-   `ThreeSunlightLayer` and `ThreeAoLayer` instances.
+   drives the camera, holds the `LayerSync`, the derived-layer `Graph`, and the
+   `ThreeTreeLayer`, `ThreeSunlightLayer`, `ThreeTemperatureLayer` and
+   `ThreeAoLayer` instances.
 2. **`layers/basemaps/index.ts`** — `hideBasemapBuildings`, `firstLabelLayerId`,
    `anchorUnderLabels`. These are style surgery, not layer description, and they
    are called *by* `useMapEngine`.
 
-The three custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer` and
-`ThreeAoLayer`, are handed the map by MapLibre in `onAdd` and use it only for
+The four custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer`,
+`ThreeTemperatureLayer` and `ThreeAoLayer`, are handed the map by MapLibre in `onAdd` and use it only for
 what a custom layer needs: the camera, repaints, and — for the two
 self-fetching layers — `idle` and `unproject`, to replan their tiles when the
 view settles. They are constructed and added by
@@ -87,7 +92,27 @@ Current folders: `basemaps` (extension — produces no record), `buildings`
 layer class), `sunlight` (external-native record + a second custom layer that
 computes the direct-sun index from the tree and building tiles),
 `ambient-occlusion` (external-native record + a third custom layer that
-darkens the drawn buildings by screen-space ambient occlusion).
+darkens the drawn buildings by screen-space ambient occlusion), `temperature`
+(external-native record + a fourth custom layer that draws PET, derived from
+the sunlight layer's result through the DAG).
+
+**Derived layers go through the DAG** (`src/lib/dag`, its own spec). A layer
+whose output another layer derives from owns a node (`sunlight.lpi`); the
+dependent owns one downstream of it (`temperature.pet`). The engine creates
+the one graph per map, adds the nodes in dependency order, and hands the graph
+to each layer's constructor; the two layers never hold a reference to each
+other. Publishing a node notifies everything downstream. Demand flows the other
+way: a shown dependent makes its upstream compute even when that upstream's own
+overlay is hidden. Because MapLibre runs no `prerender` for a hidden layer, a
+record's visibility is whether its node is *demanded*, and the overlay's drawn
+visibility is set on the layer by the engine, not through the paint bridge.
+
+The temperature layer shares the sunlight layer's GPU result without a copy:
+the `LpiField` it publishes carries the render targets' `WebGLTexture`s, which
+the temperature layer's own renderer wraps in `THREE.ExternalTexture`. Those
+wrappers are never disposed (three would delete the texture). Its probe and
+export go back through the field's `probe` and `readNear`, so only the
+sunlight layer ever reads pixels.
 
 **Two ways to get data.** The tree mesh reads MapLibre's own parsed tiles back
 with `querySourceFeatures`, so it sees exactly the viewport. The sunlight
@@ -137,7 +162,8 @@ tested, one module for the GL:
 | --- | --- | --- |
 | `index.ts` | the GeoLibre record, `SunlightSettings`, Taipei-time helpers | no |
 | `sun.ts` | `sunPosition()` — the NOAA solar position formulas | **no** |
-| `state.ts` | `SunlightState`, `SUNLIGHT_MIN_ZOOM`, `blockedState()` (what stops all work), `readoutSun()` | **no** |
+| `state.ts` | `SunlightState`, `SUNLIGHT_MIN_ZOOM`, `blockedState()` (what stops all work), `readoutSun()`, `lpiNodeAction()` | **no** |
+| `lpi.ts` | the DAG node: `LPI_NODE`, `LpiField`, and `LPI_SAMPLE_GLSL`, the sampling code both overlays share | **no** |
 | `transmittance.ts` | `FORM_ALPHA`, `SPECIES_ALPHA`, `alphaOf`, `tauOf` | **no** |
 | `frame.ts` | the two domain grids, local frame, shadow shear, footprint polygon helpers | **no** |
 | `tileGrid.ts` | fetch planning and tile-based coverage (re-exports the grid from `src/lib/tiles`) | **no** |
@@ -150,6 +176,18 @@ It borrows the crown shape from the tree layer through `canopyHullOf(form)`
 `TREES_BOUNDS`), all from the tree's `index.ts`. So the shadow and the drawn
 tree share a shape and a facing, and nothing else of the tree layer's internals
 is reached.
+
+`temperature` has the same split, smaller, since it computes nothing of its own:
+
+| Module | Owns | Imports three.js |
+| --- | --- | --- |
+| `index.ts` | the GeoLibre record, `TemperatureSettings`, `PET_DEPS`, `PET_PARAM_RANGES` | no |
+| `pet.ts` | `PET_NODE`, `PetField`, the formula (`PET_COEFFS`, `petOf`, `petGlsl`), the ramp, `classOf`, `petProbeOf` | **no** |
+| `state.ts` | `TemperatureState`, `temperatureState()` | **no** |
+| `temperatureLayer.ts` | `ThreeTemperatureLayer` — the overlay, and probe and export through the `LpiField` | yes |
+
+The shader's PET expression is generated by `petGlsl()` from the same
+coefficient table as `petOf`, so the GPU and CPU forms cannot drift.
 
 `ambient-occlusion` has the same split:
 
@@ -189,9 +227,11 @@ style.load
   → hideBasemapBuildings(map)          // kill the basemap's own buildings
   → re-add ThreeTreeLayer if missing   // sync only *moves* native layers
   → re-add ThreeSunlightLayer if missing
+  → re-add ThreeTemperatureLayer if missing
   → re-add ThreeAoLayer if missing
   → map.setLight(...)                  // tolerated to throw
-  → applyLayers()                      // sync([buildings, ao, sunlight, tree…]) + re-anchor
+  → applyLayers()                      // overlay visibility → demand, then
+                                       // sync([buildings, ao, sunlight, temperature, tree…]) + re-anchor
   → setReady(true)
 ```
 
@@ -225,6 +265,13 @@ It also uses MapLibre's `prerender` hook — the offscreen pass — for its ligh
 pass and for every readback (probe, export), so no GL work of its own ever runs
 between MapLibre's draws. The sun time is driven by an effect, like height.
 
+The temperature overlay is a fourth member, with its own paint bridge
+(`TEMPERATURE_LAYER_ID`, opacity only) and its own `WebGLRenderer`. Its
+`prerender` only publishes its DAG node; `render` draws the PET quad from the
+sunlight textures. `G0`, `Ta` and `V` reach it through `setParams`, driven by
+an effect, and the sunlight state through `setUpstreamState`, from the sunlight
+layer's `onStatus`.
+
 The ambient-occlusion layer is a third member, with its own paint bridge
 (`AO_LAYER_ID`, visibility only). Its G-buffer, AO and blur passes run in
 `prerender`; `render` only multiplies the result over the frame. Intensity,
@@ -237,7 +284,8 @@ radius and the buildings' exaggeration and filter reach it through
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, viewpoint selection, telemetry |
-| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, camera, the sunlight probe click and export hand-off; exports `Camera`, `Viewpoint`, `HOME` |
+| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, the DAG and its nodes, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME` |
+| `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
 | `src/lib/viewpoints.ts` | the eight `VIEWPOINTS` (imports `HOME` and `TREE_LOCATION`) |
 | `src/lib/tiles/` | the self-fetching layers' shared tile grid, `TileStore`, building prisms and ground footprint |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |

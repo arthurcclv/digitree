@@ -18,6 +18,10 @@ at **one moment**, after passing through tree crowns and past buildings. It is
 drawn as a colour overlay on the ground, can be read at a clicked point, and
 can be exported as a GeoTIFF. It recomputes live as the sun time changes.
 
+The index is also called the **light penetration index (LPI)**. The layer
+publishes it as the DAG node `sunlight.lpi` (see *The LPI node*), from which
+the temperature layer derives PET.
+
 ## Definition
 
 For a ground point `p` and the sun direction `s`, take the ray from `p` towards
@@ -330,13 +334,15 @@ layer draws nothing and reports `unsupported`. It never falls back to an
 On `idle` (a moved view), and when the layer becomes visible, the layer plans
 its tiles and requests the ones it lacks.
 
-**Nothing is planned, fetched or rebuilt** while the layer is off, below
+**Nothing is planned, fetched or rebuilt** while the layer is off (its node
+is not demanded, see *The LPI node*), below
 `SUNLIGHT_MIN_ZOOM`, or below `MIN_SUN_ELEVATION_DEG`. `blockedState` in
 `state.ts` decides this before any work, in that order (with `unsupported`
 after `off`). A plan put off this way runs as soon as nothing blocks it, for
 example when a new sun time lifts the sun above the minimum.
 
 The layer is dirty, and recomputes on the next frame, when:
+- its node becomes demanded;
 - the planned tiles change;
 - a requested tile arrives or fails (arrivals are coalesced: at most one
   rebuild per `REBUILD_DEBOUNCE_MS` = 150 ms);
@@ -376,7 +382,7 @@ own z14 tiles, whatever the zoom. Its behaviour at the lowest zooms:
 
 | field | meaning |
 | --- | --- |
-| `state` | `off`, `zoom`, `low-sun`, `unsupported`, `waiting` (no result yet) or `ready` |
+| `state` | `off` (not demanded), `zoom`, `low-sun`, `unsupported`, `waiting` (no result yet) or `ready`; with the overlay hidden but demanded, the state is still reported, so the temperature layer can show it |
 | `azimuthDeg`, `elevationDeg` | when `ready`, the sun used by the last recompute; otherwise the sun at the set time, so `low-sun` shows the sun that is actually set |
 | `trees`, `buildings` | occluders in the last recompute (a building is one tile feature; OpenMapTiles merges equal-height footprints at z14, so one feature can be many footprints) |
 | `cellM` | the near resolution actually used |
@@ -404,6 +410,33 @@ The pixels are read back in strips of 256 rows, so the whole grid is never held
 twice at RGBA width. `geotiff.ts` is a hand-written writer with no dependency.
 It writes only the tags listed in its header comment.
 
+## The LPI node
+
+The layer owns the DAG node `sunlight.lpi` (`src/lib/dag/specs/spec.md`), with
+no deps.
+
+- **Publish.** After every light pass that reaches `ready`, it publishes an
+  `LpiField`:
+  - `near`, `far`: each level's `WebGLTexture` (the render target's) and its
+    `Domain`;
+  - `covered`, `reach`, `sunTime`, `azimuthDeg`, `elevationDeg`: the `Result`
+    fields;
+  - `probe(lng, lat)`: this layer's `probe`, answering for this result;
+  - `readNear(transform, nodata)`: this layer's export pipeline, returning the
+    near grid as a GeoTIFF `Blob` with each value mapped through `transform`
+    and non-complete cells written as `nodata`. `exportGeoTiff()` is
+    `readNear(identity, -1)`.
+- **Clear.** Whenever the state leaves `ready`, and on `dispose`.
+- A target is resized only between a clear and the next publish, so a
+  published `WebGLTexture` stays valid until the node is cleared or
+  re-published.
+
+**Demand.** Computing is gated on the node being **demanded**: the overlay is
+visible, or a demanded dependent exists. The overlay is **drawn** only while
+the layer's own visibility is on. So with the Direct sun overlay off and the
+temperature overlay on, this layer plans, fetches and runs its light pass, but
+draws nothing.
+
 ## The GeoLibre records
 
 `sunlightRecord(settings)` follows the external-native pattern of the tree
@@ -414,9 +447,20 @@ mesh record:
 - `paintMode: "plugin"`;
 - `source: {}`.
 
-Opacity and visibility reach the layer through `setExternalNativePaintBridge`.
-The sync order is buildings → sunlight → tree points → tree mesh, so the
-overlay sits above the extrusions' ground and below the circles.
+Opacity reaches the layer through `setExternalNativePaintBridge`. Visibility
+does not:
+- The record's `visible` is whether `sunlight.lpi` is **demanded**. MapLibre
+  runs no `prerender` for a hidden layer, and the light pass lives there, so
+  the layer must stay visible to MapLibre while a dependent wants the index,
+  drawn or not. `sunlightRecord(settings, demanded)` takes it as an argument.
+- Whether the overlay is **drawn** is `ThreeSunlightLayer.setVisibility`,
+  which `useMapEngine` calls with `SunlightSettings.visible` before each
+  sync. That call also sets the node's own demand, so the engine reads
+  `demanded` after it.
+- The bridge's `setVisibility` is a no-op.
+The sync order is buildings → ambient occlusion → sunlight → temperature →
+tree points → tree mesh, so the overlay sits above the extrusions' ground,
+below the PET overlay, and below the circles.
 
 ## Settings
 
@@ -424,7 +468,7 @@ overlay sits above the extrusions' ground and below the circles.
 
 | field | default | meaning |
 | --- | --- | --- |
-| `visible` | `false` | overlay on or off; when off, nothing is fetched or computed |
+| `visible` | `false` | overlay on or off; when off and no dependent is demanded, nothing is fetched or computed |
 | `opacity` | `0.8` | overlay opacity |
 | `sunTime` | today, 12:00 Asia/Taipei | the moment, epoch ms |
 
@@ -447,7 +491,7 @@ Clicking the map while the layer is visible probes the clicked point.
 
 ## Invariants
 
-The pure invariants (1–7) are asserted by vitest. The GPU ones (8–11) are
+The pure invariants (1–7, 12) are asserted by vitest. The GPU ones (8–11) are
 checked in the browser.
 
 1. `sunPosition` at the solar noon of the June solstice, at Taipei, gives an
@@ -489,7 +533,11 @@ checked in the browser.
     `h / tan(el)`.
 10. Changing a display control (exaggeration, kind filter, mesh source,
     hiding the buildings or the trees) leaves every probed value unchanged.
-11. With the layer off, no tile is requested and no pass runs.
+11. With the layer off and no demanded dependent, no tile is requested and no
+    pass runs. With the overlay off and the temperature overlay on, tiles are
+    fetched and passes run, and no direct-sun overlay is drawn.
+12. Every pass that reaches `ready` publishes `sunlight.lpi` once; leaving
+    `ready` clears it once (asserted by vitest on the state gate).
 
 ## Out of scope
 

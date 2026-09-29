@@ -19,7 +19,9 @@ covers the test files too, since `tsconfig.json` includes all of `src`.
 `npm test` covers what can be tested without a map: the species → form table,
 the geometry builders and canopy hulls, and the sunlight layer's pure parts —
 sun, frame, state gate, tile planning and coverage, the tile store (on a fake
-`fetch`), α table, GeoTIFF writer, record and Taipei-time helpers. It cannot
+`fetch`), α table, GeoTIFF writer, record and Taipei-time helpers — the
+derived-layer DAG, and the temperature layer's formula, shader expression,
+ramp, classes and state. It cannot
 cover a GL context, a MapLibre source or the
 paint bridge, so it does not replace the browser check below.
 
@@ -156,6 +158,28 @@ A browser harness for all of this (Playwright, reading `window.__map`) is easy t
 rebuild: the layer is reachable as
 `__map.getLayer("threejs-sunlight-native").implementation`, whose `probe()` and
 `status()` are the same calls the panel makes.
+
+## Checking the PET overlay
+
+Turn on **Felt temperature (PET) → Overlay** with **Direct sun → Overlay off**.
+The pure parts are tested; these need a GPU:
+
+- **It draws on its own.** With Direct sun hidden, PET still reaches ready and
+  colours the ground. A PET that stays on "computing…" means the sunlight layer
+  is not getting its `prerender`: its record went hidden while demanded.
+- **It follows the sun.** Move the sun time: the PET map changes with the
+  shadows.
+- **Probe agrees with LPI.** Turn Direct sun on too and click a few points. Each
+  PET reading equals the formula applied to the same point's direct-sun value
+  (at the defaults, `0.000` → 36.0 °C and `1.000` → 42.1 °C).
+- **Parameters are cheap.** Moving `G0`, `Ta` or `V` recolours at once. The
+  *Shade → sun* range moves; the direct-sun tiles and occluder counts do not.
+- **Export.** The PET GeoTIFF has NoData `-9999`, `g0_w_m2`/`ta_c`/`v_m_s` in its
+  metadata, and every value is `petOf` of the direct-sun export's value at the
+  same cell.
+
+The layer is reachable as
+`__map.getLayer("threejs-temperature-native").implementation`.
 
 ## Checking ambient occlusion
 

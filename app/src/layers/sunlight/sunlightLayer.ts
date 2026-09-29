@@ -33,7 +33,9 @@ import {
   type Vec2,
 } from "./frame";
 import { writeGeoTiff } from "./geotiff";
-import { blockedState, readoutSun, type SunlightState } from "./state";
+import { blockedState, lpiNodeAction, readoutSun, type SunlightState } from "./state";
+import { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField } from "./lpi";
+import type { Graph } from "../../lib/dag";
 import { MIN_SUN_ELEVATION_DEG, sunPosition } from "./sun";
 import { classifyByTiles, planTiles, tileKey, tileSquareLocal, type TileId } from "./tileGrid";
 import {
@@ -151,26 +153,14 @@ const OVERLAY_VERT = /* glsl */ `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
+// `sampleAt` is the finest level holding a point: R τ, G roof, B coverage.
 const OVERLAY_FRAG = /* glsl */ `
-  uniform sampler2D uNear;
-  uniform sampler2D uFar;
-  uniform float uNearDomain;
-  uniform float uFarDomain;
+  ${LPI_SAMPLE_GLSL}
   uniform float uOpacity;
   uniform vec2 uReach;
   uniform vec3 uRamp[5];
   uniform vec3 uGrey;
   varying vec2 vPos;
-
-  bool inNear(vec2 p) { return abs(p.x) < 0.5 * uNearDomain && abs(p.y) < 0.5 * uNearDomain; }
-
-  // The finest level holding a point: R τ, G roof, B coverage. Outside both, nothing.
-  vec4 sampleAt(vec2 p) {
-    if (inNear(p)) return texture2D(uNear, p / uNearDomain + 0.5);
-    vec2 uv = p / uFarDomain + 0.5;
-    if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec4(0.0);
-    return texture2D(uFar, uv);
-  }
 
   vec3 ramp(float t) {
     float s = clamp(t, 0.0, 1.0) * 4.0;
@@ -219,7 +209,20 @@ interface Result {
 
 type Pending =
   | { kind: "probe"; lng: number; lat: number; resolve: (r: ProbeResult) => void }
-  | { kind: "export"; resolve: (b: Blob | null) => void };
+  | { kind: "export"; job: ExportJob; resolve: (b: Blob | null) => void };
+
+/** What an export writes: see `LpiField.readNear`. */
+interface ExportJob {
+  transform: (index: number) => number;
+  nodata: number;
+  metadata: Record<string, string>;
+}
+
+const DIRECT_SUN_EXPORT: ExportJob = {
+  transform: (index) => index,
+  nodata: NODATA,
+  metadata: { definition: "direct-sun transmittance; see app/src/layers/sunlight/specs/spec.md" },
+};
 
 type PlacedTree = { id: string; x: number; y: number; h: number; species: unknown; form: TreeForm };
 
@@ -296,7 +299,11 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   private readonly coverMaterial: THREE.ShaderMaterial;
   private readonly overlayMaterial: THREE.ShaderMaterial;
 
+  /** The overlay is drawn. */
   private visible = false;
+  /** The result is wanted — drawn here or by a dependent. Gates all work. */
+  private demanded = false;
+  private readonly unsubscribe: () => void;
   private opacity = 0.8;
   private sunTime = Date.now();
   /** The view moved or the layer came on: plan tiles on the next update. */
@@ -326,7 +333,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   /** Lets the panel follow the readouts. */
   onStatus: ((status: SunlightStatus) => void) | null = null;
 
-  constructor() {
+  constructor(private readonly graph: Graph) {
     this.crownMaterial = lightMaterial(CROWN_VERT, CROWN_FRAG, { uLight: { value: new THREE.Matrix4() } });
     this.prismMaterial = lightMaterial(FLAT_VERT, FLAT_FRAG, {
       uLight: { value: new THREE.Matrix4() },
@@ -379,6 +386,10 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     this.overlayScene.add(this.overlay);
 
     this.store.onChange = () => this.scheduleRebuild();
+    this.unsubscribe = graph.subscribe(LPI_NODE, (e) => {
+      if (e.kind === "demand") this.setDemanded(e.demanded);
+    });
+    this.demanded = graph.demanded(LPI_NODE);
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -440,9 +451,20 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   // --- controls ------------------------------------------------------------
 
+  /** Whether the overlay is drawn. It also sets the node's own demand. */
   setVisibility(visible: boolean): void {
     if (visible === this.visible) return;
     this.visible = visible;
+    this.overlay.visible = this.state === "ready" && visible;
+    // May call back into setDemanded, synchronously.
+    this.graph.setOwnDemand(LPI_NODE, visible);
+    this.map?.triggerRepaint();
+  }
+
+  /** Demand gates the work; see *The LPI node*. */
+  private setDemanded(demanded: boolean): void {
+    if (demanded === this.demanded) return;
+    this.demanded = demanded;
     this.replan = true;
     this.passDue = true;
     this.update();
@@ -475,9 +497,13 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   /** The near grid as a GeoTIFF, or `null` when there is nothing to export. */
   exportGeoTiff(): Promise<Blob | null> {
+    return this.readNear(DIRECT_SUN_EXPORT);
+  }
+
+  private readNear(job: ExportJob): Promise<Blob | null> {
     if (!this.result || this.state !== "ready") return Promise.resolve(null);
     return new Promise((resolve) => {
-      this.pending.push({ kind: "export", resolve });
+      this.pending.push({ kind: "export", job, resolve });
       this.map?.triggerRepaint();
     });
   }
@@ -511,10 +537,35 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     return sunPosition(new Date(this.sunTime), c[0], c[1]);
   }
 
-  private setState(state: SunlightState): void {
+  /** `passed`: a light pass has just produced a new result. */
+  private setState(state: SunlightState, passed = false): void {
+    const action = lpiNodeAction(this.state, state, passed);
     this.state = state;
-    this.overlay.visible = state === "ready";
+    this.overlay.visible = state === "ready" && this.visible;
+    if (action === "clear") this.graph.clear(LPI_NODE);
+    if (action === "publish") this.graph.publish(LPI_NODE, this.field());
     this.onStatus?.(this.status());
+  }
+
+  /** The published result: see *The LPI node*. */
+  private field(): LpiField {
+    const r = this.result!;
+    return {
+      near: { texture: this.webglTexture(this.nearLevel.target!), domain: r.near },
+      far: { texture: this.webglTexture(this.farLevel.target!), domain: r.far },
+      covered: r.covered,
+      reach: r.reach,
+      sunTime: r.sunTime,
+      azimuthDeg: r.azimuthDeg,
+      elevationDeg: r.elevationDeg,
+      probe: (lng, lat) => this.probe(lng, lat),
+      readNear: (transform, nodata, metadata) => this.readNear({ transform, nodata, metadata }),
+    };
+  }
+
+  /** A target's GL texture; three has no public getter for it. */
+  private webglTexture(target: THREE.WebGLRenderTarget): WebGLTexture {
+    return (this.renderer!.properties.get(target.texture) as { __webglTexture: WebGLTexture }).__webglTexture;
   }
 
   /** Decide what the next frame must do, and ask for it. */
@@ -523,7 +574,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     if (!map) return;
     // Decided before planning, so a blocked layer fetches and builds nothing.
     const blocked = blockedState({
-      visible: this.visible,
+      visible: this.demanded,
       supported: this.supported,
       zoom: map.getZoom(),
       elevationDeg: this.sunNow()!.elevationDeg, // non-null: the map is set
@@ -716,6 +767,10 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
       this.passDue = false;
       const sun = this.sunNow();
       if (sun && sun.elevationDeg >= MIN_SUN_ELEVATION_DEG) {
+        // A published texture stays valid until a clear: a grid that changes
+        // size is about to replace its target, so dependents let go first.
+        const resizing = [this.nearLevel, this.farLevel].some((l) => l.target && l.target.width !== l.domain.size);
+        if (resizing && this.state === "ready") this.setState("waiting");
         this.lightPass(renderer, this.nearLevel, sun.azimuthDeg, sun.elevationDeg, true);
         this.lightPass(renderer, this.farLevel, sun.azimuthDeg, sun.elevationDeg, false);
         this.result = {
@@ -733,7 +788,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
         u.uFar.value = this.farLevel.target!.texture;
         u.uNearDomain.value = this.nearLevel.domain.domainM;
         u.uFarDomain.value = this.farLevel.domain.domainM;
-        this.setState("ready");
+        this.setState("ready", true);
       }
     }
     this.flush(renderer);
@@ -792,7 +847,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
         continue;
       }
       if (job.kind === "probe") job.resolve(this.readProbe(renderer, r, job.lng, job.lat));
-      else job.resolve(this.readExport(renderer, r));
+      else job.resolve(this.readExport(renderer, r, job.job));
     }
     renderer?.resetState();
   }
@@ -812,7 +867,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     return { kind: "value", index: Math.exp(-px[0]) };
   }
 
-  private readExport(renderer: THREE.WebGLRenderer, r: Result): Blob | null {
+  private readExport(renderer: THREE.WebGLRenderer, r: Result, job: ExportJob): Blob | null {
     const target = this.nearLevel.target;
     if (!target) return null;
     const d = r.near;
@@ -827,11 +882,11 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
         const outRow = size - 1 - row; // image rows run from the north
         for (let col = 0; col < size; col++) {
           const i = (j * size + col) * 4;
-          let v = NODATA;
+          let v = job.nodata;
           // B is coverage and G roof; the reach test needs the tile set.
           if (strip[i + 2] > 0.5 && strip[i + 1] <= 0.5) {
             if (classifyByTiles(d, r.covered, r.reach, cellCentre(d, col, row)) === "complete") {
-              v = Math.exp(-strip[i]);
+              v = job.transform(Math.exp(-strip[i]));
             }
           }
           out[outRow * size + col] = v;
@@ -847,13 +902,13 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
       originY: gt.originY,
       pixelSize: gt.pixel,
       epsg: 3857,
-      noData: NODATA,
+      noData: job.nodata,
       metadata: {
         sun_time: new Date(r.sunTime).toISOString(),
         sun_azimuth_deg: r.azimuthDeg.toFixed(4),
         sun_elevation_deg: r.elevationDeg.toFixed(4),
         cell_m: String(cellM(d)),
-        definition: "direct-sun transmittance; see app/src/layers/sunlight/specs/spec.md",
+        ...job.metadata,
       },
     });
     return new Blob([bytes], { type: "image/tiff" });
@@ -898,6 +953,10 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   dispose(): void {
     if (this.rebuildTimer) clearTimeout(this.rebuildTimer);
+    this.unsubscribe();
+    // Dependents must stop sampling targets about to be deleted.
+    if (this.state === "ready") this.graph.clear(LPI_NODE);
+    this.state = "off";
     this.store.onChange = null;
     for (const set of this.crowns.values()) {
       set.mesh.dispose();

@@ -43,6 +43,12 @@ describe("sunlightRecord", () => {
     });
     expect(r.source).toEqual({});
   });
+
+  test("stays visible to MapLibre while a dependent demands the index", () => {
+    // MapLibre runs no prerender for a hidden layer, and the light pass is there.
+    expect(sunlightRecord(DEFAULT_SUNLIGHT_SETTINGS, true).visible).toBe(true);
+    expect(sunlightRecord({ ...DEFAULT_SUNLIGHT_SETTINGS, visible: true }).visible).toBe(true);
+  });
 });
 
 describe("crownMatrix", () => {

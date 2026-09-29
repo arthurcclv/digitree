@@ -99,6 +99,7 @@ three places for it to drift.
 | Tree light rig (hemisphere + directional) | `buildLights()` in the same file |
 | MapLibre extrusion light | the `map.setLight` call in `useMapEngine.ts` |
 | Direct-sun ramp and incomplete hatch | `RAMP` / `INCOMPLETE_GREY` in `src/layers/sunlight/sunlightLayer.ts`, tabled in its spec |
+| PET ramp and comfort classes | `PET_RAMP` / `PET_CLASSES` in `src/layers/temperature/pet.ts`, tabled in its spec; the hatch reuses the direct-sun grey |
 
 **The ramps deliberately do not reuse the chrome palette.** A ramp answers a
 question — *how tall is this building* — and a ramp drawn in interface blues
@@ -118,6 +119,14 @@ pale gold is full sun, and alpha falls with the index — full sun is a light wa
 so the overlay never hides the ground it is describing. Cells it cannot vouch
 for are hatched grey rather than coloured, because a confident colour on an
 incomplete value is the one mistake this overlay must not make.
+
+**The PET ramp is the third**, on the same rule. Blue is cool, pale yellow is
+neutral, and it runs through orange and red to a dark wine for very hot. Its
+stops sit on the Taiwan-calibrated comfort classes (22–46 °C, every 4 °C), and
+its scale is **fixed**: a colour means the same PET whatever `G0`, `Ta` and `V`
+are set to, so moving a slider recolours the map instead of silently
+re-stretching it. Unlike the direct-sun ramp its alpha is uniform. No PET value
+is "empty", so none is washed out. Incomplete cells get the same grey hatch.
 
 ### Viewport lighting
 

@@ -27,6 +27,19 @@ import {
   type SunlightStatus,
 } from "../layers/sunlight";
 import {
+  PET_DEPS,
+  PET_NODE,
+  TEMPERATURE_LAYER_ID,
+  TEMPERATURE_NATIVE_LAYER_ID,
+  temperatureRecord,
+  ThreeTemperatureLayer,
+  type PetProbe,
+  type TemperatureSettings,
+  type TemperatureStatus,
+} from "../layers/temperature";
+import { LPI_NODE } from "../layers/sunlight";
+import { createGraph, type Graph } from "./dag";
+import {
   AO_LAYER_ID,
   AO_NATIVE_LAYER_ID,
   ambientOcclusionRecord,
@@ -78,7 +91,9 @@ export function useMapEngine(
   treeSettings: TreeSettings,
   sunlightSettings: SunlightSettings,
   aoSettings: AmbientOcclusionSettings,
+  temperatureSettings: TemperatureSettings,
   onProbe: (result: ProbeResult) => void,
+  onTemperatureProbe: (result: PetProbe) => void,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -94,8 +109,14 @@ export function useMapEngine(
   const aoRef = useRef<ThreeAoLayer | null>(null);
   const aoSettingsRef = useRef(aoSettings);
   aoSettingsRef.current = aoSettings;
+  const graphRef = useRef<Graph | null>(null);
+  const temperatureRef = useRef<ThreeTemperatureLayer | null>(null);
+  const temperatureSettingsRef = useRef(temperatureSettings);
+  temperatureSettingsRef.current = temperatureSettings;
   const onProbeRef = useRef(onProbe);
   onProbeRef.current = onProbe;
+  const onTemperatureProbeRef = useRef(onTemperatureProbe);
+  onTemperatureProbeRef.current = onTemperatureProbe;
   // `map.isStyleLoaded()` is false until every source settles, which is long
   // after the style itself is usable; track the style.load event instead.
   const styleReadyRef = useRef(false);
@@ -118,12 +139,20 @@ export function useMapEngine(
   });
   const [sunlightStatus, setSunlightStatus] = useState<SunlightStatus | null>(null);
   const [aoState, setAoState] = useState<AoState>("off");
+  const [temperatureStatus, setTemperatureStatus] = useState<TemperatureStatus | null>(null);
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
     const map = mapRef.current;
     const sync = syncRef.current;
     if (!map || !sync || !styleReadyRef.current) return;
+    // Overlay visibility first: it sets each node's own demand, and a layer
+    // stays visible to MapLibre — and so gets its `prerender` — while its node
+    // is demanded, drawn or not. So the paint bridge's visibility is not
+    // routed to these two layers; this is.
+    sunlightRef.current?.setVisibility(sunlightSettingsRef.current.visible);
+    temperatureRef.current?.setVisibility(temperatureSettingsRef.current.visible);
+    const graph = graphRef.current;
     // The three.js layer rides in the same sync call as the buildings: its
     // record is marked as an external custom layer, so GeoLibre moves and shows
     // the native layer we added rather than trying to create or paint it.
@@ -134,10 +163,12 @@ export function useMapEngine(
     // its own tiles, so it depends on neither source being shown. Ambient
     // occlusion multiplies over the extrusions and the ground right after they
     // are drawn, so nothing above it — overlay, circles, meshes — is darkened.
+    // The PET overlay derives from the sunlight one and sits right above it.
     sync.sync([
       buildingsLayer(settingsRef.current),
       ambientOcclusionRecord(aoSettingsRef.current, settingsRef.current),
-      sunlightRecord(sunlightSettingsRef.current),
+      sunlightRecord(sunlightSettingsRef.current, graph?.demanded(LPI_NODE)),
+      temperatureRecord(temperatureSettingsRef.current),
       treePointsLayer(treeSettingsRef.current),
       treeMeshRecord(treeSettingsRef.current),
     ]);
@@ -176,13 +207,32 @@ export function useMapEngine(
       setOpacity: (opacity) => tree.setOpacity(opacity),
       setVisibility: (visible) => tree.setVisibility(visible),
     });
-    const sunlight = new ThreeSunlightLayer();
+    // The derived-layer DAG: one per map, nodes in dependency order.
+    const graph = createGraph();
+    graph.add(LPI_NODE, []);
+    graph.add(PET_NODE, PET_DEPS);
+    graphRef.current = graph;
+
+    const sunlight = new ThreeSunlightLayer(graph);
     sunlightRef.current = sunlight;
     sunlight.setSunTime(sunlightSettingsRef.current.sunTime);
-    sunlight.onStatus = setSunlightStatus;
+    const temperature = new ThreeTemperatureLayer(graph);
+    temperatureRef.current = temperature;
+    const { g0, ta, v } = temperatureSettingsRef.current;
+    temperature.setParams({ g0, ta, v });
+    temperature.onStatus = setTemperatureStatus;
+    sunlight.onStatus = (status) => {
+      setSunlightStatus(status);
+      temperature.setUpstreamState(status.state);
+    };
+    // Visibility reaches both through applyLayers, not the bridge: see there.
+    setExternalNativePaintBridge(TEMPERATURE_LAYER_ID, {
+      setOpacity: (opacity) => temperature.setOpacity(opacity),
+      setVisibility: () => {},
+    });
     setExternalNativePaintBridge(SUNLIGHT_LAYER_ID, {
       setOpacity: (opacity) => sunlight.setOpacity(opacity),
-      setVisibility: (visible) => sunlight.setVisibility(visible),
+      setVisibility: () => {},
     });
     const ao = new ThreeAoLayer();
     aoRef.current = ao;
@@ -205,6 +255,9 @@ export function useMapEngine(
       }
       if (!map.getLayer(SUNLIGHT_NATIVE_LAYER_ID) && sunlightRef.current) {
         map.addLayer(sunlightRef.current);
+      }
+      if (!map.getLayer(TEMPERATURE_NATIVE_LAYER_ID) && temperatureRef.current) {
+        map.addLayer(temperatureRef.current);
       }
       if (!map.getLayer(AO_NATIVE_LAYER_ID) && aoRef.current) {
         map.addLayer(aoRef.current);
@@ -234,11 +287,15 @@ export function useMapEngine(
       });
     };
 
-    // A click probes the overlay; with the overlay off it does nothing.
+    // A click probes each overlay that is on; with both off it does nothing.
     const onClick = (e: { lngLat: { lng: number; lat: number } }) => {
-      const layer = sunlightRef.current;
-      if (!layer || !sunlightSettingsRef.current.visible) return;
-      layer.probe(e.lngLat.lng, e.lngLat.lat).then((r) => onProbeRef.current(r));
+      const { lng, lat } = e.lngLat;
+      const sun = sunlightRef.current;
+      if (sun && sunlightSettingsRef.current.visible) sun.probe(lng, lat).then((r) => onProbeRef.current(r));
+      const pet = temperatureRef.current;
+      if (pet && temperatureSettingsRef.current.visible) {
+        pet.probe(lng, lat).then((r) => onTemperatureProbeRef.current(r));
+      }
     };
 
     map.on("style.load", onStyleLoad);
@@ -255,9 +312,14 @@ export function useMapEngine(
       clearExternalNativePaintBridge(TREE_LAYER_ID);
       tree.dispose();
       treeRef.current = null;
+      // Downstream first, so nothing samples the sunlight targets as they go.
+      clearExternalNativePaintBridge(TEMPERATURE_LAYER_ID);
+      temperature.dispose();
+      temperatureRef.current = null;
       clearExternalNativePaintBridge(SUNLIGHT_LAYER_ID);
       sunlight.dispose();
       sunlightRef.current = null;
+      graphRef.current = null;
       clearExternalNativePaintBridge(AO_LAYER_ID);
       ao.dispose();
       aoRef.current = null;
@@ -283,7 +345,16 @@ export function useMapEngine(
   // Any control change re-describes the layers and diff-syncs them.
   useEffect(() => {
     applyLayers();
-  }, [applyLayers, settings, treeSettings, sunlightSettings.visible, sunlightSettings.opacity, aoSettings.enabled]);
+  }, [
+    applyLayers,
+    settings,
+    treeSettings,
+    sunlightSettings.visible,
+    sunlightSettings.opacity,
+    aoSettings.enabled,
+    temperatureSettings.visible,
+    temperatureSettings.opacity,
+  ]);
 
   // Strength and reach are the layer's own; the buildings' exaggeration and
   // filter reach it here too, so its redrawn prisms match the extrusions.
@@ -303,6 +374,20 @@ export function useMapEngine(
 
   const exportSunlight = useCallback(
     (): Promise<Blob | null> => sunlightRef.current?.exportGeoTiff() ?? Promise.resolve(null),
+    [],
+  );
+
+  // G0, Ta and V are the PET layer's own: three uniforms, no new light pass.
+  useEffect(() => {
+    temperatureRef.current?.setParams({
+      g0: temperatureSettings.g0,
+      ta: temperatureSettings.ta,
+      v: temperatureSettings.v,
+    });
+  }, [temperatureSettings.g0, temperatureSettings.ta, temperatureSettings.v]);
+
+  const exportTemperature = useCallback(
+    (): Promise<Blob | null> => temperatureRef.current?.exportGeoTiff() ?? Promise.resolve(null),
     [],
   );
 
@@ -362,7 +447,9 @@ export function useMapEngine(
     modelStatus,
     sunlightStatus,
     aoState,
+    temperatureStatus,
     exportSunlight,
+    exportTemperature,
     flyTo,
     zoomBy,
     setPitch,

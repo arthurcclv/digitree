@@ -36,3 +36,12 @@ type Sun = { azimuthDeg: number; elevationDeg: number };
 export function readoutSun(state: SunlightState, drawn: Sun | null, now: Sun | null): Sun | null {
   return state === "ready" && drawn ? drawn : now;
 }
+
+/**
+ * What the layer does with its DAG node on a state change: publish after a
+ * pass that reached `ready`, clear on leaving `ready`. See *The LPI node*.
+ */
+export function lpiNodeAction(prev: SunlightState, next: SunlightState, passed: boolean): "publish" | "clear" | null {
+  if (next === "ready") return passed ? "publish" : null;
+  return prev === "ready" ? "clear" : null;
+}

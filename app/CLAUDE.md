@@ -57,9 +57,22 @@ src/
                       tile planning + prism placement, state gate
       *.test.ts
       specs/spec.md
+    temperature/
+      index.ts        temperatureRecord() GeoLibre record, TemperatureSettings,
+                      PET_DEPS
+      temperatureLayer.ts ThreeTemperatureLayer — PET overlay drawn from the
+                      sunlight textures; probe and export through the LpiField
+      pet.ts, state.ts
+                      the pure parts: formula + its GLSL form, ramp, comfort
+                      classes, state
+      *.test.ts
+      specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
     viewpoints.ts     the eight Taipei VIEWPOINTS
+    dag/              the derived-layer DAG: one layer's output feeding
+                      another's (sunlight.lpi → temperature.pet); pure, with
+                      its own specs/spec.md
     tiles/            shared by the self-fetching layers (sunlight, AO): z14
                       grid, TileStore (fetch + decode + cache), building
                       prisms, ground footprint; *.test.ts beside them
@@ -101,7 +114,8 @@ Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
 `npm test` covers only what is pure — the species table, the geometry builders,
-`normalizeModel`, the sunlight and ambient-occlusion layers' pure modules, the
+`normalizeModel`, the sunlight, temperature and ambient-occlusion layers' pure
+modules, the derived-layer DAG, the
 shared tile store (on a fake `fetch`) and building prisms, and assertions about
 the served model folder itself (every `.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
 so anything needing a map or a GL context — including whether a model actually

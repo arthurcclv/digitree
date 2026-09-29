@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { MIN_SUN_ELEVATION_DEG } from "./sun";
-import { blockedState, readoutSun, SUNLIGHT_MIN_ZOOM } from "./state";
+import { blockedState, lpiNodeAction, readoutSun, SUNLIGHT_MIN_ZOOM } from "./state";
 
 const open = { visible: true, supported: true, zoom: 16, elevationDeg: 45 };
 
@@ -40,5 +40,21 @@ describe("readoutSun", () => {
     expect(readoutSun("low-sun", drawn, now)).toBe(now);
     expect(readoutSun("waiting", drawn, now)).toBe(now);
     expect(readoutSun("ready", null, now)).toBe(now);
+  });
+});
+
+describe("lpiNodeAction", () => {
+  test("publishes once per pass that reaches ready", () => {
+    expect(lpiNodeAction("waiting", "ready", true)).toBe("publish");
+    expect(lpiNodeAction("ready", "ready", true)).toBe("publish");
+    // A status refresh without a pass is not a new result.
+    expect(lpiNodeAction("ready", "ready", false)).toBeNull();
+  });
+
+  test("clears once on leaving ready, and not again", () => {
+    for (const next of ["off", "zoom", "low-sun", "unsupported", "waiting"] as const) {
+      expect(lpiNodeAction("ready", next, false)).toBe("clear");
+      expect(lpiNodeAction(next, next, false)).toBeNull();
+    }
   });
 });
