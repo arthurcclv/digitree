@@ -28,6 +28,11 @@ export function minHeightFilter(m: number): unknown[] {
   return [">=", BUILDING_HEIGHT_EXPRESSION, m];
 }
 
+/** The JS form of `minHeightFilter`, for a height already decoded. */
+export function meetsMinHeight(heightM: number, m: number): boolean {
+  return heightM >= m;
+}
+
 /**
  * The JS form: a building's height, or `null` when it has no volume — `hide_3d`,
  * or no positive height. Every building this keeps, the extrusion's filter

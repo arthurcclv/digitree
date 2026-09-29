@@ -44,7 +44,7 @@ const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
 useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
 
 // useMapEngine.ts — on any settings change
-mounts.ao.update({ ao, buildings: settings }); // every update first: one
+mounts.ao.update({ ao, extrusion: shadedExtrusion(settings) }); // every update first: one
 mounts.sunlight.update(sun);                    // layer's may change another's
 mounts.temperature.update(temp);                // records through DAG demand
 mounts.tree.update(tree);
@@ -244,17 +244,21 @@ coefficient table as `petOf`, so the GPU and CPU forms cannot drift.
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | `AmbientOcclusionSettings`, re-exports | no |
+| `index.ts` | `AmbientOcclusionSettings`, `ShadedExtrusion`, re-exports | no |
 | `records.ts` | the GeoLibre record | no |
-| `mount.ts` | `mountAmbientOcclusion` — takes `{ ao, buildings }` | yes, via `aoLayer.ts` |
+| `mount.ts` | `mountAmbientOcclusion` — takes `{ ao, extrusion }` | yes, via `aoLayer.ts` |
 | `state.ts` | `AoState`, `AO_MIN_ZOOM`, `aoState()` | **no** |
 | `kernel.ts` | the hemisphere kernel, the 4 × 4 rotation tile, `compositeFactor` | **no** |
-| `geometry.ts` | tile planning, prism placement with exaggeration and the min-height filter | **no** |
+| `geometry.ts` | tile planning, prism placement with exaggeration and the min-height filter (`meetsMinHeight`, from the buildings schema) | **no** |
 | `aoLayer.ts` | `ThreeAoLayer` — G-buffer, AO, blur, composite | yes |
 
-It reads the buildings' `heightScale` and `minHeight` (handed to its mount's
-`update` by the host), so its redrawn prisms match the extrusions; it reaches
-nothing of the `buildings` folder but the settings type.
+Its interface names what it shades in its own terms: a `ShadedExtrusion`
+(`visible`, `heightScale`, `minHeight`), the extrusion it redraws and so must
+match. The host maps its extrusion's settings onto it; here `useMapEngine`'s
+`shadedExtrusion(BuildingSettings)`. It reads the buildings' **data** through
+their schema (`buildingTiles`, `meetsMinHeight`, the JS form of the
+extrusion's `minHeightFilter`), and never their settings. A test fails if any
+of its modules imports another layer's settings type.
 
 `formGeometry.ts` and `models.ts` are the two **mesh sources**, and they are
 interchangeable on purpose: each hands `treeLayer.ts` a list of

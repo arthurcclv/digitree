@@ -31,6 +31,30 @@ follows the drawn scene. It uses the buildings' height exaggeration and
 minimum-height filter, and it disappears when the buildings are hidden. The
 point is for the shading to sit on what is drawn.
 
+## The shaded extrusion
+
+The layer darkens an extrusion that some other layer draws, by redrawing it.
+It must therefore match that extrusion: the same visibility, the same vertical
+exaggeration, and the same minimum-height filter. The layer's interface
+states exactly that, in its own terms:
+
+```ts
+interface ShadedExtrusion {
+  visible: boolean;     // the extrusion is drawn; the occlusion shows only then
+  heightScale: number;  // its vertical exaggeration
+  minHeight: number;    // its minimum height, in real metres
+}
+```
+
+`ShadedExtrusion` is owned by this layer (`index.ts`). The layer imports no
+settings type from any other layer. It reads the buildings' **data** through
+the buildings layer's schema (`buildingTiles`, `meetsMinHeight`), because the
+data is what it redraws, but never their settings. The host maps its
+extrusion's settings onto a `ShadedExtrusion`. In this app `useMapEngine`
+passes `{ visible, heightScale, minHeight }` from `BuildingSettings`. Another
+host with its own extrusion layer passes its own values, with no
+`BuildingSettings` involved.
+
 ## Geometry
 
 The layer cannot read MapLibre's depth buffer: the default framebuffer's depth
@@ -52,9 +76,11 @@ G-buffer, using the same data MapLibre uses.
   horizon does not plan the whole city. Beyond that, a building is a few
   pixels and is drawn without occlusion. There is no sun margin: occlusion
   reaches `radiusM`, not a shadow length.
-- **Filter.** A feature is dropped when `hide_3d` is true, or when its
-  `render_height` is below the buildings' `minHeight`. This is the same test
-  the extrusion's `filterExpression` applies.
+- **Filter.** A feature is dropped when `hide_3d` is true (at decode, by
+  `buildingHeight`), or when its height fails `meetsMinHeight(heightM,
+  extrusion.minHeight)`. That is the buildings schema's JS form of
+  `minHeightFilter`, the test the extrusion's `filterExpression` applies, and
+  a test proves the two forms agree.
 - **Height.** Each footprint becomes a prism from 0 to
   `render_height × heightScale`. The height is exaggerated here, as drawn.
   That is the reverse of the sunlight rule.
@@ -177,7 +203,7 @@ hidden.
 
 ## The GeoLibre record
 
-`ambientOcclusionRecord(settings, buildings)` follows the external-native
+`ambientOcclusionRecord(settings, extrusion)` follows the external-native
 pattern of the sunlight record:
 - `id: "ambient-occlusion"`;
 - `metadata.customLayerType: "threejs"`;
@@ -185,12 +211,12 @@ pattern of the sunlight record:
 - `paintMode: "plugin"`;
 - `source: {}`.
 
-`visible` is `settings.enabled && buildings.visible`, and reaches the layer
+`visible` is `settings.enabled && extrusion.visible`, and reaches the layer
 through the paint bridge; `opacity` is fixed at 1 and unused. Height is not a
 GeoLibre concept, so the layer's mount (`mountAmbientOcclusion`, `mount.ts`,
 see `src/lib/mount/specs/spec.md`) sets `intensity`, `radiusM` and the
-buildings' `heightScale` and `minHeight` on the layer directly (`setParams`),
-from the `{ ao, buildings }` settings the host hands its `update`.
+extrusion's `heightScale` and `minHeight` on the layer directly (`setParams`),
+from the `{ ao, extrusion }` settings the host hands its `update`.
 
 ## Settings
 
@@ -221,12 +247,13 @@ checked in the browser.
    - The kernel is deterministic, so the same seed gives the same kernel.
 2. **Geometry.**
    - `hide_3d` features, and features without a positive `render_height`,
-     are dropped at decode (`buildingHeight`). Features below `minHeight` (true
-     metres) produce no prism.
+     are dropped at decode (`buildingHeight`). Features that fail
+     `meetsMinHeight` (true metres) produce no prism.
    - A prism's roof is at `render_height × heightScale`.
    - Every prism is closed: each edge is shared by exactly two triangles.
 3. **Record and state.** `visible` is false whenever either `enabled` or the
-   buildings' `visible` is false. The ids and metadata are as listed above.
+   extrusion's `visible` is false. No module of the layer imports another
+   layer's settings type. The ids and metadata are as listed above.
    `aoState` returns `off`, `unsupported`, `zoom` in that order, and `ready`
    only from `AO_MIN_ZOOM` up. Tile planning covers the footprint's tiles plus
    one ring, and nothing beyond `AO_FETCH_HALF_M` plus one tile.

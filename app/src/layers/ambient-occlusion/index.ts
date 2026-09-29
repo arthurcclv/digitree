@@ -11,6 +11,20 @@ export {
   type AmbientOcclusionMountSettings,
 } from "./mount";
 
+/**
+ * The extrusion this layer darkens, which it redraws and so must match. The
+ * host maps its own extrusion's settings onto this. See *The shaded extrusion*
+ * in `specs/spec.md`.
+ */
+export interface ShadedExtrusion {
+  /** The extrusion is drawn; the occlusion shows only then. */
+  visible: boolean;
+  /** Its vertical exaggeration. */
+  heightScale: number;
+  /** Its minimum height, in real metres. */
+  minHeight: number;
+}
+
 export interface AmbientOcclusionSettings {
   enabled: boolean;
   /**

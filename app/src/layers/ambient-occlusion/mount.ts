@@ -1,18 +1,14 @@
-import type { BuildingSettings, BuildingSource } from "../buildings";
+import type { BuildingSource } from "../buildings";
 import { changed, nativeLayer, type LayerMount, type MountContext } from "../../lib/mount";
 import { ThreeAoLayer } from "./aoLayer";
 import { AO_LAYER_ID, ambientOcclusionRecord } from "./records";
 import type { AoState } from "./state";
-import type { AmbientOcclusionSettings } from "./index";
+import type { AmbientOcclusionSettings, ShadedExtrusion } from "./index";
 
-/**
- * The layer's own settings, and the buildings' fields it must match: it is
- * shown only while they are, and its redrawn prisms follow their exaggeration
- * and filter.
- */
+/** The layer's own settings, and the extrusion it shades and must match. */
 export interface AmbientOcclusionMountSettings {
   ao: AmbientOcclusionSettings;
-  buildings: Pick<BuildingSettings, "visible" | "heightScale" | "minHeight">;
+  extrusion: ShadedExtrusion;
 }
 
 export interface AmbientOcclusionMountHooks {
@@ -41,16 +37,16 @@ export function mountAmbientOcclusion(
 
   const update = (next: AmbientOcclusionMountSettings) => {
     const prev = settings;
-    // Not GeoLibre concepts: strength, reach, and the buildings' shape.
+    // Not GeoLibre concepts: strength, reach, and the extrusion's shape.
     if (
       changed(prev?.ao ?? null, next.ao, "intensity", "radiusM") ||
-      changed(prev?.buildings ?? null, next.buildings, "heightScale", "minHeight")
+      changed(prev?.extrusion ?? null, next.extrusion, "heightScale", "minHeight")
     ) {
       ao.setParams({
         intensity: next.ao.intensity,
         radiusM: next.ao.radiusM,
-        heightScale: next.buildings.heightScale,
-        minHeight: next.buildings.minHeight,
+        heightScale: next.extrusion.heightScale,
+        minHeight: next.extrusion.minHeight,
       });
     }
     settings = next;
@@ -61,7 +57,7 @@ export function mountAmbientOcclusion(
     update,
     prepareSync() {
       native.ensureAdded();
-      return [ambientOcclusionRecord(settings!.ao, settings!.buildings)];
+      return [ambientOcclusionRecord(settings!.ao, settings!.extrusion)];
     },
     dispose() {
       native.dispose();

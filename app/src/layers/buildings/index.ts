@@ -13,6 +13,7 @@ export {
   BUILDING_SHOWN_FILTER,
   buildingHeight,
   buildingTiles,
+  meetsMinHeight,
   minHeightFilter,
   type BuildingSource,
 } from "./schema";

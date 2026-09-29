@@ -49,7 +49,9 @@ holds both forms of the rule:
   `BUILDING_HEIGHT_EXPRESSION`, `minHeightFilter(m)`;
 - the JS form the self-fetching layers decode with: `buildingHeight(props)`,
   which is `null` for `hide_3d: true` or a non-positive height, through
-  `buildingTiles(source)`.
+  `buildingTiles(source)`. Beside it is `meetsMinHeight(heightM, m)`, the JS
+  form of `minHeightFilter(m)`, which ambient occlusion applies to its decoded
+  heights.
 
 Every building the JS form keeps, the extrusion draws. The one difference: with
 no minimum height, the filter keeps a footprint with no positive
@@ -129,3 +131,5 @@ conflated.
 4. Every source field of the record comes from the descriptor passed in.
 5. Every building `buildingHeight` keeps, the extrusion filter keeps; they
    differ only on non-positive heights at no minimum height.
+6. For every positive height and minimum, `meetsMinHeight` agrees with
+   `minHeightFilter`, as MapLibre evaluates it.

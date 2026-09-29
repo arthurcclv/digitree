@@ -25,6 +25,7 @@ import {
   type AmbientOcclusionMount,
   type AmbientOcclusionSettings,
   type AoState,
+  type ShadedExtrusion,
 } from "../layers/ambient-occlusion";
 import { createGraph } from "./dag";
 import { BUILDINGS, TREES } from "../sources";
@@ -37,6 +38,13 @@ maplibreConfig.WORKER_URL = maplibreWorkerUrl;
 // GeoLibre ships a compatibility shim for MapLibre's removed `Map#transform`.
 // It must run before the first Map is constructed, hence module scope.
 installMapTransformCompat();
+
+/** What ambient occlusion must match: the extrusion this app draws is the buildings. */
+const shadedExtrusion = ({ visible, heightScale, minHeight }: BuildingSettings): ShadedExtrusion => ({
+  visible,
+  heightScale,
+  minHeight,
+});
 
 /** The layers this app mounts. Each folder owns its own lifecycle. */
 interface Mounts {
@@ -186,7 +194,7 @@ export function useMapEngine(
       ao: mountAmbientOcclusion(
         ctx,
         { buildings: BUILDINGS },
-        { ao: initial.aoSettings, buildings: settingsRef.current },
+        { ao: initial.aoSettings, extrusion: shadedExtrusion(settingsRef.current) },
         { onStatus: setAoState },
       ),
       sunlight: mountSunlight(ctx, { trees: TREES, buildings: BUILDINGS }, initial.sunlightSettings, {
@@ -283,7 +291,7 @@ export function useMapEngine(
   useEffect(() => {
     const mounts = mountsRef.current;
     if (mounts) {
-      mounts.ao.update({ ao: aoSettings, buildings: settings });
+      mounts.ao.update({ ao: aoSettings, extrusion: shadedExtrusion(settings) });
       mounts.sunlight.update(sunlightSettings);
       mounts.temperature.update(temperatureSettings);
       mounts.tree.update(treeSettings);

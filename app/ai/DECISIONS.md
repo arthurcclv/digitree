@@ -6,6 +6,29 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — Ambient occlusion shades a `ShadedExtrusion`, not the buildings' settings
+
+**Decision.** AO's record and mount take a `ShadedExtrusion` (`visible`,
+`heightScale`, `minHeight`). The type is owned by AO and names the extrusion
+it redraws and so must match. It replaces `Pick<BuildingSettings, …>` under a
+field called `buildings`. The host maps its extrusion's settings onto it
+(`useMapEngine`'s `shadedExtrusion`). AO's minimum-height check is now the
+buildings schema's `meetsMinHeight`, the JS form of `minHeightFilter`, where it
+used to be a hand-written `heightM < minHeight`.
+
+**Why.** The portability half of this already came with the mounts and the
+source descriptors. What remained was an interface phrased as a sibling's
+settings, and a third copy of the height filter that nothing tied to the
+other two. A test now evaluates `minHeightFilter` with MapLibre's
+`featureFilter` against `meetsMinHeight`, and another fails if an AO module
+imports another layer's settings type.
+
+**Rules out.** AO reading any layer's settings. It may read the buildings'
+**data** through their schema (`buildingTiles`, `meetsMinHeight`), because
+the data is what it redraws.
+
+---
+
 ## 2026-09-29 — Layers take their data sources as descriptors; one schema per dataset
 
 **Decision.** No layer holds an endpoint.

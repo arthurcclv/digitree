@@ -2,6 +2,7 @@
  * Which tiles the layer wants, and its building prisms placed in its frame.
  * Pure — see *Geometry* in `specs/spec.md`.
  */
+import { meetsMinHeight } from "../buildings";
 import {
   lngLatToMercator,
   placeTile,
@@ -41,7 +42,8 @@ export function planAoTiles(frame: LocalFrame, footprint: [number, number][], ha
 /**
  * The prisms of every building at least `minHeight` real metres tall, with
  * heights exaggerated by `heightScale`, in the frame's local metres. The
- * filter reads true height, as the extrusion's does.
+ * filter is the buildings schema's own (`meetsMinHeight`), on true height, so
+ * it keeps what the extrusion keeps.
  */
 export function placeAoPrisms(
   frame: LocalFrame,
@@ -53,7 +55,7 @@ export function placeAoPrisms(
   let buildings = 0;
   for (const { prisms } of parts) {
     for (const f of prisms.features) {
-      if (f.heightM < minHeight) continue;
+      if (!meetsMinHeight(f.heightM, minHeight)) continue;
       size += f.end - f.start;
       buildings++;
     }
@@ -62,7 +64,7 @@ export function placeAoPrisms(
   let at = 0;
   for (const { tile, prisms } of parts) {
     for (const f of prisms.features) {
-      if (f.heightM < minHeight) continue;
+      if (!meetsMinHeight(f.heightM, minHeight)) continue;
       at = placeTile(frame, tile, prisms.prism, positions, at, heightScale, f.start, f.end);
     }
   }

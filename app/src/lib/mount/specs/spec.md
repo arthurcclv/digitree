@@ -59,7 +59,7 @@ fixed for the mount's life. It returns a
 | `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | — |
 | `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
 | `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
-| `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; buildings: Pick<BuildingSettings, "visible" \| "heightScale" \| "minHeight"> }` | `onStatus(AoState)` | — |
+| `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; extrusion: ShadedExtrusion }` | `onStatus(AoState)` | — |
 
 `buildings` gets no mount. Its record builder already needs nothing else, and
 a mount around it would only pass settings through.

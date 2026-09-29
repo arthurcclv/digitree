@@ -104,6 +104,8 @@ The OpenMapTiles `building` layer: `render_height`, and `hide_3d`.
 - `buildingHeight(properties): number | null`. This is the JS form, moved from
   `lib/tiles/store.ts`. It returns `null` for `hide_3d: true` or a height that
   is not positive.
+- `meetsMinHeight(heightM, m)` is the JS form of the minimum-height filter,
+  which ambient occlusion applies to decoded heights.
 - `BUILDING_SHOWN_FILTER`, `BUILDING_HEIGHT_EXPRESSION` and
   `minHeightFilter(m)` are the MapLibre forms the extrusion record uses. They
   sit beside the JS form in the same module, and a test asserts how the two

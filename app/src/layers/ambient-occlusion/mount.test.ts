@@ -10,7 +10,7 @@ import { AO_LAYER_ID, ambientOcclusionRecord } from "./records";
 
 const SETTINGS: AmbientOcclusionMountSettings = {
   ao: DEFAULT_AO_SETTINGS,
-  buildings: { visible: true, heightScale: 1, minHeight: 0 },
+  extrusion: { visible: true, heightScale: 1, minHeight: 0 },
 };
 
 const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
@@ -21,10 +21,10 @@ const mount = () => {
 };
 
 describe("mountAmbientOcclusion", () => {
-  test("syncs the record the builder makes, hidden with the buildings", () => {
+  test("syncs the record the builder makes, hidden with the extrusion it shades", () => {
     const { m } = mount();
-    expect(m.prepareSync()).toEqual([ambientOcclusionRecord(SETTINGS.ao, SETTINGS.buildings)]);
-    m.update({ ...SETTINGS, buildings: { ...SETTINGS.buildings, visible: false } });
+    expect(m.prepareSync()).toEqual([ambientOcclusionRecord(SETTINGS.ao, SETTINGS.extrusion)]);
+    m.update({ ...SETTINGS, extrusion: { ...SETTINGS.extrusion, visible: false } });
     expect(m.prepareSync()[0].visible).toBe(false);
     m.dispose();
   });
@@ -45,13 +45,13 @@ describe("mountAmbientOcclusion", () => {
     expect(getExternalNativePaintBridge(AO_LAYER_ID)).toBeUndefined();
   });
 
-  test("sets the parameters only when one of them, or the buildings' shape, changed", () => {
+  test("sets the parameters only when one of them, or the extrusion's shape, changed", () => {
     const setParams = vi.spyOn(ThreeAoLayer.prototype, "setParams");
     const { m } = mount();
     setParams.mockClear();
-    m.update({ ...SETTINGS, buildings: { ...SETTINGS.buildings, visible: false } });
+    m.update({ ...SETTINGS, extrusion: { ...SETTINGS.extrusion, visible: false } });
     expect(setParams).not.toHaveBeenCalled();
-    m.update({ ...SETTINGS, buildings: { ...SETTINGS.buildings, minHeight: 20 } });
+    m.update({ ...SETTINGS, extrusion: { ...SETTINGS.extrusion, minHeight: 20 } });
     expect(setParams).toHaveBeenCalledWith({ intensity: 1, radiusM: 6, heightScale: 1, minHeight: 20 });
     m.dispose();
     vi.restoreAllMocks();

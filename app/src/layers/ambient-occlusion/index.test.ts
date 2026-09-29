@@ -24,3 +24,15 @@ describe("ambientOcclusionRecord", () => {
     expect(ambientOcclusionRecord(DEFAULT_AO_SETTINGS, { visible: false }).visible).toBe(false);
   });
 });
+
+describe("the shaded extrusion", () => {
+  // The layer reads the buildings' data through their schema, never their
+  // settings: a host with another extrusion layer maps onto ShadedExtrusion.
+  test("no module of the layer imports another layer's settings type", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const offenders = readdirSync(__dirname)
+      .filter((name) => /\.ts$/.test(name) && !/\.test\.ts$/.test(name))
+      .filter((name) => /\b\w+Settings\b[^;]*from\s+["']\.\.\//.test(readFileSync(`${__dirname}/${name}`, "utf8")));
+    expect(offenders).toEqual([]);
+  });
+});

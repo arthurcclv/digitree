@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { featureFilter, type FilterSpecification } from "@maplibre/maplibre-gl-style-spec";
-import { buildingHeight, BUILDING_SHOWN_FILTER, minHeightFilter } from "./schema";
+import { buildingHeight, BUILDING_SHOWN_FILTER, meetsMinHeight, minHeightFilter } from "./schema";
 import { buildingsLayer, DEFAULT_BUILDING_SETTINGS } from "./index";
 
 /** The extrusion's own filter for a minimum height, as MapLibre evaluates it. */
@@ -70,5 +70,20 @@ describe("the two forms of the rule", () => {
   test("the record's filter is built from the schema's parts", () => {
     expect(minHeightFilter(5)).toEqual([">=", ["to-number", ["get", "render_height"], 0], 5]);
     expect(BUILDING_SHOWN_FILTER).toEqual(["!=", ["get", "hide_3d"], true]);
+  });
+});
+
+describe("meetsMinHeight", () => {
+  // Ambient occlusion filters decoded heights with this; the extrusion with
+  // `minHeightFilter`. They must keep the same buildings, or the redrawn
+  // prisms and the drawn extrusions disagree.
+  test("agrees with minHeightFilter, as MapLibre evaluates it, for every positive height", () => {
+    for (const m of [0, 0.5, 5, 20, 80]) {
+      const f = featureFilter(minHeightFilter(m) as FilterSpecification, "filter");
+      for (const h of [0.1, 0.5, 4.99, 5, 5.01, 20, 79.9, 80, 300]) {
+        const byMapLibre = f.filter({ zoom: 15 }, { type: 3, properties: { render_height: h } } as never);
+        expect(meetsMinHeight(h, m), `h=${h} m=${m}`).toBe(byMapLibre);
+      }
+    }
   });
 });
