@@ -44,6 +44,14 @@ const mountBoth = () => {
 };
 
 describe("mountTemperature", () => {
+  // A new member is how a host would push layer-specific state in (a setter);
+  // it means changing the factory table in the mount spec first (invariant 8).
+  test("exposes exactly its members", () => {
+    const { temperature, dispose } = mountBoth();
+    expect(Object.keys(temperature).sort()).toEqual(["dispose", "exportGeoTiff", "prepareSync", "probe", "update"]);
+    dispose();
+  });
+
   test("throws when mounted before the direct-sun layer", () => {
     const f = fakeMap();
     expect(() => mountTemperature({ map: f.map, graph: createGraph() }, DEFAULT_TEMPERATURE_SETTINGS)).toThrow(

@@ -29,6 +29,14 @@ const mount = (settings: TreeSettings = DEFAULT_TREE_SETTINGS) => {
 };
 
 describe("mountTree", () => {
+  // A new member is how a host would push layer-specific state in (a setter);
+  // it means changing the factory table in the mount spec first (invariant 8).
+  test("exposes exactly its members", () => {
+    const { m } = mount();
+    expect(Object.keys(m).sort()).toEqual(["dispose", "prepareSync", "update"]);
+    m.dispose();
+  });
+
   test("syncs the same two records the builders make, points first", () => {
     const settings = { ...DEFAULT_TREE_SETTINGS, kind: "park" as const, opacity: 0.5 };
     const { m } = mount(settings);

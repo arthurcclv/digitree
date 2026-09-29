@@ -64,19 +64,23 @@ incomplete. So is one that silently invalidates an `ai/` doc.
    settings, and its invariants. Copy the shape of an existing spec: Purpose,
    Identity, Source, Settings, then Invariants.
 2. `src/layers/<name>/index.ts` — the only entry point. Export a
-   `<Name>Settings` interface, a `DEFAULT_<NAME>_SETTINGS`, and a function that
-   turns settings into a `GeoLibreLayer` record.
-3. Add the record to the `sync([...])` array in `useMapEngine.applyLayers`.
-   Later entries end up higher in the stack.
+   `<Name>Settings` interface and a `DEFAULT_<NAME>_SETTINGS`. The function
+   that turns settings into a `GeoLibreLayer` record goes in `records.ts`,
+   re-exported here. A layer that reads a dataset takes its descriptor as an
+   argument.
+3. For a record-only layer (like `buildings`), add the record to the
+   `sync([...])` array in `useMapEngine.applyLayers`. Later entries end up
+   higher in the stack. A layer with a custom half is mounted instead; see
+   below.
 4. Add state and a `Panel` in `App.tsx`. Panels are numbered (`index="05"`) and
    staggered (`delay`); keep the sequence contiguous.
-5. Update `ARCHITECTURE.md`'s module inventory, and the layout tables in
-   `README.md` and `CLAUDE.md`.
+5. Update `ARCHITECTURE.md`'s module inventory and the layout in `CLAUDE.md`.
+   Check the new layer against the *Portability rules* in `CLAUDE.md`.
 
 If the new thing renders itself rather than being rendered by GeoLibre, follow
 the tree and keep it portable (`src/lib/mount/specs/spec.md`). The record goes
 in `records.ts`, with external-native metadata. `mount.ts` exports
-`mount<Name>(ctx, settings, hooks)`: `nativeLayer` handles the paint bridge
+`mount<Name>(ctx, [sources,] settings, hooks)`: `nativeLayer` handles the paint bridge
 and the re-add after `style.load`, `update` pushes the concepts GeoLibre
 lacks, and a derived layer adds its DAG node there. Step 3 then becomes
 mounting it in `useMapEngine` (after anything it derives from), calling its

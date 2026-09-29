@@ -22,6 +22,14 @@ const mount = () => {
 };
 
 describe("mountAmbientOcclusion", () => {
+  // A new member is how a host would push layer-specific state in (a setter);
+  // it means changing the factory table in the mount spec first (invariant 8).
+  test("exposes exactly its members", () => {
+    const { m } = mount();
+    expect(Object.keys(m).sort()).toEqual(["dispose", "prepareSync", "update"]);
+    m.dispose();
+  });
+
   test("syncs the record the builder makes, hidden with the extrusion it shades", () => {
     const { m } = mount();
     expect(m.prepareSync()).toEqual([ambientOcclusionRecord(SETTINGS.ao, SETTINGS.extrusion)]);

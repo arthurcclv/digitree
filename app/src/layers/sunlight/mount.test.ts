@@ -34,6 +34,14 @@ const mount = () => {
 };
 
 describe("mountSunlight", () => {
+  // A new member is how a host would push layer-specific state in (a setter);
+  // it means changing the factory table in the mount spec first (invariant 8).
+  test("exposes exactly its members", () => {
+    const { m } = mount();
+    expect(Object.keys(m).sort()).toEqual(["dispose", "exportGeoTiff", "prepareSync", "probe", "update"]);
+    m.dispose();
+  });
+
   test("adds its own DAG node", () => {
     const { graph, m } = mount();
     expect(graph.state(LPI_NODE)).toBe("off");

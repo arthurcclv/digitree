@@ -4,8 +4,8 @@ Source of truth for how a layer with a custom (three.js) half is attached to a
 map. Behaviour changes here require this file to change first.
 
 Module: `src/lib/mount/` — `index.ts` (the `LayerMount` interface, the shared
-`nativeLayer` helper and `changed`), `fakeMap.ts` (test support) and
-`nativeLayer.test.ts`. Each such layer folder implements it in its own
+`nativeLayer` helper and `changed`), `fakeMap.ts` (test support),
+`nativeLayer.test.ts`, and `structure.test.ts` (the structural guards). Each such layer folder implements it in its own
 `mount.ts`, exported from its `index.ts`. The folder's record builders live in
 `records.ts`, so that `mount.ts` and `index.ts` never import each other.
 
@@ -158,6 +158,51 @@ which the fake never calls.
 6. `update` with an unchanged setting calls no setter on the class.
 7. After a simulated style reset (the fake's `getLayer` returns undefined),
    the next `prepareSync` re-adds the custom layer.
+
+### Structural guards
+
+These keep a future change from quietly undoing the portability above. They
+read the source tree rather than run it, in `src/lib/mount/structure.test.ts`,
+except invariant 8, which runs in each layer's mount test. Loosening or
+exempting one is a change to this spec.
+
+8. **A mount exposes exactly its members.** A mount's returned object has
+   exactly `update`, `prepareSync` and `dispose`, plus the extra members in
+   the factory table above (sunlight and temperature: `probe`,
+   `exportGeoTiff`), and nothing else. A new member is how a host would come
+   to push layer-specific state into a layer (a `setUpstreamState`, a
+   setter), so adding one means changing that table first.
+9. **The host constructs, wires and names nothing of a layer.**
+   `useMapEngine.ts` does none of the following:
+   - imports a `Three…Layer` class, a DAG node id (`…_NODE`) or deps
+     (`…_DEPS`);
+   - calls `addLayer`, `setExternalNativePaintBridge` or
+     `clearExternalNativePaintBridge`;
+   - calls `add(` on the graph.
+
+   Its runtime imports from `src/layers/` are limited to: mount factories
+   (`mount…`); the record builders and style-layer ids of the record-only
+   layer (`buildingsLayer`, `BUILDINGS_STYLE_LAYER_IDS`); the basemaps
+   extension's style functions (`anchorUnderLabels`, `hideBasemapBuildings`);
+   and custom-layer ids used only for stacking (`…_NATIVE_LAYER_ID`). Anything
+   else is a type import.
+10. **No layer reads another layer's settings.** No non-test module under
+    `src/layers/` imports a `…Settings` type from another layer's folder. What
+    a layer needs from a sibling is a type it owns, as AO's `ShadedExtrusion`
+    is. This generalises the ambient-occlusion spec's invariant 3 to every
+    layer.
+11. **No runtime import cycle anywhere in `src/`.** The runtime import graph of
+    every non-test module under `src/` has no cycle. Type-only imports
+    (`import type`, `export type`, or a specifier list that is all `type`) are
+    ignored, because they are erased. This is what keeps `records.ts`,
+    `mount.ts` and `index.ts` apart. `tsc -b` does not report a cycle, and an
+    ES module cycle fails only at runtime, as an uninitialised binding that
+    depends on evaluation order.
+
+What these do not catch: a host that forwards one layer's output to another
+through a member that is already allowed, such as feeding one mount's
+`probe` result into another's `update`. That stays a review rule
+(`app/CLAUDE.md`, *Portability rules*, rule 3).
 
 ## Out of scope
 

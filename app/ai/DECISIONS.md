@@ -6,6 +6,37 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — The portability rules are guarded by tests that read the source
+
+**Decision.** The rules in `app/CLAUDE.md`, *Portability rules*, are enforced
+by vitest where they can be, not only by review. Four guards were added
+(mount spec, *Structural guards*):
+- **a mount exposes exactly its members**, so a host cannot gain a setter to
+  forward one layer's state into another;
+- **the host constructs, wires and names nothing of a layer**: no layer
+  class, DAG node or deps, no `addLayer`, paint bridge or `graph.add`, and
+  its runtime imports from layers are an allowlist;
+- **no layer imports another layer's `…Settings`**, which generalises AO's
+  rule to every layer;
+- **no runtime import cycle anywhere in `src/`.**
+
+They join the guards the refactors already carried (`lib/tiles/structure.test.ts`:
+no endpoint or city in a layer, no GL setup outside `ThreeLayer`, and no
+shared module importing a layer). Each was checked against a planted
+regression before it was kept.
+
+**Why.** The refactors hold only if later changes respect them, and most of
+the rules they rest on are invisible to `tsc`. The cycle case shows it: a
+`mount.ts` ⇄ `index.ts` cycle type-checks cleanly and fails only at runtime.
+
+**Rules out.** Loosening or exempting a guard to get a change through. That
+is a spec change, with approval.
+
+**Not guarded.** A host passing one mount's `probe` result into another's
+`update`, since both members are allowed. It stays a review rule.
+
+---
+
 ## 2026-09-29 — The layers name no city; the place is `src/place.ts`
 
 **Decision.** What the app knows about where it is moved out of the layers.

@@ -6,8 +6,8 @@ root `CLAUDE.md`; this file covers what is specific to the app.
 ## What this is
 
 A single Vite + React app (`taipei-3d`) — one `package.json`, no workspaces. A 3D
-map of Taipei built on GeoLibre 3.0.0 over MapLibre, with a three.js custom
-layer.
+map of Taipei built on GeoLibre 3.0.0 over MapLibre, with four three.js custom
+layers (tree meshes, direct sun, felt temperature, ambient occlusion).
 
 **Every GeoLibre layer, plugin, or extension gets its own folder under
 `src/layers/<name>/`, and every such folder carries a `specs/spec.md`.** That
@@ -124,33 +124,112 @@ dist/               build output (gitignored)
 - `index.ts` is the only entry other modules import (`../layers/tree`, never
   `../layers/tree/treeLayer`). Split into more files inside the folder freely.
 - A layer folder may import from `src/lib` and from another layer's `index.ts`
-  (`buildings` imports the OSM tile URL and attribution from `basemaps`). It must
-  not reach into another layer's internals.
+  (`sunlight` imports `treeTiles` and `canopyHullOf` from `tree`). It must not
+  reach into another layer's internals.
 - `specs/spec.md` is mandatory and must describe the layer's contract with
   GeoLibre, its settings, and its invariants.
+- A layer with a custom half keeps its record builders in `records.ts` and its
+  mount in `mount.ts`. `mount.ts` imports only *types* from `index.ts`, so the
+  two never form a module cycle. tsc will not catch one; `lib/mount/structure.test.ts`
+  fails on any runtime import cycle in `src/`.
+
+### Portability rules — every layer must stay runnable in any GeoLibre host
+
+Each layer folder can be lifted into another GeoLibre application: the host
+mounts it, passes it descriptors, and knows nothing else about it. These rules
+keep it that way. Each names its contract and, where there is one, the test
+that guards it. **A failing guard means the change is wrong, not the test:
+loosening or exempting a guard is a spec change, and needs approval like any
+other.**
+
+1. **Nothing layer-specific lives in the host.** Construction, the paint
+   bridge, re-adding after `style.load`, pushing non-GeoLibre settings,
+   visibility and demand, and teardown all live in the layer's `mount.ts`
+   (`src/lib/mount/specs/spec.md`). `useMapEngine` only chooses which layers,
+   their mount and stack order, and what the UI does with status, probes and
+   exports. A new `useEffect` in the host that calls a setter on one layer is
+   the pattern this rule forbids. *Guards: `lib/mount/structure.test.ts` (the
+   host imports no layer class, DAG node or deps, calls no `addLayer`, paint
+   bridge or `graph.add`, and its runtime imports from layers are an
+   allowlist), and each mount test's "exposes exactly its members", so a
+   mount cannot grow a setter without a spec change.*
+2. **The host applies every `update` before any `prepareSync`, mounts in
+   dependency order, and disposes in reverse.** One layer's settings can change
+   another's records through DAG demand (temperature's `visible` makes
+   sunlight's record visible). *Guard: `temperature/mount.test.ts`.*
+3. **Layers talk only through the DAG, value and state alike.** A layer never
+   holds a reference to another, and the host never forwards one layer's
+   status to another (`src/lib/dag/specs/spec.md`). A derived layer adds its
+   own node in its mount. *Guards: `temperature/mount.test.ts` ("follows the
+   direct-sun state through the DAG alone"), and rule 1's guards, which leave
+   the host no setter to forward through. Passing one mount's `probe` result
+   into another's `update` is still possible and is caught only by review.*
+4. **No layer holds an endpoint.** Where a dataset is served is a descriptor
+   (`TreeSource`, `BuildingSource`) passed in by the host. The app's values live
+   only in `src/sources.ts` (`src/lib/tiles/specs/spec.md`). *Guard:
+   `lib/tiles/structure.test.ts`.*
+5. **One reading per dataset, in its owner's `schema.ts`.** `treeOf` is the only
+   reading of a tree. The buildings rule keeps its MapLibre form and its JS form
+   (`buildingHeight`, `meetsMinHeight`) side by side. A new consumer reuses
+   these and never re-reads properties by hand. *Guard:
+   `buildings/schema.test.ts` evaluates the filter with MapLibre's own
+   `featureFilter`.*
+6. **A layer's interface is in its own terms, never another layer's settings.**
+   What it needs from a sibling is a type it owns (AO's `ShadedExtrusion`),
+   which the host maps onto. It may read a sibling's *data* through that
+   sibling's schema. *Guard: `lib/mount/structure.test.ts`: no layer imports
+   another layer's `…Settings` type.*
+7. **Every three.js layer extends `ThreeLayer`** (`src/lib/three/specs/spec.md`).
+   It never makes a renderer, calls `resetState`, or reads `mainMatrix` itself,
+   and it wraps its drawing in `pass`. It declares `prerender` only when it has
+   offscreen work, because MapLibre gives any layer with one an offscreen pass.
+   *Guard: `lib/tiles/structure.test.ts`, plus each layer's mount test.*
+8. **No layer or shared module names the city.** Time zone, home view and
+   daylight range are `PLACE` in `src/place.ts`; record names and dataset facts
+   (such as the fallback tree height) are descriptor fields
+   (`src/lib/place/specs/spec.md`). *Guard: `lib/tiles/structure.test.ts`.*
+9. **The shared modules (`src/lib/tiles`, `mount`, `dag`, `three`, `place`)
+   import nothing from `src/layers/`.** `useMapEngine.ts` is the one exception,
+   because it is the host. *Guard: `lib/tiles/structure.test.ts`.*
+
+Moving the app to another city should touch `src/sources.ts` and
+`src/place.ts`, and nothing under `src/layers/` or `src/lib/`. If a change
+needs more than that, it is breaking one of these rules. The known exception
+is the species tables (`tree/forms.ts`, `sunlight/transmittance.ts`); see the
+place spec, *Out of scope*.
 
 ### How a layer reaches the map
 
 Settings flow one way: `App.tsx` holds the state → `useMapEngine.ts` hands
 each layer's mount its settings (`update`) → each mount returns its
 `GeoLibreLayer` records (`prepareSync`) → `useMapEngine.ts` passes them to
-GeoLibre's `sync()`. A layer with a custom half must stay portable: everything
-it needs on a map lives in its own `mount.ts`, never in the host (see
-`src/lib/mount/specs/spec.md`). No layer holds an endpoint: datasets reach it
-as descriptors from `src/sources.ts` (see `src/lib/tiles/specs/spec.md`). Only `useMapEngine.ts`, the mounts (for their
-own custom layer) and `layers/basemaps` touch the MapLibre map directly.
+GeoLibre's `sync()` (skipped when the records are unchanged). Only
+`useMapEngine.ts`, the mounts (for their own custom layer) and `layers/basemaps`
+touch the MapLibre map directly.
 
 Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
-`npm test` covers only what is pure — the species table, the geometry builders,
-`normalizeModel`, the sunlight, temperature and ambient-occlusion layers' pure
-modules, the derived-layer DAG, each layer's mount (on the fake map in
-`src/lib/mount/fakeMap.ts`, which never calls `onAdd`, so no GL), the
-shared tile store (on a fake `fetch`) and building prisms, and assertions about
-the served model folder itself (every `.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
-so anything needing a map or a GL context — including whether a model actually
-loads — is still checked in the browser.
+`npm test` covers what runs without a map or a GL context:
+- the species table, the geometry builders and `normalizeModel`;
+- the pure modules of the sunlight, temperature and ambient-occlusion layers;
+- the derived-layer DAG and the local-time helpers;
+- each layer's mount, on the fake map in `src/lib/mount/fakeMap.ts`, which
+  never calls `onAdd`;
+- `ThreeLayer`'s lifecycle, on a fake renderer;
+- the tile store (on a fake `fetch`) and building prisms;
+- the schemas, with MapLibre's own filter evaluator;
+- assertions about the source tree itself (`lib/tiles/structure.test.ts`,
+  the guards for the portability rules above);
+- assertions about the served model folder (every `.glb` is CC-BY, prepared,
+  and credited).
+
+There is no jsdom and no headless GL. So anything needing a real map or GL
+context, including whether a model actually loads or a pass still draws the
+same pixels, is checked in the browser. For a change to a GL pass, compare a
+GeoTIFF export or a screenshot against the previous commit. Two runs are only
+comparable when they settled on the same occluder count, which varies between
+runs (`ai/DECISIONS.md`).
 
 ## Documentation
 
@@ -172,7 +251,11 @@ drift, tests, docs current). These are the app's own:
 - **Read the relevant spec before changing anything.** The `specs/spec.md` in the
   layer folder you are touching (`src/layers/<name>/specs/spec.md`) is the source
   of truth for intended behavior, not just background reading — check the
-  applicable section(s) before touching layer, engine, or app code.
+  applicable section(s) before touching layer, engine, or app code. The shared
+  contracts are specs too, and a layer change usually touches one:
+  `src/lib/mount` (how a layer attaches), `dag` (how layers feed each other),
+  `tiles` (data sources and schemas), `three` (the GL rules) and `place` (what
+  the app knows about where it is).
 - **Every new layer, plugin, or extension ships a spec.** A new
   `src/layers/<name>/` folder is incomplete without its `specs/spec.md`, written
   and approved before the layer's implementation lands.

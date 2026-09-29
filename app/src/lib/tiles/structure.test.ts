@@ -21,7 +21,7 @@ describe("the data-source seam", () => {
   // `useMapEngine.ts` also lives in src/lib, but it is the host: composing the
   // layers is its job. The shared modules must not know them.
   test("no shared module in src/lib imports from src/layers", () => {
-    const shared = ["tiles", "mount", "dag", "three"].flatMap((d) => filesUnder(join(SRC, "lib", d)));
+    const shared = ["tiles", "mount", "dag", "three", "place"].flatMap((d) => filesUnder(join(SRC, "lib", d)));
     const offenders = shared.filter((path) =>
       /from\s+["'][^"']*\/layers\//.test(readFileSync(path, "utf8")),
     );
