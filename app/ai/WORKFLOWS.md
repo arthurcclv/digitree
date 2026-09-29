@@ -100,8 +100,9 @@ In dev the map is exposed as `window.__map` for console poking. It is gated on
 
 ## Checking the trees
 
-Fly to viewpoint `Trees` (07) — a vantage over a dense part of Da'an — and get
-above z16, where the meshes start. Then:
+Pan to a dense part of Da'an — around 25.0431° N, 121.5374° E, which the
+status bar confirms — and get above z16 (z17.4 at a steep pitch works well),
+where the meshes start. Then:
 
 - **Occlusion.** Toggle Extrusion off and on at a low bearing. The trees should
   be substantially hidden by buildings when they are on; if they always draw in

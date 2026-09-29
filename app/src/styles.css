@@ -123,6 +123,32 @@ input { font: inherit; }
   gap: 8px;
 }
 
+/* -------------------------------------------------------------- status bar */
+/* The top bar's mirror: the live camera, lat · lon · zoom, in every state. */
+.status-bar {
+  flex: none;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 var(--pad);
+  background: var(--top-bar);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status-bar__item + .status-bar__item::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--fg-dim);
+}
+
+.status-bar__k { color: var(--fg-muted); }
+.status-bar__v { color: var(--accent-text); }
+
 /* ----------------------------------------------------------------- columns */
 .column {
   flex: none;
@@ -137,7 +163,6 @@ input { font: inherit; }
 }
 
 .column--left { border-right: 1px solid var(--border-subtle); }
-.column--right { border-left: 1px solid var(--border-subtle); }
 
 /* ---------------------------------------------------------------- viewport */
 .viewport {
@@ -495,60 +520,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .menu-row:hover { background: var(--accent); color: #fff; }
 .menu-row input[type="checkbox"] { accent-color: var(--accent); }
 
-/* ------------------------------------------------------------- viewpoints */
-.viewpoints {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.viewpoint-row {
-  display: grid;
-  grid-template-columns: 14px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  text-align: left;
-  transition: background 0.16s;
-}
-
-.viewpoint-row:hover { background: var(--raised); }
-
-.viewpoint-row[aria-current="true"] {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-
-/* Selection is the ground *and* the glyph: colour never carries state alone. */
-.viewpoint-row__check {
-  color: var(--accent-text);
-  font-size: 11px;
-  visibility: hidden;
-}
-.viewpoint-row[aria-current="true"] .viewpoint-row__check { visibility: visible; }
-
-.viewpoint-row__name {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.viewpoint-row__sub {
-  display: block;
-  font-size: 11px;
-  color: var(--fg-muted);
-}
-
-.viewpoint-row__rate {
-  font-size: 11px;
-  color: var(--fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-
 /* ---------------------------------------------------------------- readouts */
 .stat-list {
   display: flex;
@@ -631,9 +602,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 
 /* ------------------------------------------------------------------ narrow */
 @media (max-width: 900px) {
-  /* One column: the map, then the two panel columns stacked under it. The page
-     itself scrolls here rather than each column — three bounded scroll regions
-     summing past the viewport height would strand the last one off-screen. */
+  /* One column: the map, then the panel column under it. `.app` scrolls here
+     rather than the column — two bounded scroll regions summing past the
+     viewport height would strand the last one off-screen. The status bar stays
+     outside it, pinned at the foot. */
   .app {
     flex-direction: column;
     overflow-y: auto;

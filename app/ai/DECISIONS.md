@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — The right column is gone; the camera is a status bar
+
+**Decision.** The right sidebar (the Viewpoints and Camera cards) is removed.
+The shell becomes the control column plus the viewport, with a 24px
+full-width status bar at the foot. The bar reads latitude, longitude and
+zoom, right-aligned, and nothing else. The coordinates go unlabelled, since
+`25.0339° N` / `121.5645° E` name their own axis; only zoom keeps a label:
+- **Bearing** is stated by the compass's label.
+- **Pitch** has no readout and no slider; the map's right-/ctrl-drag sets it.
+- **Attribution** keeps its plate over the map, not the bar.
+
+The eight viewpoints are **removed**, not moved. `lib/viewpoints.ts` is
+deleted. `HOME` stays in `useMapEngine.ts` as the initial camera. `flyTo` and
+`setPitch` stay in the engine's return value with no caller, kept on purpose
+for the next UI that wants them. This retires DESIGN.md's "Findable"
+principle: the trees are found by zooming past z16, not by one click.
+
+**Rejected.**
+- *Viewpoints in a toolbar popover, or at the foot of the left column*:
+  keeps a feature the user chose to drop.
+- *Bearing and pitch in the bar*: the ask was coordinates and zoom. Bearing is
+  already on the compass.
+- *Attribution in the bar*: the plate works, and moving a licensing obligation
+  is a change of its own.
+
+**Revisit if** navigating to a known place becomes a task again (a search box,
+a tour, a tree lookup). `flyTo` is already waiting for it.
+
+---
+
 ## 2026-09-29 — Derived layers go through a DAG; PET is derived from LPI on the GPU
 
 **Decision.** A small pure graph (`src/lib/dag`) carries one layer's output

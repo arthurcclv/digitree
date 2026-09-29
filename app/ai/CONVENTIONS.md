@@ -102,9 +102,9 @@ a `role="menu"` of `menuitemcheckbox`es, banners carry `role="alert"` (error) or
 `role="status"` (warning), and `prefers-reduced-motion: reduce` kills every
 animation and transition.
 
-State is never carried by colour alone — see `VISUAL_DESIGN.md`. The selected
-viewpoint has a ✓ as well as a ground; the sync state is a labelled badge, not a
-coloured dot; the compass rotation is backed by a numeric bearing.
+State is never carried by colour alone — see `VISUAL_DESIGN.md`. The sync
+state is a labelled badge, not a coloured dot; the compass rotation is backed by
+a numeric bearing in its label.
 
 ## What does not exist
 

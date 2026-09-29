@@ -940,7 +940,7 @@ is otherwise idle and the change would not appear until the next interaction.
 ### Panel readouts
 
 Below the controls, past a `.panel__rule`, the Trees card carries only
-`StatLine` rows — the same definition-list form the Camera card uses. There is
+`StatLine` rows — the same definition-list form every card's readouts use. There is
 no prose paragraph in this card:
 
 | line | value | shown |
@@ -989,9 +989,9 @@ procedural source would credit evolveduk for icosahedra.
 
 ## Retired
 
-- `TREE_LOCATION` is gone. The layer no longer has a location; `lib/viewpoints.ts`
-  carries its own coordinate for the "Trees" viewpoint, which is now a vantage
-  point over a dense part of Da'an rather than the address of one object.
+- `TREE_LOCATION` is gone. The layer no longer has a location. The "Trees"
+  viewpoint that replaced it is itself retired with the viewpoint list; the
+  Da'an coordinate it pointed at lives on in `ai/WORKFLOWS.md`.
 - `TreeSettings.height` is gone, replaced by `heightScale`.
 - `TREE_BASE_HEIGHT_M` is gone. Each form declares the height its geometry was
   modelled at; there is no single modelled height any more.

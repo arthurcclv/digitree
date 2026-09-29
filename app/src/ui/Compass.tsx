@@ -1,7 +1,7 @@
 /**
  * Bearing rose, sized onto the icon-button grid. The needle tracks the map
  * bearing and a click resets to north; the bearing is *also* stated numerically
- * in the Camera card, so rotation is never the only cue.
+ * in the title and aria-label, so rotation is never the only cue.
  */
 export function Compass({ bearing, onReset }: { bearing: number; onReset: () => void }) {
   const degrees = Math.round(((bearing % 360) + 360) % 360);

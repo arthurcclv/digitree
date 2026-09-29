@@ -69,7 +69,6 @@ src/
       specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
-    viewpoints.ts     the eight Taipei VIEWPOINTS
     dag/              the derived-layer DAG: one layer's output feeding
                       another's (sunlight.lpi → temperature.pet); pure, with
                       its own specs/spec.md
@@ -79,7 +78,8 @@ src/
   ui/
     Panel.tsx       Panel / Toggle / Slider primitives
     Compass.tsx     bearing rose
-  App.tsx           the interface: control state, panel, viewpoints, telemetry
+    cameraReadout.ts  the status bar's lat/lon/zoom formatting (pure, tested)
+  App.tsx           the interface: control state, panel, status bar, telemetry
   main.tsx          React root
   styles.css        the design system (all styling lives here; no CSS modules)
 public/             copied verbatim by Vite, never imported

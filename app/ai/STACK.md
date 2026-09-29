@@ -45,9 +45,9 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
   published as the headless half — "data loading, layer synchronization, and the
   style engine" — and that is the half being demonstrated. There is no GeoLibre
   chrome to strip out; it was never bundled.
-- **No MapLibre controls.** `attributionControl: false`; the status bar carries
-  attribution instead. No `NavigationControl` — the zoom buttons, the compass and
-  the pitch slider are hand-built.
+- **No MapLibre controls.** `attributionControl: false`; the attribution plate
+  over the map carries it instead. No `NavigationControl` — the zoom buttons, the
+  compass and the status bar's coordinate readout are hand-built.
 - **No UI or component library, no CSS framework, no CSS-in-JS.** All styling is
   in `src/styles.css`.
 - **No state manager, no router, no data-fetching library.** Control state is

@@ -43,7 +43,7 @@ import {
   type TemperatureSettings,
 } from "./layers/temperature";
 import { useMapEngine } from "./lib/useMapEngine";
-import { VIEWPOINTS } from "./lib/viewpoints";
+import { cameraReadout } from "./ui/cameraReadout";
 import { Compass } from "./ui/Compass";
 import { LayerMenu } from "./ui/LayerMenu";
 import {
@@ -56,11 +56,6 @@ import {
   StatLine,
   type SegmentedItem,
 } from "./ui/Panel";
-
-const dms = (value: number, axis: "lat" | "lng") => {
-  const hemi = axis === "lat" ? (value >= 0 ? "N" : "S") : value >= 0 ? "E" : "W";
-  return `${Math.abs(value).toFixed(4)}° ${hemi}`;
-};
 
 const hhmm = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -149,7 +144,6 @@ export default function App() {
   const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
   const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
   const [exportingPet, setExportingPet] = useState(false);
-  const [activeView, setActiveView] = useState(VIEWPOINTS[0].id);
   const [collapsed, setCollapsed] = useState(false);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
@@ -164,9 +158,7 @@ export default function App() {
     temperatureStatus,
     exportSunlight,
     exportTemperature,
-    flyTo,
     zoomBy,
-    setPitch,
     resetNorth,
   } = useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
 
@@ -227,8 +219,6 @@ export default function App() {
     setBasemapId(id);
     patch({ flatColor: next.buildingColor });
   };
-
-  const bearing = (((camera.bearing % 360) + 360) % 360).toFixed(0);
 
   return (
     <div className="app-shell" data-collapsed={collapsed}>
@@ -624,53 +614,16 @@ export default function App() {
           </div>
         </div>
 
-        <div className="column column--right">
-          <Panel title="Viewpoints">
-            <nav className="viewpoints" aria-label="Viewpoints">
-              {VIEWPOINTS.map((v) => (
-                <button
-                  key={v.id}
-                  className="viewpoint-row"
-                  aria-current={v.id === activeView}
-                  onClick={() => {
-                    setActiveView(v.id);
-                    flyTo(v);
-                  }}
-                >
-                  <span className="viewpoint-row__check" aria-hidden>
-                    ✓
-                  </span>
-                  <span>
-                    <span className="viewpoint-row__name">{v.label}</span>
-                    <span className="viewpoint-row__sub">{v.sub}</span>
-                  </span>
-                  <span className="viewpoint-row__rate">z{v.zoom.toFixed(1)}</span>
-                </button>
-              ))}
-            </nav>
-          </Panel>
-
-          <Panel title="Camera">
-            <div className="stat-list">
-              <StatLine k="Lat" v={dms(camera.lat, "lat")} />
-              <StatLine k="Lon" v={dms(camera.lng, "lng")} />
-              <StatLine k="Zoom" v={camera.zoom.toFixed(2)} />
-              <StatLine k="Bearing" v={`${bearing}°`} />
-              <StatLine k="Source" v="OSM · building" plain />
-            </div>
-            <div className="panel__rule" />
-            <Slider
-              label="Pitch"
-              value={Math.round(camera.pitch)}
-              min={0}
-              max={85}
-              step={1}
-              unit="°"
-              onChange={setPitch}
-            />
-          </Panel>
-        </div>
       </div>
+
+      <footer className="status-bar" aria-label="Camera">
+        {cameraReadout(camera).map(({ k, v }, i) => (
+          <span key={i} className="status-bar__item">
+            {k ? <span className="status-bar__k">{k} </span> : null}
+            <span className="status-bar__v">{v}</span>
+          </span>
+        ))}
+      </footer>
     </div>
   );
 }

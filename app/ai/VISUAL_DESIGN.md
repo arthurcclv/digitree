@@ -25,9 +25,9 @@ border.
 | Role | Hex | Token | Used for |
 | --- | --- | --- | --- |
 | App background | `#14161a` | `--bg` | `body`, the shell, number inputs |
-| Side column | `#1b1e24` | `--column` | left control column, right sidebar, top bar (`#191b20`) |
+| Side column | `#1b1e24` | `--column` | left control column, top and status bars (`#191b20`) |
 | Panel card | `#20242b` | `--panel` | `.panel` |
-| Row hover / menu | `#262b33` | `--raised` | viewpoint row hover, popover menus |
+| Row hover / menu | `#262b33` | `--raised` | popover menus |
 | Border (subtle) | `#2a2e36` | `--border-subtle` | panel and column borders, `.btn.secondary`, footer rules |
 | Border / control (raised) | `#384252` | `--border-raised` | scrollbar thumb, disabled button, menu border |
 | Border hover | `#55606f` | `--border-hover` | scrollbar hover |
@@ -173,8 +173,8 @@ than inventing a third treatment.
   Roboto, 'PingFang TC', 'Microsoft JhengHei', sans-serif`. **No web fonts**, so
   the Google Fonts preconnect and stylesheet come out of `index.html`. The two
   CJK names are explicit rather than left to the browser's sans-serif fallback,
-  so the viewpoint subtitles (`信義 · Taipei 101`, `臺北車站 · 中正`) get a
-  specific Traditional Chinese face on both macOS and Windows.
+  so basemap labels and any Traditional Chinese in the chrome get a specific
+  face on both macOS and Windows.
 - **Scale:** 11px (badges, hints, counts, attribution) · 12px (default UI text,
   labels, rows, readouts) · 13px (buttons) · 15px (the top bar's title). The map
   is the focus, so text stays small and dense.
@@ -184,8 +184,8 @@ than inventing a third treatment.
   `letter-spacing: 0.04em`, `--fg-muted` — the standard section header.
 - **Numerics:** always `font-variant-numeric: tabular-nums` for every value,
   coordinate and count, so digits do not jitter while the camera moves. This is
-  the one rule carried over unchanged from the previous system, and the camera
-  readout is the reason it exists.
+  the one rule carried over unchanged from the previous system, and the status
+  bar's coordinate readout is the reason it exists.
 
 There is no display face and no 58px wordmark. The app's name is a 15px/600
 label in the top bar; a page-level bar earns a legible label, not a poster.
@@ -203,26 +203,30 @@ label in the top bar; a page-level bar earns a legible label, not a poster.
   banners, menus) · `8px` (panel cards) · `999px` (pill badges). The previous
   system had none; the whole interface is now softened on this scale.
 - **Layout:** a full-viewport flex **column** (`.app-shell`) — a `36px` fixed top
-  bar above a flex **row** (`.app`, `flex: 1`) of three columns:
+  bar, a flex **row** (`.app`, `flex: 1`) of the control column and the
+  viewport, and a `24px` fixed status bar:
 
   ```
   ┌──────────────────────────────────────────────────────────┐
-  │ top bar  36px   TAIPEI 3D                     Settings   │
-  ├────────────┬──────────────────────────┬──────────────────┤
-  │ controls   │ viewport (flex: 1)       │ sidebar          │
-  │ 340px      │  ⌐ nav toolbar  layers ¬ │ 340px            │
-  │            │                          │                  │
-  │ Basemap    │        the map           │ Viewpoints       │
-  │ Buildings  │                          │ Camera           │
-  │ Ramp       │                          │                  │
-  │ Trees      │         attribution ▒▒▒▒ │                  │
-  └────────────┴──────────────────────────┴──────────────────┘
+  │ top bar  36px   TAIPEI 3D                   layer sync ● │
+  ├────────────┬─────────────────────────────────────────────┤
+  │ controls   │ viewport (flex: 1)                          │
+  │ 340px      │  ⌐ nav toolbar                     layers ¬ │
+  │            │                                             │
+  │ Basemap    │                 the map                     │
+  │ Buildings  │                                             │
+  │ Trees      │                                             │
+  │ Direct sun │                            attribution ▒▒▒▒ │
+  ├────────────┴─────────────────────────────────────────────┤
+  │ status        25.0339° N · 121.5645° E · Zoom 15.20      │
+  └──────────────────────────────────────────────────────────┘
   ```
 
-  Both side columns scroll; neither the shell nor `.app` scrolls
+  The control column scrolls; neither the shell nor `.app` scrolls
   (`overflow: hidden`). The viewport is `min-width: 0` so a narrow window shrinks
-  the map rather than overflowing the columns. Side columns reserve scrollbar
-  space with `scrollbar-gutter: stable`.
+  the map rather than overflowing the column. The column reserves scrollbar
+  space with `scrollbar-gutter: stable`. There is no right column: it held the
+  viewpoint list and the camera card, both retired (see `DECISIONS.md`).
 - **Scrollbars:** custom 8px thin thumbs (`--border-raised`, hover
   `--border-hover`), WebKit via `::-webkit-scrollbar` and Firefox via a
   `@supports` block, kept apart deliberately.
@@ -246,7 +250,7 @@ than a poster with controls over it.
   controls that drive them. Spacing lives in `styles.css`, never in inline styles.
 - **Row** (`.row`): 12px label left, control right, space-between.
 - **Slider** (`Slider.tsx`): the reusable control for every bounded scalar —
-  height exaggeration, opacity, minimum height, tree height, pitch. Its readout
+  height exaggeration, opacity, minimum height, tree height, sun time. Its readout
   is a `.slider-value` **editable text input** (56px, `--bg` field,
   `--border-subtle` border, right-aligned tabular-nums, `#3a5ba0` focus border),
   not a read-only chip: typing `2.5` for height exaggeration is something the old
@@ -279,27 +283,15 @@ than a poster with controls over it.
   top bar.
 - **Compass** (`.icon-btn.compass`): the hand-drawn SVG rose survives, resized
   onto the `.icon-btn` grid, its needle counter-rotated by the map bearing and a
-  click resetting to north. The needle is `--accent`; north is also stated
-  numerically in the Camera card, so rotation is never the only cue.
+  click resetting to north. The needle is `--accent`; the bearing is also
+  stated numerically in the button's `title` and `aria-label`, so rotation is
+  never the only cue.
 - **Layer menu** (`.layer-menu`, a `.menu` popover): the eye button opens a
   checklist of layer-visibility rows (checkbox + glyph + label) — **Buildings**,
   **Tree**, **Labels over**. Toggling keeps the menu open; it closes on
   outside-click, Escape, or re-click. The same flags also appear in their panels;
   the menu is the fast path, not a second source of truth.
-- **Viewpoint row** (`.viewpoint-row`): the eight viewpoints as a `nav` of
-  buttons inside one card — a 12px ✓ check column, the name (12px/600), the CJK subtitle
-  (11px `--fg-muted`), and the target zoom right-aligned in a `.rate` slot with
-  tabular numerals. Current is `.selected`: `#24304a` ground, `#3a5ba0` border,
-  **and the checkmark**. Hover is `--raised`. The sweeping accent bar of the
-  previous system is gone — selection is the ground plus a glyph, because colour
-  alone may not carry state.
-- **Camera card**: the live readout — latitude, longitude, zoom, pitch, bearing,
-  and the data source — as a `.stat-line` definition list, one line per figure,
-  no header row, tabular numerals, values in `--accent-text` (`#7fb8e6`) against
-  `--fg-muted` labels. A table header would outweigh six figures. Pitch is a
-  `Slider` row in this same card rather than a vertical rail in the corner: it is
-  a bounded scalar like every other, and it gains an editable value.
-- **Trees card readouts**: the same `.stat-line` form under a `.panel__rule` —
+- **Trees card readouts**: the `.stat-line` form under a `.panel__rule` —
   the surveyed total (`162,930`), the two minimum zooms, and, only under the
   modelled source, how many forms have loaded. A figure a card wants to state
   is a stat line, not a sentence: `.hint` (11px `--fg-muted`) stays in the
@@ -329,6 +321,15 @@ than a poster with controls over it.
   The source language puts a Settings menu here. This app has nothing to put in
   one, and a trigger that opens an empty popover is worse than no trigger, so it
   is left out until there is a setting.
+- **Status bar** (`.status-bar`): the top bar's mirror at the foot of the shell
+  — a 24px full-width strip, `#191b20` with a `--border-subtle` top rule,
+  visible in every state including the collapsed narrow layout.
+  Right-aligned, 11px, tabular numerals: `25.0339° N · 121.5645° E · Zoom
+  15.20`. The coordinates carry no label — the hemisphere letter already says
+  which is which — so only zoom has one. Label `--fg-muted`, values
+  `--accent-text`, the three figures separated by a `--fg-dim` middle dot. Latitude and longitude to four decimals (≈11 m), zoom
+  to two. It is a readout only — no pitch, no bearing (the compass states it),
+  and no attribution, which keeps its plate over the map.
 - **Numeric-input chrome** (`.slider-value`): `--bg` field, `--border-subtle`
   border, 4px radius, `#3a5ba0` focus border. A future `.select` or `.text-input`
   takes the same chrome; neither is defined yet, because nothing uses one and the
@@ -336,14 +337,13 @@ than a poster with controls over it.
 
 ## Accessibility
 
-- **Semantic roles on every interactive structure.** The viewpoint list is a
-  `role="listbox"` of `option`s with `aria-selected`; the layer menu is
+- **Semantic roles on every interactive structure.** The layer menu is
   `role="menu"`; the segmented controls carry `aria-pressed` per segment. Preserve
   these when editing components.
 - **Never encode state in colour alone.** Every selected state pairs its ground
-  with a glyph or a word: the viewpoint row has its ✓, the sync state is a
+  with a glyph or a word: the sync state is a
   labelled badge and not a coloured dot, the compass rotation is backed by a
-  numeric bearing, and a tile problem is a sentence in a banner. The rule covers
+  numeric bearing in its label, and a tile problem is a sentence in a banner. The rule covers
   **opacity** too — a disabled control dims *and* carries its reason in `title`.
 - **Disabled, not hidden.** A control that cannot be used right now dims to
   opacity 0.4 with the reason in `title`, rather than disappearing. An entry that
@@ -369,8 +369,9 @@ drifting film grain of the previous system are both gone — decorative motion o
 a map the user is reading is the most distracting thing static chrome can do.
 
 The one long animation in the app is not chrome: `flyTo`'s 2.2s camera move,
-which stays, because the easing is what shows you *where you went*. A cut to a
-new viewpoint loses the spatial relationship the animation exists to convey.
+which stays in the engine for the next caller (the viewpoint list that used it
+is retired), because the easing is what shows you *where you went*. A cut to a
+new place loses the spatial relationship the animation exists to convey.
 
 `@media (prefers-reduced-motion: reduce)` disables every animation and transition
 with `!important`, including the spinner and the fade. Do not write motion that
@@ -402,7 +403,7 @@ Adopting this language reversed four documented choices; the entry in
    A basemap's colour identity now reaches the app only as `buildingColor`.
 2. **Web fonts are gone** from `index.html`. Traditional Chinese resolves through
    PingFang TC / Microsoft JhengHei in the system stack, verified rendering in the
-   viewpoint subtitles.
+   then viewpoint subtitles.
 3. **Radius everywhere**, on the 4/6/8/999 scale, replacing a deliberately
    zero-radius interface.
 4. **The chrome stopped floating.** `backdrop-filter`, the vignette, the film

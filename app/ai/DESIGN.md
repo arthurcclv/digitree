@@ -33,8 +33,7 @@ The app answers all three by being a working thing, not a README.
 | The three.js tree | that a foreign renderer can ride in the same `sync()` call |
 | The direct-sun overlay | that the scene is data, not decoration: the same trees and buildings, analysed live |
 | The PET overlay | that one analysis can build on another: felt temperature derived from the direct-sun result, recomputed whenever it changes |
-| Eight viewpoints | that Taipei is legible from ground level, not just overhead |
-| Camera readout | that the camera is real and the data has a source |
+| Status bar readout | that the camera is real: its live coordinates and zoom |
 
 ## Product principles
 
@@ -52,18 +51,14 @@ The app answers all three by being a working thing, not a README.
 3. **Honest numbers.** Height exaggeration is a *view* control: it must never
    leak into the colour ramp or the minimum-height filter. A 40 m building stays
    the colour of a 40 m building at 4× exaggeration, and "min height 30 m" means
-   30 real metres. The camera card shows the true camera, not a rounded
+   30 real metres. The status bar shows the true camera, not a rounded
    marketing version of it.
 
 4. **Attribution is not decoration.** MapLibre's `AttributionControl` is
-   disabled, so the status bar carries `OSM_ATTRIBUTION`. Removing it is a
+   disabled, so the attribution plate over the map carries `OSM_ATTRIBUTION`. Removing it is a
    licensing regression. See the basemaps spec.
 
-5. **Findable.** A 13 m tree in a city of towers cannot be found by panning, so
-   the tree is a viewpoint. Anything the app renders must be reachable in one
-   click.
-
-6. **No component library, no map controls.** The chrome is hand-built because
+5. **No component library, no map controls.** The chrome is hand-built because
    the point is that the engine is headless. Adding a UI kit or a MapLibre
    `NavigationControl` would blur the claim.
 

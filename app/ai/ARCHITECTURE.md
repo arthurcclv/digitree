@@ -283,18 +283,18 @@ radius and the buildings' exaggeration and filter reach it through
 | Module | Owns |
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
-| `src/App.tsx` | all control state, the chrome, viewpoint selection, telemetry |
-| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, the DAG and its nodes, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME` |
+| `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
+| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, the DAG and its nodes, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
-| `src/lib/viewpoints.ts` | the eight `VIEWPOINTS` (imports `HOME` and `TREE_LOCATION`) |
 | `src/lib/tiles/` | the self-fetching layers' shared tile grid, `TileStore`, building prisms and ground footprint |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
+| `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |
 | `src/ui/LayerMenu.tsx` | the viewport's layer-visibility popover; owns only its own open/closed state |
 | `src/styles.css` | the entire design system; no CSS modules, no styled-components |
 
-`Viewpoint` and `HOME` live in `useMapEngine.ts` rather than `viewpoints.ts`
-because the engine is what consumes them; `viewpoints.ts` is data.
+`Viewpoint` and `HOME` live in `useMapEngine.ts` because the engine is what
+consumes them: `HOME` is the initial camera, and `flyTo` takes a `Viewpoint`.
 
 ## Build-time coupling
 
