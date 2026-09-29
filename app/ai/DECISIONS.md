@@ -6,6 +6,50 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — The four three.js layers extend one `ThreeLayer` host
+
+**Decision.** `ThreeLayer` (`src/lib/three`) is the base of `ThreeTreeLayer`,
+`ThreeSunlightLayer`, `ThreeTemperatureLayer` and `ThreeAoLayer`.
+- It owns the renderer's lifecycle: one per context, kept across `setStyle`,
+  rebuilt on a new context (`contextChanged`), disposed at teardown.
+- It owns the coalesced `idle` (`viewSettled`), `renderingMode: "3d"`, and
+  `pass(fn)`, which runs `resetState()` before and after every block of
+  three.js drawing.
+- Its helpers are `projection(args, model)`, the one read of `mainMatrix`;
+  `mercatorFrame(origin, metre)`; and `PREMULTIPLIED_OVER`.
+
+The rules of 2026-09-22 (*`renderingMode: "3d"`*, *`mainMatrix`*) stand. They
+now live in one module instead of four. The contract is
+`src/lib/three/specs/spec.md`.
+
+**Why.** Each class wrote the rules out for itself, and they had drifted.
+Tree and sunlight reset state only before `render`, and the sunlight spec
+already said "before and after each pass". Getting any of these wrong fails
+silently.
+
+**Also decided.**
+- `render` and `prerender` stay in each layer. MapLibre gives every layer
+  that *has* a `prerender` an offscreen pass (`hasOffscreenPass()` is
+  `prerender !== undefined`), so the base defines neither. Tree has none, as
+  before.
+- The one behaviour change is that tree's and sunlight's `render` now also
+  reset after drawing. It was verified in the browser: the direct-sun and PET
+  GeoTIFF exports are byte-identical to the previous commit's, and so are the
+  screenshots, whenever two runs load the same tiles.
+- The base makes its renderer through an overridable `createRenderer`, so the
+  lifecycle is tested with a fake renderer and no WebGL.
+
+**Found while doing it.** The occluder count is not repeatable run to run:
+the same code settles on 1,792 or 1,795 buildings for the same view, and the
+exports differ accordingly. This predates the change. Hash comparisons are
+therefore only meaningful between runs with the same count.
+
+**Rejected.** *One renderer shared by all four layers.* Their render targets,
+state and lifetimes differ, and one context-loss path would then take down
+all four.
+
+---
+
 ## 2026-09-29 — Ambient occlusion shades a `ShadedExtrusion`, not the buildings' settings
 
 **Decision.** AO's record and mount take a `ShadedExtrusion` (`visible`,

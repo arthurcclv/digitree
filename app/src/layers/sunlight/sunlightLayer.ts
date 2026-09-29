@@ -1,10 +1,5 @@
 import * as THREE from "three";
-import {
-  MercatorCoordinate,
-  type CustomLayerInterface,
-  type CustomRenderMethodInput,
-  type Map as MapLibreMap,
-} from "maplibre-gl";
+import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import {
   canopyHullOf,
   formOf,
@@ -40,6 +35,7 @@ import { writeGeoTiff } from "./geotiff";
 import { blockedState, lpiNodeAction, readoutSun, type SunlightState } from "./state";
 import { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField } from "./lpi";
 import type { Graph } from "../../lib/dag";
+import { mercatorFrame, PREMULTIPLIED_OVER, projection, ThreeLayer } from "../../lib/three";
 import { MIN_SUN_ELEVATION_DEG, sunPosition } from "./sun";
 import { classifyByTiles, planTiles, tileKey, tileSquareLocal, type TileId } from "./tileGrid";
 import {
@@ -267,14 +263,8 @@ export function crownMatrix(x: number, y: number, h: number, yaw: number, out = 
  * Unlike the tree layer it fetches its own tiles (`src/lib/tiles`): the shade at
  * the viewport's sunward edge is cast from ground MapLibre never loaded.
  */
-export class ThreeSunlightLayer implements CustomLayerInterface {
+export class ThreeSunlightLayer extends ThreeLayer {
   readonly id = SUNLIGHT_NATIVE_LAYER_ID;
-  readonly type = "custom" as const;
-  readonly renderingMode = "3d" as const;
-
-  private map: MapLibreMap | null = null;
-  private renderer: THREE.WebGLRenderer | null = null;
-  private gl: WebGL2RenderingContext | null = null;
   private supported = true;
   private readonly store: TileStore<{
     trees: TileSource<TreeFeature>;
@@ -320,7 +310,6 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   private stale = true;
   /** The light pass must run. */
   private passDue = false;
-  private refreshQueued = false;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
   private pending: Pending[] = [];
 
@@ -346,6 +335,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     private readonly graph: Graph,
     sources: { trees: TreeSource; buildings: BuildingSource },
   ) {
+    super();
     this.store = new TileStore({ trees: treeTiles(sources.trees), buildings: buildingTiles(sources.buildings) });
     this.crownMaterial = lightMaterial(CROWN_VERT, CROWN_FRAG, { uLight: { value: new THREE.Matrix4() } });
     this.prismMaterial = lightMaterial(FLAT_VERT, FLAT_FRAG, {
@@ -387,11 +377,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
       // The mesh's y is negated onto Mercator, which flips its winding.
       side: THREE.DoubleSide,
       // MapLibre composites premultiplied colour.
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      ...PREMULTIPLIED_OVER,
     });
     this.overlay = new THREE.Mesh(new THREE.PlaneGeometry(FAR_DOMAIN_M, FAR_DOMAIN_M), this.overlayMaterial);
     this.overlay.frustumCulled = false;
@@ -407,39 +393,25 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   // --- lifecycle -----------------------------------------------------------
 
-  onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
-    this.map = map;
-    map.on("idle", this.onIdle);
-    if (!this.renderer || this.gl !== gl) {
-      this.renderer?.dispose();
-      for (const level of [this.nearLevel, this.farLevel]) {
-        level.target?.dispose();
-        level.target = null;
-      }
-      this.gl = gl;
-      this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl });
-      this.renderer.autoClear = false;
-      this.supported = this.renderer.extensions.has("EXT_color_buffer_float");
+  /** A new context owns none of the old targets; float targets may be missing. */
+  protected contextChanged(renderer: THREE.WebGLRenderer): void {
+    for (const level of [this.nearLevel, this.farLevel]) {
+      level.target?.dispose();
+      level.target = null;
     }
+    this.supported = renderer.extensions.has("EXT_color_buffer_float");
+  }
+
+  protected attached(): void {
     this.replan = true;
     this.update();
   }
 
-  onRemove(): void {
-    this.map?.off("idle", this.onIdle);
-    this.map = null;
+  protected viewSettled(): void {
+    if (this.viewKey() === this.plannedView) return;
+    this.replan = true;
+    this.update();
   }
-
-  private readonly onIdle = (): void => {
-    if (this.refreshQueued) return;
-    this.refreshQueued = true;
-    queueMicrotask(() => {
-      this.refreshQueued = false;
-      if (this.viewKey() === this.plannedView) return;
-      this.replan = true;
-      this.update();
-    });
-  };
 
   /** Everything the plan depends on: centre, zoom, pitch, bearing, canvas size. */
   private viewKey(): string {
@@ -471,7 +443,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     this.overlay.visible = this.state === "ready" && visible;
     // May call back into setDemanded, synchronously.
     this.graph.setOwnDemand(LPI_NODE, visible);
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /** Demand gates the work; see *The LPI node*. */
@@ -486,7 +458,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   setOpacity(opacity: number): void {
     this.opacity = opacity;
     this.overlayMaterial.uniforms.uOpacity.value = opacity;
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /** A new sun needs only a new pass — the occluders do not move, and no tile is new. */
@@ -504,7 +476,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     if (!this.result || this.state !== "ready") return Promise.resolve({ kind: "none" });
     return new Promise((resolve) => {
       this.pending.push({ kind: "probe", lng, lat, resolve });
-      this.map?.triggerRepaint();
+      this.repaint();
     });
   }
 
@@ -517,7 +489,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     if (!this.result || this.state !== "ready") return Promise.resolve(null);
     return new Promise((resolve) => {
       this.pending.push({ kind: "export", job, resolve });
-      this.map?.triggerRepaint();
+      this.repaint();
     });
   }
 
@@ -766,47 +738,45 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   /** The model matrix: the local metre frame onto Mercator, y flipped. */
   private modelMatrix(domain: Domain): THREE.Matrix4 {
-    const o = MercatorCoordinate.fromLngLat(domain.centre, 0);
-    return new THREE.Matrix4()
-      .makeTranslation(o.x, o.y, o.z)
-      .scale(new THREE.Vector3(domain.metre, -domain.metre, domain.metre));
+    return mercatorFrame(MercatorCoordinate.fromLngLat(domain.centre, 0), domain.metre);
   }
 
   // --- the frame -------------------------------------------------------------
 
   prerender(_gl: WebGL2RenderingContext): void {
-    const renderer = this.renderer;
-    if (!renderer || !this.supported) return this.flush(null);
-
-    if (this.passDue && this.centre && this.placedOnce) {
-      this.passDue = false;
-      const sun = this.sunNow();
-      if (sun && sun.elevationDeg >= MIN_SUN_ELEVATION_DEG) {
-        // A published texture stays valid until a clear: a grid that changes
-        // size is about to replace its target, so dependents let go first.
-        const resizing = [this.nearLevel, this.farLevel].some((l) => l.target && l.target.width !== l.domain.size);
-        if (resizing && this.state === "ready") this.setState("waiting");
-        this.lightPass(renderer, this.nearLevel, sun.azimuthDeg, sun.elevationDeg, true);
-        this.lightPass(renderer, this.farLevel, sun.azimuthDeg, sun.elevationDeg, false);
-        this.result = {
-          near: this.nearLevel.domain,
-          far: this.farLevel.domain,
-          covered: this.placedCovered,
-          azimuthDeg: sun.azimuthDeg,
-          elevationDeg: sun.elevationDeg,
-          reach: reachVector(sun.azimuthDeg, sun.elevationDeg),
-          sunTime: this.sunTime,
-        };
-        const u = this.overlayMaterial.uniforms;
-        u.uReach.value.set(this.result.reach[0], this.result.reach[1]);
-        u.uNear.value = this.nearLevel.target!.texture;
-        u.uFar.value = this.farLevel.target!.texture;
-        u.uNearDomain.value = this.nearLevel.domain.domainM;
-        u.uFarDomain.value = this.farLevel.domain.domainM;
-        this.setState("ready", true);
+    // Pending probes are answered even without a renderer, as `none`.
+    if (!this.renderer || !this.supported) return this.flush(null);
+    this.pass((renderer) => {
+      if (this.passDue && this.centre && this.placedOnce) {
+        this.passDue = false;
+        const sun = this.sunNow();
+        if (sun && sun.elevationDeg >= MIN_SUN_ELEVATION_DEG) {
+          // A published texture stays valid until a clear: a grid that changes
+          // size is about to replace its target, so dependents let go first.
+          const resizing = [this.nearLevel, this.farLevel].some((l) => l.target && l.target.width !== l.domain.size);
+          if (resizing && this.state === "ready") this.setState("waiting");
+          this.lightPass(renderer, this.nearLevel, sun.azimuthDeg, sun.elevationDeg, true);
+          this.lightPass(renderer, this.farLevel, sun.azimuthDeg, sun.elevationDeg, false);
+          this.result = {
+            near: this.nearLevel.domain,
+            far: this.farLevel.domain,
+            covered: this.placedCovered,
+            azimuthDeg: sun.azimuthDeg,
+            elevationDeg: sun.elevationDeg,
+            reach: reachVector(sun.azimuthDeg, sun.elevationDeg),
+            sunTime: this.sunTime,
+          };
+          const u = this.overlayMaterial.uniforms;
+          u.uReach.value.set(this.result.reach[0], this.result.reach[1]);
+          u.uNear.value = this.nearLevel.target!.texture;
+          u.uFar.value = this.farLevel.target!.texture;
+          u.uNearDomain.value = this.nearLevel.domain.domainM;
+          u.uFarDomain.value = this.farLevel.domain.domainM;
+          this.setState("ready", true);
+        }
       }
-    }
-    this.flush(renderer);
+      this.flush(renderer);
+    });
   }
 
   private lightPass(renderer: THREE.WebGLRenderer, level: Level, az: number, el: number, near: boolean): void {
@@ -838,7 +808,6 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     // The near pass draws each form's near prefix; the far pass draws them all.
     for (const set of this.crowns.values()) set.mesh.count = near ? set.nearCount : set.count;
 
-    renderer.resetState();
     renderer.setRenderTarget(level.target);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, false, false);
@@ -846,7 +815,6 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     renderer.render(this.footScene, this.lightCamera);
     renderer.render(this.coverScene, this.lightCamera);
     renderer.setRenderTarget(null);
-    renderer.resetState();
   }
 
   /** Serve queued probes and exports. Runs inside MapLibre's offscreen pass. */
@@ -864,7 +832,6 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
       if (job.kind === "probe") job.resolve(this.readProbe(renderer, r, job.lng, job.lat));
       else job.resolve(this.readExport(renderer, r, job.job));
     }
-    renderer?.resetState();
   }
 
   private readProbe(renderer: THREE.WebGLRenderer, r: Result, lng: number, lat: number): ProbeResult {
@@ -954,16 +921,10 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   }
 
   render(_gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
-    const renderer = this.renderer;
     const r = this.result;
-    if (!renderer || !r || this.state !== "ready") return;
-    // The same MapLibre matrix hand-off as `treeLayer.ts`: `mainMatrix` is a
-    // gl-matrix mat4, which `fromArray` accepts but is not typed to.
-    this.camera.projectionMatrix = new THREE.Matrix4()
-      .fromArray(args.defaultProjectionData.mainMatrix as ArrayLike<number> as number[])
-      .multiply(this.modelMatrix(r.near));
-    renderer.resetState();
-    renderer.render(this.overlayScene, this.camera);
+    if (!r || this.state !== "ready") return;
+    this.camera.projectionMatrix = projection(args, this.modelMatrix(r.near));
+    this.pass((renderer) => renderer.render(this.overlayScene, this.camera));
   }
 
   dispose(): void {
@@ -987,9 +948,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
       level.target?.dispose();
       level.target = null;
     }
-    this.renderer?.dispose();
-    this.renderer = null;
-    this.gl = null;
+    super.dispose();
   }
 }
 

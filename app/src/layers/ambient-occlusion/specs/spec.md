@@ -170,8 +170,8 @@ the labels with them (`anchorUnderLabels`), so labels are not darkened either.
 
 ### GL rules
 
-The layer follows the tree layer's *Shared GL context* rules, as the sunlight
-layer does:
+The layer extends `ThreeLayer` (`src/lib/three/specs/spec.md`), as the
+sunlight layer does:
 - it owns its own `WebGLRenderer` on MapLibre's context;
 - `autoClear = false`;
 - `resetState()` runs before and after each pass;

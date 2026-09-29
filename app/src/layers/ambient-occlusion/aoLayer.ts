@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap } from "maplibre-gl";
+import type { CustomRenderMethodInput } from "maplibre-gl";
 import {
   groundFootprint,
   lngLatToMercator,
@@ -13,6 +13,7 @@ import {
   type TileSource,
 } from "../../lib/tiles";
 import { buildingTiles, type BuildingSource } from "../buildings";
+import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
 import { AO_FETCH_HALF_M, placeAoPrisms, planAoTiles } from "./geometry";
 import { AO_NOISE_SIZE, AO_SAMPLES, aoKernel, aoNoise } from "./kernel";
 import { AO_MIN_ZOOM, aoState, type AoState } from "./state";
@@ -220,14 +221,8 @@ type Frame = LocalFrame & { centre: [number, number] };
  * MapLibre's depth buffer cannot be sampled, so the layer redraws the same
  * z14 buildings into a G-buffer of its own, from tiles it fetches itself.
  */
-export class ThreeAoLayer implements CustomLayerInterface {
+export class ThreeAoLayer extends ThreeLayer {
   readonly id = AO_NATIVE_LAYER_ID;
-  readonly type = "custom" as const;
-  readonly renderingMode = "3d" as const;
-
-  private map: MapLibreMap | null = null;
-  private renderer: THREE.WebGLRenderer | null = null;
-  private gl: WebGL2RenderingContext | null = null;
   private supported = true;
   private readonly store: TileStore<{ buildings: TileSource<BuildingFeature> }>;
   /** Keyed by the store's feature array, so an evicted tile's entry goes with it. */
@@ -242,7 +237,6 @@ export class ThreeAoLayer implements CustomLayerInterface {
   private replan = true;
   private stale = true;
   private plannedView = "";
-  private refreshQueued = false;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly prismGeometry = new THREE.BufferGeometry();
@@ -274,6 +268,7 @@ export class ThreeAoLayer implements CustomLayerInterface {
 
   /** `buildings`: where the footprints are, from the host. See `src/lib/tiles/specs/spec.md`. */
   constructor(buildings: BuildingSource) {
+    super();
     // Buildings only: a tile is covered on them alone.
     this.store = new TileStore({ buildings: buildingTiles(buildings) });
     this.quadGeometry.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
@@ -327,36 +322,22 @@ export class ThreeAoLayer implements CustomLayerInterface {
 
   // --- lifecycle -----------------------------------------------------------
 
-  onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
-    this.map = map;
-    map.on("idle", this.onIdle);
-    if (!this.renderer || this.gl !== gl) {
-      this.renderer?.dispose();
-      this.disposeTargets();
-      this.gl = gl;
-      this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl });
-      this.renderer.autoClear = false;
-      this.supported = this.renderer.extensions.has("EXT_color_buffer_float");
-    }
+  /** A new context owns none of the old targets; float targets may be missing. */
+  protected contextChanged(renderer: THREE.WebGLRenderer): void {
+    this.disposeTargets();
+    this.supported = renderer.extensions.has("EXT_color_buffer_float");
+  }
+
+  protected attached(): void {
     this.replan = true;
     this.update();
   }
 
-  onRemove(): void {
-    this.map?.off("idle", this.onIdle);
-    this.map = null;
+  protected viewSettled(): void {
+    if (this.viewKey() === this.plannedView) return;
+    this.replan = true;
+    this.update();
   }
-
-  private readonly onIdle = (): void => {
-    if (this.refreshQueued) return;
-    this.refreshQueued = true;
-    queueMicrotask(() => {
-      this.refreshQueued = false;
-      if (this.viewKey() === this.plannedView) return;
-      this.replan = true;
-      this.update();
-    });
-  };
 
   /** Everything the plan depends on. `idle` follows every repaint we ask for. */
   private viewKey(): string {
@@ -399,7 +380,7 @@ export class ThreeAoLayer implements CustomLayerInterface {
       this.stale = true;
       this.update();
     } else {
-      this.map?.triggerRepaint();
+      this.repaint();
     }
   }
 
@@ -484,11 +465,7 @@ export class ThreeAoLayer implements CustomLayerInterface {
   /** The local metre frame onto Mercator, y flipped, then MapLibre's matrix. */
   private setMatrix(args: CustomRenderMethodInput): void {
     const f = this.frame!;
-    const model = new THREE.Matrix4()
-      .makeTranslation(f.origin.x, f.origin.y, 0)
-      .scale(new THREE.Vector3(f.metre, -f.metre, f.metre));
-    // `mainMatrix` is a gl-matrix mat4, which `fromArray` accepts but is not typed to.
-    this.mvp.fromArray(args.defaultProjectionData.mainMatrix as ArrayLike<number> as number[]).multiply(model);
+    this.mvp.copy(projection(args, mercatorFrame(f.origin, f.metre)));
   }
 
   private ensureTargets(w: number, h: number): void {
@@ -528,8 +505,7 @@ export class ThreeAoLayer implements CustomLayerInterface {
 
   /** G-buffer, AO and blur, offscreen, with this frame's camera. */
   prerender(gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
-    const renderer = this.renderer;
-    if (!renderer || !this.drawable()) return;
+    if (!this.renderer || !this.drawable()) return;
     this.setMatrix(args);
 
     // The eye is where clip w vanishes: the inverse of (0, 0, 1, 0).
@@ -544,29 +520,28 @@ export class ThreeAoLayer implements CustomLayerInterface {
     const h = Math.max(1, Math.round(gl.drawingBufferHeight * AO_SCALE));
     this.ensureTargets(w, h);
 
-    renderer.resetState();
-    renderer.setRenderTarget(this.gbuf);
-    renderer.setClearColor(0x000000, 0);
-    renderer.clear(true, true, false);
-    renderer.render(this.gScene, this.camera);
-    renderer.setRenderTarget(this.aoTarget);
-    renderer.render(this.aoScene, this.camera);
-    renderer.setRenderTarget(this.blurTarget);
-    renderer.render(this.blurScene, this.camera);
-    renderer.setRenderTarget(null);
-    renderer.resetState();
+    this.pass((renderer) => {
+      renderer.setRenderTarget(this.gbuf);
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear(true, true, false);
+      renderer.render(this.gScene, this.camera);
+      renderer.setRenderTarget(this.aoTarget);
+      renderer.render(this.aoScene, this.camera);
+      renderer.setRenderTarget(this.blurTarget);
+      renderer.render(this.blurScene, this.camera);
+      renderer.setRenderTarget(null);
+    });
   }
 
   /** Multiply the occlusion over the frame, where the redrawn surfaces are in front. */
   render(gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
-    const renderer = this.renderer;
-    if (!renderer || !this.drawable() || !this.blurTarget) return;
+    if (!this.renderer || !this.drawable() || !this.blurTarget) return;
     this.setMatrix(args);
     this.compUniforms.uInvCanvas.value.set(1 / gl.drawingBufferWidth, 1 / gl.drawingBufferHeight);
-    renderer.resetState();
-    renderer.setViewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
-    renderer.render(this.compScene, this.camera);
-    renderer.resetState();
+    this.pass((renderer) => {
+      renderer.setViewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      renderer.render(this.compScene, this.camera);
+    });
   }
 
   dispose(): void {
@@ -577,8 +552,6 @@ export class ThreeAoLayer implements CustomLayerInterface {
       m.dispose();
     }
     this.disposeTargets();
-    this.renderer?.dispose();
-    this.renderer = null;
-    this.gl = null;
+    super.dispose();
   }
 }

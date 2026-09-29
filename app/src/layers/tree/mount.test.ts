@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { getExternalNativePaintBridge } from "@geolibre/core";
 import { createGraph } from "../../lib/dag";
+import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { TREE_LAYER_ID } from "./constants";
 import { DEFAULT_TREE_SETTINGS, type TreeSettings } from "./index";
@@ -65,5 +66,14 @@ describe("mountTree", () => {
     expect(setMeshSource).not.toHaveBeenCalled();
     m.dispose();
     vi.restoreAllMocks();
+  });
+});
+
+// See `src/lib/three/specs/spec.md`, invariant 8: MapLibre gives a layer with a
+// `prerender` an offscreen pass, so it must have one exactly when it needs it.
+describe("ThreeTreeLayer", () => {
+  test("is a ThreeLayer, without a prerender", () => {
+    expect(ThreeTreeLayer.prototype).toBeInstanceOf(ThreeLayer);
+    expect("prerender" in ThreeTreeLayer.prototype).toBe(false);
   });
 });

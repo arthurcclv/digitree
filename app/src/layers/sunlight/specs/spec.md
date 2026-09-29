@@ -323,10 +323,13 @@ hatching at half alpha, whatever their value.
 
 ### GL rules
 
-It shares the rules of the tree layer's *Shared GL context*:
+It extends `ThreeLayer` (`src/lib/three/specs/spec.md`):
 - the layer owns its own `WebGLRenderer` on MapLibre's context;
 - `autoClear = false`;
-- `resetState()` runs before and after each pass;
+- `resetState()` runs before and after each pass (`pass`), in `render` as in
+  `prerender`;
+- the overlay blends with `PREMULTIPLIED_OVER`; the light pass keeps its
+  additive blend;
 - `setRenderTarget(null)` runs after the light pass.
 
 **Unsupported GPUs.** When the renderer lacks `EXT_color_buffer_float`, the

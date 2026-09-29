@@ -1,12 +1,8 @@
 import * as THREE from "three";
-import {
-  MercatorCoordinate,
-  type CustomLayerInterface,
-  type CustomRenderMethodInput,
-  type Map as MapLibreMap,
-} from "maplibre-gl";
+import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { LPI_NODE, LPI_SAMPLE_GLSL, type Domain, type LpiField, type SunlightState } from "../sunlight";
 import type { Graph } from "../../lib/dag";
+import { mercatorFrame, PREMULTIPLIED_OVER, projection, ThreeLayer } from "../../lib/three";
 import {
   PET_NODE,
   PET_RAMP,
@@ -91,14 +87,8 @@ export const DEFAULT_PET_PARAMS: PetParams = { g0: 800, ta: 32, v: 1 };
  * from the direct-sun layer's published result. It runs no pass of its own
  * and fetches nothing. See `specs/spec.md`.
  */
-export class ThreeTemperatureLayer implements CustomLayerInterface {
+export class ThreeTemperatureLayer extends ThreeLayer {
   readonly id = TEMPERATURE_NATIVE_LAYER_ID;
-  readonly type = "custom" as const;
-  readonly renderingMode = "3d" as const;
-
-  private map: MapLibreMap | null = null;
-  private renderer: THREE.WebGLRenderer | null = null;
-  private gl: WebGL2RenderingContext | null = null;
 
   // Wrappers over the direct-sun layer's textures. Never dispose them: three
   // would delete the GL texture, which is not ours.
@@ -123,6 +113,7 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
   onStatus: ((status: TemperatureStatus) => void) | null = null;
 
   constructor(private readonly graph: Graph) {
+    super();
     this.material = new THREE.ShaderMaterial({
       vertexShader: OVERLAY_VERT,
       fragmentShader: OVERLAY_FRAG,
@@ -145,11 +136,7 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
       // The frame's y is negated onto Mercator, which flips the winding.
       side: THREE.DoubleSide,
       // MapLibre composites premultiplied colour.
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
-      blendSrcAlpha: THREE.OneFactor,
-      blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      ...PREMULTIPLIED_OVER,
     });
     this.overlay = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.material);
     this.overlay.frustumCulled = false;
@@ -160,22 +147,6 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
       if (e.kind === "upstream") this.pull();
     });
     this.pull();
-  }
-
-  // --- lifecycle -----------------------------------------------------------
-
-  onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
-    this.map = map;
-    if (!this.renderer || this.gl !== gl) {
-      this.renderer?.dispose();
-      this.gl = gl;
-      this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl });
-      this.renderer.autoClear = false;
-    }
-  }
-
-  onRemove(): void {
-    this.map = null;
   }
 
   // --- controls ------------------------------------------------------------
@@ -190,7 +161,7 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
 
   setOpacity(opacity: number): void {
     this.material.uniforms.uOpacity.value = opacity;
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /** New G0, Ta, V: three uniforms and a repaint. The direct-sun result is untouched. */
@@ -283,15 +254,12 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
     }
     this.publishDue = ready;
     this.onStatus?.(this.status());
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /** The model matrix: the local metre frame onto Mercator, y flipped. */
   private modelMatrix(domain: Domain): THREE.Matrix4 {
-    const o = MercatorCoordinate.fromLngLat(domain.centre, 0);
-    return new THREE.Matrix4()
-      .makeTranslation(o.x, o.y, o.z)
-      .scale(new THREE.Vector3(domain.metre, -domain.metre, domain.metre));
+    return mercatorFrame(MercatorCoordinate.fromLngLat(domain.centre, 0), domain.metre);
   }
 
   // --- the frame -------------------------------------------------------------
@@ -305,16 +273,10 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
   }
 
   render(_gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
-    const renderer = this.renderer;
     const field = this.field;
-    if (!renderer || !field || !this.overlay.visible) return;
-    // The same MapLibre matrix hand-off as the direct-sun overlay.
-    this.camera.projectionMatrix = new THREE.Matrix4()
-      .fromArray(args.defaultProjectionData.mainMatrix as ArrayLike<number> as number[])
-      .multiply(this.modelMatrix(field.near.domain));
-    renderer.resetState();
-    renderer.render(this.scene, this.camera);
-    renderer.resetState();
+    if (!field || !this.overlay.visible) return;
+    this.camera.projectionMatrix = projection(args, this.modelMatrix(field.near.domain));
+    this.pass((renderer) => renderer.render(this.scene, this.camera));
   }
 
   dispose(): void {
@@ -325,8 +287,6 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
     this.overlay.geometry.dispose();
     this.material.dispose();
     // The external textures are deliberately not disposed; see their field.
-    this.renderer?.dispose();
-    this.renderer = null;
-    this.gl = null;
+    super.dispose();
   }
 }

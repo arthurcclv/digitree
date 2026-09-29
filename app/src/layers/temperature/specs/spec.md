@@ -69,8 +69,11 @@ The layer owns the DAG node `temperature.pet`, with deps `["sunlight.lpi"]`.
 ## Rendering
 
 The layer is a MapLibre custom layer with its own `WebGLRenderer` on
-MapLibre's context, under the tree layer's *Shared GL context* rules
-(`autoClear = false`, `resetState()` around its pass).
+MapLibre's context. It extends `ThreeLayer` (`src/lib/three/specs/spec.md`):
+`autoClear = false`, `resetState()` before and after its pass, and
+`PREMULTIPLIED_OVER` blending. Its `prerender` only publishes its node and
+draws nothing, so it does not use `pass`. It has no `viewSettled`, so it is
+never subscribed to `idle`.
 
 **It runs no light pass and fetches no tiles.** It draws one ground quad over
 the far domain of the current `LpiField`, sampling the sunlight layer's near

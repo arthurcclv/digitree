@@ -174,7 +174,7 @@ store.featuresOf(name, tile)         // typed by the source under `name`
 
 All asserted by vitest.
 
-1. No shared module in `src/lib/` (`tiles`, `mount`, `dag`) imports from
+1. No shared module in `src/lib/` (`tiles`, `mount`, `dag`, `three`) imports from
    `src/layers/`. `useMapEngine.ts` is exempt, because it is the host and
    composing the layers is its job. A test reads the source files to check
    this.

@@ -1,11 +1,7 @@
 import * as THREE from "three";
-import {
-  MercatorCoordinate,
-  type CustomLayerInterface,
-  type CustomRenderMethodInput,
-  type Map as MapLibreMap,
-} from "maplibre-gl";
+import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
+import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
 import { TREE_POINTS_LAYER_ID } from "./constants";
 import { formOf, type TreeForm } from "./forms";
 import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
@@ -143,14 +139,8 @@ function buildLights(): THREE.Object3D[] {
  * `renderingMode: "3d"` shares MapLibre's depth buffer, so the OSM building
  * extrusions occlude the trees instead of them always drawing in front.
  */
-export class ThreeTreeLayer implements CustomLayerInterface {
+export class ThreeTreeLayer extends ThreeLayer {
   readonly id = TREE_NATIVE_LAYER_ID;
-  readonly type = "custom" as const;
-  readonly renderingMode = "3d" as const;
-
-  private map: MapLibreMap | null = null;
-  private renderer: THREE.WebGLRenderer | null = null;
-  private gl: WebGL2RenderingContext | null = null;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.Camera();
   private readonly materials: THREE.MeshStandardMaterial[];
@@ -181,13 +171,13 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   private meshSource: MeshSource = "procedural";
   private opacity = 1;
   private visible = true;
-  private refreshQueued = false;
 
   /** Lets the panel report how much of the modelled source actually arrived. */
   onModelsChanged: (() => void) | null = null;
 
   /** `sourceLayer`: the MVT layer of the tree source the points record reads. */
   constructor(private readonly sourceLayer: string) {
+    super();
     this.materials = buildMaterials();
     for (const material of this.materials) this.materialRegistry.add(material);
     for (const form of TREE_FORMS) this.geometries.set(form, buildForm(form));
@@ -281,43 +271,10 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     return group;
   }
 
-  onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
-    this.map = map;
-    map.on("idle", this.onIdle);
-    // A basemap swap removes and re-adds this layer against the same canvas and
-    // context, so keep the renderer rather than rebuilding it every time.
-    if (!this.renderer || this.gl !== gl) {
-      this.renderer?.dispose();
-      this.gl = gl;
-      this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl });
-      this.renderer.autoClear = false;
-    }
-    this.refresh();
-  }
-
-  onRemove(): void {
-    // The renderer outlives a style change; only the map reference is dropped.
-    this.map?.off("idle", this.onIdle);
-    this.map = null;
-  }
-
   render(_gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
-    const { renderer } = this;
-    if (!renderer) return;
-
-    // MapLibre v6 passes a `CustomRenderMethodInput`, not the bare matrix the
-    // v2/v3-era three.js recipes destructure as the second argument. The field
-    // to use is `defaultProjectionData.mainMatrix`: that is the one taking unit
-    // Mercator coordinates (what `MercatorCoordinate` produces) to clip space.
-    // `modelViewProjectionMatrix` is a different world space and puts the mesh
-    // far outside the frustum.
-    this.camera.projectionMatrix = new THREE.Matrix4()
-      .fromArray(args.defaultProjectionData.mainMatrix as ArrayLike<number> as number[])
-      .multiply(this.modelMatrix);
-
-    // three.js and MapLibre share one GL context; hand it back in a known state.
-    renderer.resetState();
-    renderer.render(this.scene, this.camera);
+    // See `projection`: MapLibre v6's `mainMatrix`, never the older recipes' matrix.
+    this.camera.projectionMatrix = projection(args, this.modelMatrix);
+    this.pass((renderer) => renderer.render(this.scene, this.camera));
   }
 
   /**
@@ -325,15 +282,13 @@ export class ThreeTreeLayer implements CustomLayerInterface {
    * refresh rides `idle` — after the tiles for a movement have settled — rather
    * than `moveend`, which fires while they are still arriving.
    */
-  private readonly onIdle = (): void => {
-    if (this.refreshQueued) return;
-    this.refreshQueued = true;
-    // Coalesce the bursts of `idle` a single gesture can produce.
-    queueMicrotask(() => {
-      this.refreshQueued = false;
-      this.refresh();
-    });
-  };
+  protected viewSettled(): void {
+    this.refresh();
+  }
+
+  protected attached(): void {
+    this.refresh();
+  }
 
   private refresh(): void {
     const { map } = this;
@@ -409,10 +364,8 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     const centre = map.getCenter();
     const origin = MercatorCoordinate.fromLngLat([centre.lng, centre.lat], 0);
     const metre = origin.meterInMercatorCoordinateUnits();
-    this.modelMatrix = new THREE.Matrix4()
-      .makeTranslation(origin.x, origin.y, origin.z)
-      .scale(new THREE.Vector3(metre, -metre, metre))
-      .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+    // The meshes are modelled y-up; the frame is z-up.
+    this.modelMatrix = mercatorFrame(origin, metre).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
 
     const matrix = new THREE.Matrix4();
     const position = new THREE.Vector3();
@@ -539,7 +492,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   setOpacity(opacity: number): void {
     this.opacity = opacity;
     for (const material of this.materialRegistry) this.fade(material);
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /** One material brought to the layer's current opacity. */
@@ -556,7 +509,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     this.visible = visible;
     this.group.visible = visible;
     this.refresh();
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /**
@@ -567,7 +520,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     if (kind === this.kind) return;
     this.kind = kind;
     this.refresh();
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /**
@@ -586,7 +539,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     // repointed, so drop them; `meshesFor` rebuilds on the next refresh.
     this.discardMeshes();
     this.refresh();
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   /**
@@ -614,7 +567,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
           // Only this form's meshes are stale; the others are still correct.
           this.discardMeshes(form);
           this.refresh();
-          this.map?.triggerRepaint();
+          this.repaint();
           this.onModelsChanged?.();
         },
         () => {
@@ -657,7 +610,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     if (scale === this.heightScale) return;
     this.heightScale = scale;
     this.refresh();
-    this.map?.triggerRepaint();
+    this.repaint();
   }
 
   dispose(): void {
@@ -677,8 +630,6 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     // frees a model's textures too.
     for (const material of this.materialRegistry) material.dispose();
     this.materialRegistry.clear();
-    this.renderer?.dispose();
-    this.renderer = null;
-    this.gl = null;
+    super.dispose();
   }
 }

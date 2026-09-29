@@ -85,6 +85,9 @@ src/
     mount/            LayerMount — how a layer with a custom half attaches
                       to any GeoLibre map; nativeLayer, fakeMap (tests); its
                       own specs/spec.md
+    three/            ThreeLayer — the base of every three.js custom layer:
+                      renderer lifecycle, resetState around each pass,
+                      mainMatrix projection; its own specs/spec.md
     dag/              the derived-layer DAG: one layer's output feeding
                       another's (sunlight.lpi → temperature.pet); pure, with
                       its own specs/spec.md

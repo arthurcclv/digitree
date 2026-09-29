@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { getExternalNativePaintBridge } from "@geolibre/core";
 import type { BuildingSource } from "../buildings";
 import { createGraph } from "../../lib/dag";
+import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { AO_NATIVE_LAYER_ID, ThreeAoLayer } from "./aoLayer";
 import { DEFAULT_AO_SETTINGS } from "./index";
@@ -55,5 +56,14 @@ describe("mountAmbientOcclusion", () => {
     expect(setParams).toHaveBeenCalledWith({ intensity: 1, radiusM: 6, heightScale: 1, minHeight: 20 });
     m.dispose();
     vi.restoreAllMocks();
+  });
+});
+
+// See `src/lib/three/specs/spec.md`, invariant 8: MapLibre gives a layer with a
+// `prerender` an offscreen pass, so it must have one exactly when it needs it.
+describe("ThreeAoLayer", () => {
+  test("is a ThreeLayer, with a prerender", () => {
+    expect(ThreeAoLayer.prototype).toBeInstanceOf(ThreeLayer);
+    expect("prerender" in ThreeAoLayer.prototype).toBe(true);
   });
 });

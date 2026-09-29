@@ -374,13 +374,19 @@ Per-form materials are no longer forbidden; unregistered ones are.
 
 ### Shared GL context
 
-Two rules follow from three.js and MapLibre sharing one context:
+`ThreeTreeLayer` extends `ThreeLayer` (`src/lib/three/specs/spec.md`), which
+holds the rules for sharing one context with MapLibre. Two of them matter most
+here:
 
 1. Materials set `premultipliedAlpha: true` — MapLibre uses
    `blendFunc(ONE, ONE_MINUS_SRC_ALPHA)` and expects premultiplied colours, or
    the meshes wash out at partial opacity.
-2. `renderer.resetState()` runs every frame, handing the context back in a known
-   state. `autoClear` is `false` so three.js never clears MapLibre's buffer.
+2. `renderer.resetState()` runs before **and after** the draw (`pass`),
+   handing the context back in a known state. `autoClear` is `false` so
+   three.js never clears MapLibre's buffer.
+
+The projection is `projection(args, modelMatrix)` from the host, and the model
+matrix is built on `mercatorFrame` (see below).
 
 ## Form classes
 

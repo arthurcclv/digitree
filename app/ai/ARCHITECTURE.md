@@ -85,11 +85,12 @@ Three places:
    are called *by* `useMapEngine`.
 
 The four custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer`,
-`ThreeTemperatureLayer` and `ThreeAoLayer`, are handed the map by MapLibre in `onAdd` and use it only for
-what a custom layer needs: the camera, repaints, and — for the two
-self-fetching layers — `idle` and `unproject`, to replan their tiles when the
-view settles. Each is constructed and added by its own folder's mount, never
-by anything else.
+`ThreeTemperatureLayer` and `ThreeAoLayer`, all extend `ThreeLayer`
+(`src/lib/three`). MapLibre hands them the map in `onAdd`, and they use it
+only for what a custom layer needs: the camera, repaints, and, for the
+self-fetching layers and the tree, the settled view (`viewSettled`, the base's
+coalesced `idle`) and `unproject`, to replan their tiles. Each is constructed
+and added by its own folder's mount, never by anything else.
 
 Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 
@@ -295,11 +296,27 @@ style.load
 source settles, long after the style is usable; syncing on that signal would be
 needlessly late.
 
-The `ThreeTreeLayer` *instance* deliberately outlives style changes — `onAdd`
-keeps the existing `WebGLRenderer` when the GL context is unchanged, `onRemove`
-drops only the map reference, and `dispose` is for map teardown only.
+Every three.js layer *instance* deliberately outlives style changes. That is
+`ThreeLayer`'s lifecycle: `onAdd` keeps the existing `WebGLRenderer` when the
+GL context is unchanged, `onRemove` drops only the map reference, and
+`dispose` is for map teardown only.
 
 ## The three.js seam
+
+**One host for the GL rules.** `ThreeLayer` (`src/lib/three`, its own spec)
+holds everything the four layers share with MapLibre's context:
+- the renderer, made once per context with `autoClear = false`;
+- `renderingMode: "3d"`;
+- `pass(fn)`, which resets state before and after every block of three.js
+  drawing;
+- `projection(args, model)`, the one place `mainMatrix` is read;
+- `mercatorFrame`, the local-metres-to-Mercator matrix;
+- `PREMULTIPLIED_OVER`.
+
+Each layer writes only its own `render`, and a `prerender` only if it has
+offscreen work: MapLibre gives any layer with one an offscreen pass, so tree
+has none. A structure test fails if a layer makes a renderer, resets state or
+reads `mainMatrix` itself.
 
 The tree is not a sibling of the map; it is a member of the layer list. The
 record's `metadata` opts into GeoLibre's external-native path:
@@ -342,6 +359,7 @@ radius and the buildings' exaggeration and filter reach it through
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
 | `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
+| `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
 | `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, building prisms and ground footprint; the *Data sources* spec |
 | `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`. The only place an endpoint lives |

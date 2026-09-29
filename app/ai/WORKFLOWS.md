@@ -82,6 +82,11 @@ mounting it in `useMapEngine` (after anything it derives from), calling its
 `update` in the settings effect, and spreading its `prepareSync()` into the
 `sync([...])` array. Nothing layer-specific goes in the host.
 
+Its class extends `ThreeLayer` (`src/lib/three/specs/spec.md`). It never makes
+its own renderer, and it wraps its drawing in `pass`. It declares a
+`prerender` only if it has offscreen work, and it implements `viewSettled`
+only if it replans when the view moves.
+
 If the layer reads a dataset, it takes a descriptor and never names an
 endpoint (`src/lib/tiles/specs/spec.md`). The descriptor type and the schema
 go in the dataset owner's `schema.ts`, and the values go in `src/sources.ts`.

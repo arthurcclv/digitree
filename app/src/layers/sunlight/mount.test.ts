@@ -3,6 +3,7 @@ import { getExternalNativePaintBridge } from "@geolibre/core";
 import type { BuildingSource } from "../buildings";
 import type { TreeSource } from "../tree";
 import { createGraph } from "../../lib/dag";
+import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS } from "./index";
 import { LPI_NODE } from "./lpi";
@@ -68,5 +69,14 @@ describe("mountSunlight", () => {
     expect(setSunTime).toHaveBeenCalledTimes(1);
     m.dispose();
     vi.restoreAllMocks();
+  });
+});
+
+// See `src/lib/three/specs/spec.md`, invariant 8: MapLibre gives a layer with a
+// `prerender` an offscreen pass, so it must have one exactly when it needs it.
+describe("ThreeSunlightLayer", () => {
+  test("is a ThreeLayer, with a prerender", () => {
+    expect(ThreeSunlightLayer.prototype).toBeInstanceOf(ThreeLayer);
+    expect("prerender" in ThreeSunlightLayer.prototype).toBe(true);
   });
 });

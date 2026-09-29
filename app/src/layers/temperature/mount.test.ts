@@ -3,6 +3,7 @@ import { getExternalNativePaintBridge } from "@geolibre/core";
 import type { BuildingSource } from "../buildings";
 import type { TreeSource } from "../tree";
 import { createGraph } from "../../lib/dag";
+import { ThreeLayer } from "../../lib/three";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS, LPI_NODE, mountSunlight } from "../sunlight";
 import { DEFAULT_TEMPERATURE_SETTINGS, type TemperatureStatus } from "./index";
@@ -91,5 +92,14 @@ describe("mountTemperature", () => {
     expect(setParams).toHaveBeenCalledWith({ g0: 800, ta: 35, v: 1 });
     dispose();
     vi.restoreAllMocks();
+  });
+});
+
+// See `src/lib/three/specs/spec.md`, invariant 8: MapLibre gives a layer with a
+// `prerender` an offscreen pass, so it must have one exactly when it needs it.
+describe("ThreeTemperatureLayer", () => {
+  test("is a ThreeLayer, with a prerender", () => {
+    expect(ThreeTemperatureLayer.prototype).toBeInstanceOf(ThreeLayer);
+    expect("prerender" in ThreeTemperatureLayer.prototype).toBe(true);
   });
 });
