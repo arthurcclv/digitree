@@ -129,8 +129,12 @@ and building layers are shown.
 
 | source | URL | zoom | source layer |
 | --- | --- | --- | --- |
-| trees | `TREES_TILES` from the tree layer (`/tiles/trees/{z}/{x}/{y}`) | 14 | `trees` |
-| buildings | the first `tiles` template in the TileJSON at `OSM_TILEJSON` (basemaps layer) | 14 | `building` |
+| trees | the `TreeSource` passed to `mountSunlight` (`tiles`), decoded by the tree layer's `treeTiles` | 14 | its `sourceLayer` |
+| buildings | the first `tiles` template in the TileJSON at the `BuildingSource`'s `tileJson`, decoded by the buildings layer's `buildingTiles` | 14 | its `sourceLayer` |
+
+Both descriptors come from the host (`src/lib/tiles/specs/spec.md`). In this
+app they are `TREES` and `BUILDINGS` in `src/sources.ts`, the same ones the
+tree and building records use.
 
 - **Zoom.** Both are fetched at **z14**, one tile grid for both. That is the
   buildings source's maximum zoom. For trees, a point layer loses nothing at
@@ -138,7 +142,7 @@ and building layers are shown.
 - **Decoding.** Tiles are decoded on the main thread with `@mapbox/vector-tile`
   and `pbf`, and converted to lng/lat with the decoder's own `toGeoJSON(x, y, z)`.
 - **Tree tiles outside the inventory.** Tree tiles are requested only inside
-  the inventory bounds (`TREES_BOUNDS`); outside them a tree tile is known
+  the tree source's `bounds`; outside them a tree tile is known
   empty and counts as fetched.
 - **Cache.** Decoded tiles are kept in an in-memory LRU of `TILE_CACHE_SIZE` =
   256 tiles per source, for the session.

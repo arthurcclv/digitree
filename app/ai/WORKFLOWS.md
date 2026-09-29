@@ -82,6 +82,13 @@ mounting it in `useMapEngine` (after anything it derives from), calling its
 `update` in the settings effect, and spreading its `prepareSync()` into the
 `sync([...])` array. Nothing layer-specific goes in the host.
 
+If the layer reads a dataset, it takes a descriptor and never names an
+endpoint (`src/lib/tiles/specs/spec.md`). The descriptor type and the schema
+go in the dataset owner's `schema.ts`, and the values go in `src/sources.ts`.
+A self-fetching layer builds its `TileStore` from `treeTiles` or
+`buildingTiles`, and `structure.test.ts` fails if an endpoint lands in the
+layer.
+
 ## Debugging
 
 **The map is a black rectangle and the console is clean.** Almost always the

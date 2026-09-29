@@ -1,13 +1,6 @@
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core";
-import {
-  TREES_BOUNDS,
-  TREES_MAX_ZOOM,
-  TREES_MIN_ZOOM,
-  TREES_SOURCE_LAYER,
-  TREES_TILES,
-  TREE_LAYER_ID,
-  TREE_POINTS_LAYER_ID,
-} from "./constants";
+import { TREE_LAYER_ID, TREE_POINTS_LAYER_ID } from "./constants";
+import { TREE_PROPS, type TreeSource } from "./schema";
 import { TREE_NATIVE_LAYER_ID } from "./treeLayer";
 import type { TreeKindFilter, TreeSettings } from "./index";
 
@@ -31,7 +24,7 @@ const COLOR_UNKNOWN = "#5c6b7a";
 function colorExpression(): string {
   return JSON.stringify([
     "match",
-    ["get", "kind"],
+    ["get", TREE_PROPS.kind],
     "street",
     COLOR_STREET,
     "park",
@@ -44,7 +37,7 @@ function colorExpression(): string {
 
 /** Both records narrow together, so the two views never show different data. */
 function kindFilter(kind: TreeKindFilter): unknown[] | undefined {
-  return kind === "all" ? undefined : ["==", ["get", "kind"], kind];
+  return kind === "all" ? undefined : ["==", ["get", TREE_PROPS.kind], kind];
 }
 
 /**
@@ -54,7 +47,7 @@ function kindFilter(kind: TreeKindFilter): unknown[] | undefined {
  * Nothing here touches MapLibre — `createLayerSync` reads this description and
  * materialises the circle style layer, its paint, and its filters.
  */
-export function treePointsLayer(settings: TreeSettings): GeoLibreLayer {
+export function treePointsLayer(settings: TreeSettings, source: TreeSource): GeoLibreLayer {
   const filter = kindFilter(settings.kind);
 
   // The three.js layer has no source of its own — it reads the tiles MapLibre
@@ -70,18 +63,18 @@ export function treePointsLayer(settings: TreeSettings): GeoLibreLayer {
     name: "Taipei Trees",
     type: "vector-tiles",
     source: {
-      tiles: [TREES_TILES],
-      sourceLayer: TREES_SOURCE_LAYER,
-      minzoom: TREES_MIN_ZOOM,
-      maxzoom: TREES_MAX_ZOOM,
-      bounds: TREES_BOUNDS,
+      tiles: [source.tiles],
+      sourceLayer: source.sourceLayer,
+      minzoom: source.minzoom,
+      maxzoom: source.maxzoom,
+      bounds: source.bounds,
     },
     visible: sourceNeeded,
     opacity: settings.pointsVisible ? settings.opacity : 0,
     ...(filter ? { filterExpression: filter } : {}),
     style: {
       ...DEFAULT_LAYER_STYLE,
-      minZoom: TREES_MIN_ZOOM,
+      minZoom: source.minzoom,
       maxZoom: 24,
       extrusionEnabled: false,
       // Radius tracks the surveyed height. `height_m` is null for the ~56 trees
@@ -89,7 +82,7 @@ export function treePointsLayer(settings: TreeSettings): GeoLibreLayer {
       // falls those back to the range minimum, so they draw as the smallest
       // dot — visibly least-known rather than invisibly average.
       proportionalSizeEnabled: true,
-      proportionalSizeProperty: "height_m",
+      proportionalSizeProperty: TREE_PROPS.height,
       proportionalSizeMinValue: 2,
       proportionalSizeMaxValue: 25,
       proportionalSizeMinRadius: 1.4,

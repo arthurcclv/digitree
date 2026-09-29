@@ -17,6 +17,11 @@ and it conditions that style so the GeoLibre-managed layers render correctly.
 One OpenStreetMap snapshot serves both the ground plane and the extruded
 buildings, so the two can never disagree.
 
+The buildings layer does not import these. The app's `src/sources.ts` builds
+the `BuildingSource` descriptor (`BUILDINGS`) from them, and passes that one
+descriptor to the extrusion record and to both self-fetching layers
+(`src/lib/tiles/specs/spec.md`).
+
 - `OSM_TILEJSON` = `https://tiles.openfreemap.org/planet` — OpenMapTiles schema,
   no API key, no registration.
 - `OSM_ATTRIBUTION` = `© OpenStreetMap contributors · OpenMapTiles · OpenFreeMap`.

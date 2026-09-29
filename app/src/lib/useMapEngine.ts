@@ -27,6 +27,7 @@ import {
   type AoState,
 } from "../layers/ambient-occlusion";
 import { createGraph } from "./dag";
+import { BUILDINGS, TREES } from "../sources";
 
 // MapLibre derives its worker URL from its own module URL and the worker then
 // imports a sibling chunk. Neither survives bundling, so point it at a worker
@@ -141,7 +142,7 @@ export function useMapEngine(
     // overlay sits right above the direct-sun one, and the tree circles and
     // meshes above both.
     const records = [
-      buildingsLayer(settingsRef.current),
+      buildingsLayer(settingsRef.current, BUILDINGS),
       ...mounts.ao.prepareSync(),
       ...mounts.sunlight.prepareSync(),
       ...mounts.temperature.prepareSync(),
@@ -184,12 +185,15 @@ export function useMapEngine(
     const mounts: Mounts = {
       ao: mountAmbientOcclusion(
         ctx,
+        { buildings: BUILDINGS },
         { ao: initial.aoSettings, buildings: settingsRef.current },
         { onStatus: setAoState },
       ),
-      sunlight: mountSunlight(ctx, initial.sunlightSettings, { onStatus: setSunlightStatus }),
+      sunlight: mountSunlight(ctx, { trees: TREES, buildings: BUILDINGS }, initial.sunlightSettings, {
+        onStatus: setSunlightStatus,
+      }),
       temperature: mountTemperature(ctx, initial.temperatureSettings, { onStatus: setTemperatureStatus }),
-      tree: mountTree(ctx, initial.treeSettings, { onModelStatus: setModelStatus }),
+      tree: mountTree(ctx, { trees: TREES }, initial.treeSettings, { onModelStatus: setModelStatus }),
     };
     mountsRef.current = mounts;
     if (import.meta.env.DEV) {

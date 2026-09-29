@@ -1,4 +1,4 @@
-import type { BuildingSettings } from "../buildings";
+import type { BuildingSettings, BuildingSource } from "../buildings";
 import { changed, nativeLayer, type LayerMount, type MountContext } from "../../lib/mount";
 import { ThreeAoLayer } from "./aoLayer";
 import { AO_LAYER_ID, ambientOcclusionRecord } from "./records";
@@ -27,10 +27,11 @@ export type AmbientOcclusionMount = LayerMount<AmbientOcclusionMountSettings>;
  */
 export function mountAmbientOcclusion(
   { map }: MountContext,
+  { buildings }: { buildings: BuildingSource },
   initial: AmbientOcclusionMountSettings,
   hooks: AmbientOcclusionMountHooks = {},
 ): AmbientOcclusionMount {
-  const ao = new ThreeAoLayer();
+  const ao = new ThreeAoLayer(buildings);
   ao.onStatus = (state) => hooks.onStatus?.(state);
   const native = nativeLayer(map, AO_LAYER_ID, ao, {
     setOpacity: (opacity) => ao.setOpacity(opacity),

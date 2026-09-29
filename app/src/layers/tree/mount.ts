@@ -1,6 +1,7 @@
 import { changed, nativeLayer, type LayerMount, type MountContext } from "../../lib/mount";
 import { TREE_LAYER_ID } from "./constants";
 import { treeMeshRecord, treePointsLayer } from "./records";
+import type { TreeSource } from "./schema";
 import { ThreeTreeLayer, type ModelStatus } from "./treeLayer";
 import type { TreeSettings } from "./index";
 
@@ -18,10 +19,11 @@ export type TreeMount = LayerMount<TreeSettings>;
  */
 export function mountTree(
   { map }: MountContext,
+  { trees }: { trees: TreeSource },
   initial: TreeSettings,
   hooks: TreeMountHooks = {},
 ): TreeMount {
-  const tree = new ThreeTreeLayer();
+  const tree = new ThreeTreeLayer(trees.sourceLayer);
   tree.onModelsChanged = () => hooks.onModelStatus?.(tree.modelStatus());
   // GeoLibre's generic opacity and visibility controls, routed into three.js.
   const native = nativeLayer(map, TREE_LAYER_ID, tree, {
@@ -47,7 +49,7 @@ export function mountTree(
     prepareSync() {
       native.ensureAdded();
       // Points first: the meshes sit above the circles.
-      return [treePointsLayer(settings!), treeMeshRecord(settings!)];
+      return [treePointsLayer(settings!, trees), treeMeshRecord(settings!)];
     },
     dispose() {
       native.dispose();

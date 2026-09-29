@@ -48,20 +48,23 @@ interface LayerMount<S> {
 }
 ```
 
-Each layer exports a factory `mount<Name>(ctx, settings, hooks?)`. It returns a
+Each layer exports a factory `mount<Name>(ctx, sources, settings, hooks?)`. A
+layer that reads no dataset omits `sources`: `mount<Name>(ctx, settings,
+hooks?)`. `sources` holds the descriptors from `src/lib/tiles/specs/spec.md`,
+fixed for the mount's life. It returns a
 `LayerMount<S>` plus that layer's own readbacks:
 
-| factory | `S` | hooks | extra members |
-| --- | --- | --- | --- |
-| `mountTree` | `TreeSettings` | `onModelStatus(ModelStatus)` | — |
-| `mountSunlight` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
-| `mountTemperature` | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
-| `mountAmbientOcclusion` | `{ ao: AmbientOcclusionSettings; buildings: Pick<BuildingSettings, "visible" \| "heightScale" \| "minHeight"> }` | `onStatus(AoState)` | — |
+| factory | sources | `S` | hooks | extra members |
+| --- | --- | --- | --- | --- |
+| `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | — |
+| `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
+| `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
+| `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; buildings: Pick<BuildingSettings, "visible" \| "heightScale" \| "minHeight"> }` | `onStatus(AoState)` | — |
 
 `buildings` gets no mount. Its record builder already needs nothing else, and
 a mount around it would only pass settings through.
 
-### `mount<Name>(ctx, settings, hooks)`
+### `mount<Name>(ctx, [sources,] settings, hooks)`
 
 - Constructs the custom-layer class and applies `settings` to it.
 - Registers the layer's paint bridge (`setExternalNativePaintBridge`) under
@@ -122,7 +125,7 @@ layers share. It returns `{ ensureAdded(), dispose() }`:
 - Creating the map, the worker configuration, `installMapTransformCompat`,
   `createLayerSync`, and the one `Graph`.
 - The mount order and the sync order:
-  `buildingsLayer(buildings)`, then ambient occlusion, sunlight, temperature,
+  `buildingsLayer(buildings, BUILDINGS)`, then ambient occlusion, sunlight, temperature,
   and tree (points, mesh).
 - On `style.load`: `hideBasemapBuildings`, `setLight`, then sync. Re-adding
   custom layers is no longer the host's job.

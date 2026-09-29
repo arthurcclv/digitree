@@ -26,6 +26,7 @@ These explain the product, the structure, and the process around the specs.
 | `temperature` | [`src/layers/temperature/specs/spec.md`](../src/layers/temperature/specs/spec.md) |
 | the derived-layer DAG (`src/lib/dag`, not a layer) | [`src/lib/dag/specs/spec.md`](../src/lib/dag/specs/spec.md) |
 | the layer mount (`src/lib/mount`, not a layer) | [`src/lib/mount/specs/spec.md`](../src/lib/mount/specs/spec.md) |
+| data sources (`src/sources.ts`, `src/lib/tiles`, the schemas) | [`src/lib/tiles/specs/spec.md`](../src/lib/tiles/specs/spec.md) |
 
 ## Keeping these honest
 

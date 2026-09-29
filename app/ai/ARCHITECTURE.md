@@ -98,8 +98,12 @@ Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 - `index.ts` is the only entry other modules import (`../layers/tree`, never
   `../layers/tree/treeLayer`). Split freely *inside* the folder.
 - A folder may import from `src/lib` and from another layer's `index.ts`
-  (`buildings` imports `OSM_TILEJSON` and `OSM_ATTRIBUTION` from `basemaps`). It
-  must not reach into another folder's internals.
+  (`sunlight` imports `treeTiles` from `tree` and `buildingTiles` from
+  `buildings`). It must not reach into another folder's internals.
+- **No layer holds an endpoint.** Where a dataset is served is a descriptor
+  (`TreeSource`, `BuildingSource`) that the host passes in. How a feature is
+  read is the owning layer's `schema.ts`. See *Data sources* below and
+  `src/lib/tiles/specs/spec.md`.
 - `specs/spec.md` is mandatory.
 - A layer with a custom half keeps its record builders in `records.ts` and its
   mount in `mount.ts`. `mount.ts` imports `records.ts` and only *types* from
@@ -140,19 +144,37 @@ sunlight layer ever reads pixels.
 with `querySourceFeatures`, so it sees exactly the viewport. The sunlight
 overlay cannot: the shade at the sunward edge of the view, and on the far ground
 of a pitched view, comes from tiles MapLibre never loads. So it fetches its own
-(`src/lib/tiles`), from the same two endpoints, and depends on no other layer
-being shown. The ambient-occlusion layer fetches the building tiles the same
+(`src/lib/tiles`), from the same two descriptors the records use, and depends
+on no other layer being shown. The ambient-occlusion layer fetches the building tiles the same
 way, into a buildings-only store of its own, because MapLibre's depth buffer
 cannot be sampled and it must redraw the buildings itself.
 
-**`src/lib/tiles` is shared, not a layer.** It holds what both self-fetching
-layers need: the z14 grid and Mercator formulas (`grid.ts`), the `TileStore`
-(`store.ts` — fetch, decode with `@mapbox/vector-tile`, LRU cache, with a
-per-source switch), per-tile building triangulation and placement
-(`prisms.ts`), and the viewport's ground footprint (`footprint.ts`). Each layer
-holds its own store instance; the browser's HTTP cache answers the second
-request for a building tile. It imports the tile URLs from the `tree` and
-`basemaps` index files, as the layers did.
+**`src/lib/tiles` is shared, not a layer, and knows no dataset.** It holds
+what both self-fetching layers need: the z14 grid and Mercator formulas
+(`grid.ts`); the `TileStore` (`store.ts`), which is generic over the sources
+it is given and handles fetch, TileJSON resolution, the LRU cache and
+`decodeMvt` over `@mapbox/vector-tile`; per-tile building triangulation and
+placement (`prisms.ts`); and the viewport's ground footprint (`footprint.ts`).
+Each layer holds its own store instance, and the browser's HTTP cache answers
+the second request for a building tile. It imports nothing from `src/layers/`,
+and `structure.test.ts` enforces that.
+
+**Data sources.** Where the data is and how it is read are separate. *Where*
+is a plain descriptor (`TreeSource`: `tiles`, `sourceLayer`, zoom range,
+`bounds`, `attribution`; `BuildingSource`: `tileJson`, `sourceLayer`,
+`attribution`). The app's only values are in `src/sources.ts` (`TREES`,
+`BUILDINGS`, `TREES_SURVEYED`). `useMapEngine` hands them to the records and
+mounts, and `App.tsx` reads the attributions from them. *How* is each dataset
+owner's `schema.ts`, the single reading every consumer shares:
+- `tree/schema.ts` has `treeOf`, which the meshes and the direct-sun layer
+  both read trees with, plus `treeTiles(source)`, the tree source as a
+  `TileStore` source.
+- `buildings/schema.ts` holds the extrusion's MapLibre filter and height
+  expression beside `buildingHeight`, the JS form, plus
+  `buildingTiles(source)`.
+
+Another city is a change to `src/sources.ts` only, provided it publishes the
+same schema.
 
 `tree` is the one folder with a real internal split, and the split is by
 dependency rather than by topic:
@@ -162,7 +184,8 @@ dependency rather than by topic:
 | `index.ts` | the folder's entry: `TreeSettings`, re-exports | no |
 | `records.ts` | the two GeoLibre records | no |
 | `mount.ts` | `mountTree` — the layer attached to a map | yes, via `treeLayer.ts` |
-| `constants.ts` | the Martin source contract | no |
+| `constants.ts` | the record ids, `MODELS_ATTRIBUTION` | no |
+| `schema.ts` | `TreeSource`, `TREE_PROPS`, `treeOf` (the one reading of a tree), `treeTiles` | no (it pulls `lib/tiles`) |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
 | `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
 | `formGeometry.ts` | the eight procedural shapes, the two shared materials, and `canopyHullOf` | yes |
@@ -198,8 +221,8 @@ tested, one module for the GL:
 
 It borrows the crown shape from the tree layer through `canopyHullOf(form)`
 (the convex hull of the procedural canopy), the per-tree yaw through
-`rotationOf`, and the tree source's URL and bounds (`TREES_TILES`,
-`TREES_BOUNDS`), all from the tree's `index.ts`. So the shadow and the drawn
+`rotationOf`, and the tree tile source (`treeTiles`, over the `TreeSource`
+its mount is given), all from the tree's `index.ts`. So the shadow and the drawn
 tree share a shape and a facing, and nothing else of the tree layer's internals
 is reached.
 
@@ -316,7 +339,8 @@ radius and the buildings' exaggeration and filter reach it through
 | `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
-| `src/lib/tiles/` | the self-fetching layers' shared tile grid, `TileStore`, building prisms and ground footprint |
+| `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, building prisms and ground footprint; the *Data sources* spec |
+| `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`. The only place an endpoint lives |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |

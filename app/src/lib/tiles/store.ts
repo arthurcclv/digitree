@@ -1,31 +1,58 @@
-import { VectorTile } from "@mapbox/vector-tile";
+import { VectorTile, type VectorTileFeature } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
-import { OSM_TILEJSON } from "../../layers/basemaps";
-import { TREES_BOUNDS, TREES_SOURCE_LAYER, TREES_TILES } from "../../layers/tree";
-import { tileIntersects, tileKey, type TileId } from "./grid";
+import { tileKey, type TileId } from "./grid";
 
 /**
  * Tiles fetched by a layer itself rather than read from MapLibre. See *Data*
  * in the sunlight spec: MapLibre loads only the viewport, and the shade at the
- * viewport's sunward edge is cast from outside it. The ambient-occlusion layer
- * uses a buildings-only store of its own.
+ * viewport's sunward edge is cast from outside it.
  *
- * Decoded features are kept in lng/lat; placing them in a frame is the
- * layer's job and changes every time the view moves.
+ * The store knows no dataset. Each source it holds is handed in, as where its
+ * tiles are and how they decode; see `specs/spec.md`. Decoded features are
+ * kept in lng/lat; placing them in a frame is the layer's job and changes
+ * every time the view moves.
  */
 
-export interface TreeFeature {
-  id: string;
-  lng: number;
-  lat: number;
-  heightM: number | null;
-  species: unknown;
-}
-
+/** A building footprint with its height. Schema-free: see the buildings layer's schema. */
 export interface BuildingFeature {
   heightM: number;
   /** One entry per polygon: its rings, outer first, each closed as in GeoJSON. */
   polygons: [number, number][][][];
+}
+
+/** A decoded feature's geometry, in lng/lat, as the decoder gives it. */
+export type TileGeometry = ReturnType<VectorTileFeature["toGeoJSON"]>["geometry"];
+
+/** Where a source's tiles are: a URL template, or a TileJSON naming one. */
+export type TileLocation = { tiles: string } | { tileJson: string };
+
+/** One source a store holds: where its tiles are, and how they decode. */
+export interface TileSource<T> {
+  location: TileLocation;
+  decode(buf: ArrayBuffer, tile: TileId): T[];
+  /** False for a tile known to be empty without asking. Default: always true. */
+  mayHold?(tile: TileId): boolean;
+}
+
+/**
+ * The features of one MVT layer in a tile, each read by `read`, which drops a
+ * feature by returning `null`. The geometry is decoded only when asked for.
+ */
+export function decodeMvt<T>(
+  buf: ArrayBuffer,
+  t: TileId,
+  sourceLayer: string,
+  read: (properties: Record<string, unknown>, geometry: () => TileGeometry) => T | null,
+): T[] {
+  const layer = new VectorTile(new PbfReader(buf)).layers[sourceLayer];
+  if (!layer) return [];
+  const out: T[] = [];
+  for (let i = 0; i < layer.length; i++) {
+    const vf = layer.feature(i);
+    const f = read(vf.properties, () => vf.toGeoJSON(t.x, t.y, t.z).geometry);
+    if (f !== null) out.push(f);
+  }
+  return out;
 }
 
 /** Decoded tiles kept per source for the session. */
@@ -58,75 +85,20 @@ class Lru<T> {
   }
 }
 
-const BUILDINGS_SOURCE_LAYER = "building";
-
-function decodeTrees(buf: ArrayBuffer, t: TileId): TreeFeature[] {
-  const layer = new VectorTile(new PbfReader(buf)).layers[TREES_SOURCE_LAYER];
-  if (!layer) return [];
-  const out: TreeFeature[] = [];
-  for (let i = 0; i < layer.length; i++) {
-    const f = layer.feature(i).toGeoJSON(t.x, t.y, t.z);
-    if (f.geometry.type !== "Point") continue;
-    const id = f.properties?.tree_id;
-    if (typeof id !== "string") continue;
-    const [lng, lat] = f.geometry.coordinates as [number, number];
-    const h = f.properties?.height_m;
-    out.push({ id, lng, lat, heightM: typeof h === "number" && h > 0 ? h : null, species: f.properties?.species });
-  }
-  return out;
-}
-
-/**
- * A building feature's height, or `null` when it is not drawn in 3D at all:
- * OSM marks it `hide_3d`, or it has no positive `render_height`. The
- * extrusion's own filter drops the same features.
- */
-export function buildingHeight(props: Record<string, unknown>): number | null {
-  if (props.hide_3d === true) return null;
-  const h = Number(props.render_height);
-  return h > 0 ? h : null;
-}
-
-function decodeBuildings(buf: ArrayBuffer, t: TileId): BuildingFeature[] {
-  const layer = new VectorTile(new PbfReader(buf)).layers[BUILDINGS_SOURCE_LAYER];
-  if (!layer) return [];
-  const out: BuildingFeature[] = [];
-  for (let i = 0; i < layer.length; i++) {
-    const vf = layer.feature(i);
-    const h = buildingHeight(vf.properties);
-    if (h === null) continue;
-    const g = vf.toGeoJSON(t.x, t.y, t.z).geometry;
-    const polygons =
-      g.type === "Polygon"
-        ? [g.coordinates as [number, number][][]]
-        : g.type === "MultiPolygon"
-          ? (g.coordinates as [number, number][][][])
-          : [];
-    if (polygons.length) out.push({ heightM: h, polygons });
-  }
-  return out;
-}
-
 export interface TileCounts {
   covered: number;
   pending: number;
   failed: number;
 }
 
-/**
- * What differs between the two sources: where a tile lives, how it decodes,
- * and which tiles can hold anything at all.
- */
-export type TileSourceName = "trees" | "buildings";
+type FeatureOf<S> = S extends TileSource<infer T> ? T : never;
 
-interface Source<T> {
-  name: TileSourceName;
-  cache: Lru<Entry<T>>;
-  /** The URL template, or `null` when it cannot be had (an unreadable TileJSON). */
-  template: () => Promise<string | null>;
-  decode: (buf: ArrayBuffer, t: TileId) => T[];
-  /** False for a tile known to be empty without asking. */
-  mayHold: (t: TileId) => boolean;
+interface Held {
+  name: string;
+  source: TileSource<unknown>;
+  cache: Lru<Entry<unknown>>;
+  /** A resolved TileJSON template, shared by every tile until it fails. */
+  template: Promise<string | null> | null;
 }
 
 /**
@@ -134,38 +106,29 @@ interface Source<T> {
  * only way in: it names the tiles the layer needs now, and anything not yet
  * held is queued. `onChange` fires when a tile lands or fails.
  *
- * A store holds both sources unless told otherwise; a tile counts as covered
- * once every source the store holds has it.
+ * A store holds exactly the sources it is given; a tile counts as covered once
+ * every one of them has it.
  */
-export class TileStore {
-  private readonly trees: Source<TreeFeature> = {
-    name: "trees",
-    cache: new Lru(TILE_CACHE_SIZE),
-    template: async () => TREES_TILES,
-    decode: decodeTrees,
-    mayHold: (t) => tileIntersects(t, TREES_BOUNDS),
-  };
-  private readonly buildings: Source<BuildingFeature> = {
-    name: "buildings",
-    cache: new Lru(TILE_CACHE_SIZE),
-    template: () => this.templateFor(),
-    decode: decodeBuildings,
-    mayHold: () => true,
-  };
+export class TileStore<S extends Record<string, TileSource<unknown>>> {
+  private readonly held: Held[];
+  private readonly byName = new Map<string, Held>();
   private queue: { id: string; tile: TileId; start: () => void }[] = [];
   private inFlight = 0;
-  private buildingTemplate: Promise<string | null> | null = null;
   private wanted: TileId[] = [];
 
   onChange: (() => void) | null = null;
 
-  private readonly sources: ReadonlySet<TileSourceName>;
-
   constructor(
+    sources: S,
     private readonly fetchFn: typeof fetch = (...a) => fetch(...a),
-    sources: TileSourceName[] = ["trees", "buildings"],
   ) {
-    this.sources = new Set(sources);
+    this.held = Object.entries(sources).map(([name, source]) => ({
+      name,
+      source,
+      cache: new Lru<Entry<unknown>>(TILE_CACHE_SIZE),
+      template: null,
+    }));
+    for (const h of this.held) this.byName.set(h.name, h);
   }
 
   /** Replace the wanted set; queue whatever is missing. Failed tiles are retried. */
@@ -174,17 +137,17 @@ export class TileStore {
     const queued = new Set(this.queue.map((q) => q.id));
     for (const tile of tiles) {
       const key = tileKey(tile);
-      this.eachSource((src) => {
+      for (const src of this.held) {
         const entry = src.cache.get(key);
-        if (entry?.state === "ready" || entry?.state === "pending") return;
+        if (entry?.state === "ready" || entry?.state === "pending") continue;
         const id = `${src.name}:${key}`;
-        if (queued.has(id)) return;
-        if (!src.mayHold(tile)) {
+        if (queued.has(id)) continue;
+        if (src.source.mayHold && !src.source.mayHold(tile)) {
           src.cache.set(key, { state: "ready", features: [] });
-          return;
+          continue;
         }
         this.queue.push({ id, tile, start: () => void this.load(src, tile) });
-      });
+      }
     }
     // Drop queued work that is no longer wanted.
     const wantedKeys = new Set(tiles.map(tileKey));
@@ -210,57 +173,44 @@ export class TileStore {
     return { covered, pending, failed };
   }
 
+  /** One source's features in a tile, or none while it is not ready. */
+  featuresOf<K extends keyof S & string>(name: K, t: TileId): FeatureOf<S[K]>[] {
+    const e = this.byName.get(name)?.cache.get(tileKey(t));
+    return (e?.state === "ready" ? e.features : []) as FeatureOf<S[K]>[];
+  }
+
   /** One tile's state in each held source. */
   private states(t: TileId): (Entry<unknown>["state"] | undefined)[] {
     const k = tileKey(t);
-    const out: (Entry<unknown>["state"] | undefined)[] = [];
-    this.eachSource((src) => out.push(src.cache.get(k)?.state));
-    return out;
+    return this.held.map((src) => src.cache.get(k)?.state);
   }
 
-  treesOf(t: TileId): TreeFeature[] {
-    return this.featuresOf(this.trees, t);
-  }
-
-  buildingsOf(t: TileId): BuildingFeature[] {
-    return this.featuresOf(this.buildings, t);
-  }
-
-  private featuresOf<T>(src: Source<T>, t: TileId): T[] {
-    const e = src.cache.get(tileKey(t));
-    return e?.state === "ready" ? e.features : [];
-  }
-
-  /** The held sources, each with its own feature type — a union array would lose it. */
-  private eachSource(fn: <T>(src: Source<T>) => void): void {
-    if (this.sources.has("trees")) fn(this.trees);
-    if (this.sources.has("buildings")) fn(this.buildings);
-  }
-
-  private templateFor(): Promise<string | null> {
-    this.buildingTemplate ??= this.fetchFn(OSM_TILEJSON)
+  private templateOf(src: Held): Promise<string | null> {
+    const loc = src.source.location;
+    if ("tiles" in loc) return Promise.resolve(loc.tiles);
+    src.template ??= this.fetchFn(loc.tileJson)
       .then((r) => (r.ok ? r.json() : null))
       // `json()` is untyped; the cast only restates the typeof check before it.
       .then((j) => (j && Array.isArray(j.tiles) && typeof j.tiles[0] === "string" ? (j.tiles[0] as string) : null))
       .catch(() => null)
       .then((t) => {
         // A failed TileJSON is retried on the next request, not cached as a failure.
-        if (!t) this.buildingTemplate = null;
+        if (!t) src.template = null;
         return t;
       });
-    return this.buildingTemplate;
+    return src.template;
   }
 
   private pump(): void {
     while (this.inFlight < FETCH_CONCURRENCY && this.queue.length) this.queue.shift()!.start();
   }
 
-  private async load<T>(src: Source<T>, tile: TileId): Promise<void> {
+  private async load(src: Held, tile: TileId): Promise<void> {
     const key = tileKey(tile);
     src.cache.set(key, { state: "pending" });
     this.inFlight++;
     try {
-      const template = await src.template();
+      const template = await this.templateOf(src);
       if (!template) throw new Error("no tile template");
       const url = template
         .replace("{z}", String(tile.z))
@@ -273,7 +223,7 @@ export class TileStore {
       } else if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       } else {
-        src.cache.set(key, { state: "ready", features: src.decode(await res.arrayBuffer(), tile) });
+        src.cache.set(key, { state: "ready", features: src.source.decode(await res.arrayBuffer(), tile) });
       }
     } catch {
       // A failure is a state, not an error: the tile stays uncovered and is counted.

@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { BASEMAPS } from "../basemaps";
-import { buildingsLayer, DEFAULT_BUILDING_SETTINGS, PALETTES } from "./index";
+import { buildingsLayer, DEFAULT_BUILDING_SETTINGS, PALETTES, type BuildingSource } from "./index";
+
+/** Nowhere near OSM: whatever the record carries, it took from here. */
+const FOREIGN: BuildingSource = {
+  tileJson: "https://tiles.example.test/elsewhere.json",
+  sourceLayer: "footprints",
+  attribution: "© Somewhere Else",
+};
 
 describe("default settings", () => {
   test("paint flat — no ramp is reachable from the UI", () => {
@@ -16,15 +23,23 @@ describe("default settings", () => {
 });
 
 describe("buildingsLayer", () => {
+  test("takes every source field from the descriptor it is given", () => {
+    expect(buildingsLayer(DEFAULT_BUILDING_SETTINGS, FOREIGN).source).toEqual({
+      url: FOREIGN.tileJson,
+      sourceLayer: FOREIGN.sourceLayer,
+      attribution: FOREIGN.attribution,
+    });
+  });
+
   test("disables advanced styling and paints flatColor when there is no palette", () => {
-    const { style } = buildingsLayer(DEFAULT_BUILDING_SETTINGS);
+    const { style } = buildingsLayer(DEFAULT_BUILDING_SETTINGS, FOREIGN);
     expect(style.extrusionAdvancedStyleEnabled).toBe(false);
     expect(style.extrusionColorExpression).toBe("");
     expect(style.extrusionColor).toBe(DEFAULT_BUILDING_SETTINGS.flatColor);
   });
 
   test("an unknown palette id falls back to flat rather than throwing", () => {
-    const { style } = buildingsLayer({ ...DEFAULT_BUILDING_SETTINGS, paletteId: "no-such-ramp" });
+    const { style } = buildingsLayer({ ...DEFAULT_BUILDING_SETTINGS, paletteId: "no-such-ramp" }, FOREIGN);
     expect(style.extrusionAdvancedStyleEnabled).toBe(false);
     expect(style.extrusionColor).toBe(DEFAULT_BUILDING_SETTINGS.flatColor);
   });
@@ -37,7 +52,7 @@ describe("buildingsLayer", () => {
       ...DEFAULT_BUILDING_SETTINGS,
       paletteId: palette.id,
       heightScale: 3,
-    });
+    }, FOREIGN);
 
     expect(style.extrusionAdvancedStyleEnabled).toBe(true);
     expect(JSON.parse(style.extrusionColorExpression as string)).toEqual([

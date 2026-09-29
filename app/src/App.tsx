@@ -13,9 +13,6 @@ import {
 import {
   DEFAULT_TREE_SETTINGS,
   MODELS_ATTRIBUTION,
-  TREES_ATTRIBUTION,
-  TREES_MIN_ZOOM,
-  TREES_TOTAL,
   TREE_MESH_MIN_ZOOM,
   type TreeKindFilter,
   type TreeMeshSource,
@@ -43,6 +40,7 @@ import {
   type TemperatureSettings,
 } from "./layers/temperature";
 import { useMapEngine } from "./lib/useMapEngine";
+import { TREES, TREES_SURVEYED } from "./sources";
 import { cameraReadout } from "./ui/cameraReadout";
 import { Compass } from "./ui/Compass";
 import { LayerMenu } from "./ui/LayerMenu";
@@ -389,8 +387,8 @@ export default function App() {
             <div className="panel__rule" />
             {/* The inventory's size, not what is in view: the drawn count moves
                 with the viewport and would read as data changing. */}
-            <StatLine k="Surveyed trees" v={TREES_TOTAL.toLocaleString("en-US")} />
-            <StatLine k="Points from" v={`z${TREES_MIN_ZOOM}`} />
+            <StatLine k="Surveyed trees" v={TREES_SURVEYED.toLocaleString("en-US")} />
+            <StatLine k="Points from" v={`z${TREES.minzoom}`} />
             <StatLine k="Meshes from" v={`z${TREE_MESH_MIN_ZOOM}`} />
             {/* Models arrive one at a time and a form that never arrives keeps
                 drawing generated, so the count is the only way to see it. */}
@@ -589,7 +587,7 @@ export default function App() {
               tree inventory is a second source and so a second obligation. */}
           <div className="map-credit">
             <span>{OSM_ATTRIBUTION}</span>
-            <span>{TREES_ATTRIBUTION}</span>
+            <span>{TREES.attribution}</span>
             {/* Conditional where the other two are not: the obligation exists
                 only while the CC BY models are the ones being drawn. */}
             {tree.meshVisible && tree.meshSource === "model" ? (

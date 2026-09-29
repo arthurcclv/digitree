@@ -21,18 +21,14 @@ export { rotationOf } from "./placement";
 /** The shape each form casts a shadow with. See *The canopy hull*. */
 export { canopyHullOf, TREE_FORMS } from "./formGeometry";
 
-export {
-  MODELS_ATTRIBUTION,
-  TREES_ATTRIBUTION,
-  // The source contract, for a layer that fetches the tree tiles itself (sunlight).
-  TREES_BOUNDS,
-  TREES_MIN_ZOOM,
-  TREES_SOURCE_LAYER,
-  TREES_TILES,
-  TREES_TOTAL,
-  TREE_LAYER_ID,
-  TREE_POINTS_LAYER_ID,
-} from "./constants";
+export { MODELS_ATTRIBUTION, TREE_LAYER_ID, TREE_POINTS_LAYER_ID } from "./constants";
+
+/**
+ * Where an inventory is (the host's descriptor) and the one reading of a tree,
+ * also for a layer that fetches the tree tiles itself (sunlight). See *Data
+ * source*.
+ */
+export { TREE_PROPS, treeOf, treeTiles, type TreeFeature, type TreeSource } from "./schema";
 
 /** The other half of the silhouette vocabulary. See "The model table". */
 export { FORM_MODELS, MODELS_BASE_URL, normalizeModel } from "./models";

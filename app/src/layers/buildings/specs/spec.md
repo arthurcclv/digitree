@@ -27,13 +27,35 @@ extrusion; if GeoLibre's naming changes, this list must change with it.
 
 ## Source
 
-- `url` — `OSM_TILEJSON` (see the basemaps spec)
-- `sourceLayer` — `building`
-- `attribution` — `OSM_ATTRIBUTION`
+`buildingsLayer(settings, source)` takes a `BuildingSource` descriptor from the
+host (`src/lib/tiles/specs/spec.md`). The layer holds no endpoint.
+
+- `url` — `source.tileJson`
+- `sourceLayer` — `source.sourceLayer`
+- `attribution` — `source.attribution`
 - Zoom range: `minZoom: 13`, `maxZoom: 24`
 
-The `building` source layer carries `render_height` (drives extrusion height) and
-`hide_3d` (features OSM marks as unsuitable for 3D).
+This app's descriptor is `BUILDINGS` in `src/sources.ts`: `OSM_TILEJSON` and
+`OSM_ATTRIBUTION` from the basemaps extension, and `sourceLayer: "building"`.
+Building it from the basemaps constants keeps one OSM snapshot for ground and
+extrusions.
+
+### Schema
+
+The OpenMapTiles `building` layer carries `render_height` (drives extrusion
+height) and `hide_3d` (features OSM marks as unsuitable for 3D). `schema.ts`
+holds both forms of the rule:
+- the MapLibre form this record uses: `BUILDING_SHOWN_FILTER`,
+  `BUILDING_HEIGHT_EXPRESSION`, `minHeightFilter(m)`;
+- the JS form the self-fetching layers decode with: `buildingHeight(props)`,
+  which is `null` for `hide_3d: true` or a non-positive height, through
+  `buildingTiles(source)`.
+
+Every building the JS form keeps, the extrusion draws. The one difference: with
+no minimum height, the filter keeps a footprint with no positive
+`render_height` and draws it flat, while `buildingHeight` drops it, because it
+has no volume to shade or occlude. A test evaluates the filter to pin exactly
+this.
 
 ## Settings
 
@@ -104,3 +126,6 @@ conflated.
 1. No direct MapLibre calls for this layer — only the record plus `sync()`.
 2. Colour and the minimum-height filter read unexaggerated `render_height`.
 3. `hide_3d` features are never drawn.
+4. Every source field of the record comes from the descriptor passed in.
+5. Every building `buildingHeight` keeps, the extrusion filter keeps; they
+   differ only on non-positive heights at no minimum height.

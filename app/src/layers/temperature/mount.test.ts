@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { getExternalNativePaintBridge } from "@geolibre/core";
+import type { BuildingSource } from "../buildings";
+import type { TreeSource } from "../tree";
 import { createGraph } from "../../lib/dag";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS, LPI_NODE, mountSunlight } from "../sunlight";
@@ -8,12 +10,22 @@ import { mountTemperature } from "./mount";
 import { TEMPERATURE_LAYER_ID, temperatureRecord } from "./records";
 import { TEMPERATURE_NATIVE_LAYER_ID, ThreeTemperatureLayer } from "./temperatureLayer";
 
+const TREES: TreeSource = {
+  tiles: "https://trees.example.test/{z}/{x}/{y}.pbf",
+  sourceLayer: "arbres",
+  minzoom: 12,
+  maxzoom: 18,
+  bounds: [2.22, 48.81, 2.47, 48.91],
+  attribution: "",
+};
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+
 /** Both layers on one map and one graph, mounted in dependency order. */
 const mountBoth = () => {
   const f = fakeMap();
   const ctx = { map: f.map, graph: createGraph() };
   const statuses: TemperatureStatus[] = [];
-  const sunlight = mountSunlight(ctx, DEFAULT_SUNLIGHT_SETTINGS);
+  const sunlight = mountSunlight(ctx, { trees: TREES, buildings: BUILDINGS }, DEFAULT_SUNLIGHT_SETTINGS);
   const temperature = mountTemperature(ctx, DEFAULT_TEMPERATURE_SETTINGS, {
     onStatus: (s) => statuses.push(s),
   });

@@ -1,3 +1,5 @@
+import type { BuildingSource } from "../buildings";
+import type { TreeSource } from "../tree";
 import { LPI_NODE } from "./lpi";
 import { changed, nativeLayer, type LayerMount, type MountContext } from "../../lib/mount";
 import { SUNLIGHT_LAYER_ID, sunlightRecord } from "./records";
@@ -22,11 +24,12 @@ export interface SunlightMount extends LayerMount<SunlightSettings> {
  */
 export function mountSunlight(
   { map, graph }: MountContext,
+  sources: { trees: TreeSource; buildings: BuildingSource },
   initial: SunlightSettings,
   hooks: SunlightMountHooks = {},
 ): SunlightMount {
   graph.add(LPI_NODE, []);
-  const sunlight = new ThreeSunlightLayer(graph);
+  const sunlight = new ThreeSunlightLayer(graph, sources);
   sunlight.onStatus = (status) => hooks.onStatus?.(status);
   // Visibility reaches the layer in `update`, not through the bridge: the
   // record follows demand, and the bridge would hide a layer a dependent needs.

@@ -37,8 +37,9 @@ The layer cannot read MapLibre's depth buffer: the default framebuffer's depth
 cannot be sampled in WebGL. So it redraws the buildings itself, into its own
 G-buffer, using the same data MapLibre uses.
 
-- **Source.** z14 building tiles (source layer `building`) from the first
-  `tiles` template in the TileJSON at `OSM_TILEJSON`. These are the same tiles
+- **Source.** z14 building tiles from the `BuildingSource` passed to
+  `mountAmbientOcclusion` (in this app `BUILDINGS`, `src/sources.ts`), decoded
+  by the buildings layer's `buildingTiles`. These are the same tiles
   the sunlight layer fetches, through the same `TileStore` class
   (`src/lib/tiles`), in an instance of its own that holds buildings only. The
   two layers do not share a cache: one store has a single wanted set and a

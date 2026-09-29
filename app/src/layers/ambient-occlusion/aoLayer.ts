@@ -8,8 +8,11 @@ import {
   triangulateTile,
   type BuildingFeature,
   type LocalFrame,
+  type TileId,
   type TilePrisms,
+  type TileSource,
 } from "../../lib/tiles";
+import { buildingTiles, type BuildingSource } from "../buildings";
 import { AO_FETCH_HALF_M, placeAoPrisms, planAoTiles } from "./geometry";
 import { AO_NOISE_SIZE, AO_SAMPLES, aoKernel, aoNoise } from "./kernel";
 import { AO_MIN_ZOOM, aoState, type AoState } from "./state";
@@ -226,7 +229,7 @@ export class ThreeAoLayer implements CustomLayerInterface {
   private renderer: THREE.WebGLRenderer | null = null;
   private gl: WebGL2RenderingContext | null = null;
   private supported = true;
-  private readonly store = new TileStore(undefined, ["buildings"]);
+  private readonly store: TileStore<{ buildings: TileSource<BuildingFeature> }>;
   /** Keyed by the store's feature array, so an evicted tile's entry goes with it. */
   private readonly prismCache = new WeakMap<BuildingFeature[], TilePrisms>();
 
@@ -269,7 +272,10 @@ export class ThreeAoLayer implements CustomLayerInterface {
   /** Lets the panel say why nothing is drawn. */
   onStatus: ((state: AoState) => void) | null = null;
 
-  constructor() {
+  /** `buildings`: where the footprints are, from the host. See `src/lib/tiles/specs/spec.md`. */
+  constructor(buildings: BuildingSource) {
+    // Buildings only: a tile is covered on them alone.
+    this.store = new TileStore({ buildings: buildingTiles(buildings) });
     this.quadGeometry.setAttribute("position", new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
 
     this.gbufMaterial = raw(GBUF_VERT, GBUF_FRAG, {
@@ -454,8 +460,8 @@ export class ThreeAoLayer implements CustomLayerInterface {
     this.buildings = buildings;
   }
 
-  private tilePrisms(tile: Parameters<TileStore["buildingsOf"]>[0]): TilePrisms {
-    const features = this.store.buildingsOf(tile);
+  private tilePrisms(tile: TileId): TilePrisms {
+    const features = this.store.featuresOf("buildings", tile);
     const cached = this.prismCache.get(features);
     if (cached) return cached;
     const out = triangulateTile(tile, features);

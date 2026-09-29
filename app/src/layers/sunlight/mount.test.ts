@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { getExternalNativePaintBridge } from "@geolibre/core";
+import type { BuildingSource } from "../buildings";
+import type { TreeSource } from "../tree";
 import { createGraph } from "../../lib/dag";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { DEFAULT_SUNLIGHT_SETTINGS } from "./index";
@@ -8,10 +10,20 @@ import { mountSunlight } from "./mount";
 import { SUNLIGHT_LAYER_ID, sunlightRecord } from "./records";
 import { SUNLIGHT_NATIVE_LAYER_ID, ThreeSunlightLayer } from "./sunlightLayer";
 
+const TREES: TreeSource = {
+  tiles: "https://trees.example.test/{z}/{x}/{y}.pbf",
+  sourceLayer: "arbres",
+  minzoom: 12,
+  maxzoom: 18,
+  bounds: [2.22, 48.81, 2.47, 48.91],
+  attribution: "",
+};
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+
 const mount = () => {
   const f = fakeMap();
   const graph = createGraph();
-  return { f, graph, m: mountSunlight({ map: f.map, graph }, DEFAULT_SUNLIGHT_SETTINGS) };
+  return { f, graph, m: mountSunlight({ map: f.map, graph }, { trees: TREES, buildings: BUILDINGS }, DEFAULT_SUNLIGHT_SETTINGS) };
 };
 
 describe("mountSunlight", () => {

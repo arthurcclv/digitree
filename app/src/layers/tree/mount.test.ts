@@ -6,18 +6,29 @@ import { TREE_LAYER_ID } from "./constants";
 import { DEFAULT_TREE_SETTINGS, type TreeSettings } from "./index";
 import { mountTree } from "./mount";
 import { treeMeshRecord, treePointsLayer } from "./records";
+import type { TreeSource } from "./schema";
 import { ThreeTreeLayer, TREE_NATIVE_LAYER_ID } from "./treeLayer";
+
+/** A foreign inventory: the mount must take everything about it from here. */
+const TREES: TreeSource = {
+  tiles: "https://trees.example.test/{z}/{x}/{y}.pbf",
+  sourceLayer: "arbres",
+  minzoom: 12,
+  maxzoom: 18,
+  bounds: [2.22, 48.81, 2.47, 48.91],
+  attribution: "",
+};
 
 const mount = (settings: TreeSettings = DEFAULT_TREE_SETTINGS) => {
   const f = fakeMap();
-  return { f, m: mountTree({ map: f.map, graph: createGraph() }, settings) };
+  return { f, m: mountTree({ map: f.map, graph: createGraph() }, { trees: TREES }, settings) };
 };
 
 describe("mountTree", () => {
   test("syncs the same two records the builders make, points first", () => {
     const settings = { ...DEFAULT_TREE_SETTINGS, kind: "park" as const, opacity: 0.5 };
     const { m } = mount(settings);
-    expect(m.prepareSync()).toEqual([treePointsLayer(settings), treeMeshRecord(settings)]);
+    expect(m.prepareSync()).toEqual([treePointsLayer(settings, TREES), treeMeshRecord(settings)]);
     m.dispose();
   });
 

@@ -1,5 +1,21 @@
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core";
-import { OSM_ATTRIBUTION, OSM_TILEJSON } from "../basemaps";
+import {
+  BUILDING_HEIGHT_EXPRESSION,
+  BUILDING_HEIGHT_PROPERTY,
+  BUILDING_SHOWN_FILTER,
+  minHeightFilter,
+  type BuildingSource,
+} from "./schema";
+
+/** Where footprints are, and how one is read. See *Source* in `specs/spec.md`. */
+export {
+  BUILDING_HEIGHT_EXPRESSION,
+  BUILDING_SHOWN_FILTER,
+  buildingHeight,
+  buildingTiles,
+  minHeightFilter,
+  type BuildingSource,
+} from "./schema";
 
 export const BUILDINGS_LAYER_ID = "osm-buildings";
 
@@ -95,7 +111,7 @@ function colorExpression(palette: Palette): string {
   return JSON.stringify([
     "interpolate",
     ["linear"],
-    ["to-number", ["get", "render_height"], 0],
+    BUILDING_HEIGHT_EXPRESSION,
     ...palette.stops.flat(),
   ]);
 }
@@ -105,22 +121,20 @@ function colorExpression(palette: Palette): string {
  * touches MapLibre directly — `createLayerSync` reads this description and
  * materialises the `fill-extrusion` style layer, its paint, and its filters.
  */
-export function buildingsLayer(settings: BuildingSettings): GeoLibreLayer {
+export function buildingsLayer(settings: BuildingSettings, source: BuildingSource): GeoLibreLayer {
   const palette = PALETTES.find((p) => p.id === settings.paletteId) ?? null;
 
-  const filters: unknown[] = [["!=", ["get", "hide_3d"], true]];
-  if (settings.minHeight > 0) {
-    filters.push([">=", ["to-number", ["get", "render_height"], 0], settings.minHeight]);
-  }
+  const filters: unknown[] = [BUILDING_SHOWN_FILTER];
+  if (settings.minHeight > 0) filters.push(minHeightFilter(settings.minHeight));
 
   return {
     id: BUILDINGS_LAYER_ID,
     name: "OSM Buildings",
     type: "vector-tiles",
     source: {
-      url: OSM_TILEJSON,
-      sourceLayer: "building",
-      attribution: OSM_ATTRIBUTION,
+      url: source.tileJson,
+      sourceLayer: source.sourceLayer,
+      attribution: source.attribution,
     },
     visible: settings.visible,
     opacity: 1,
@@ -132,7 +146,7 @@ export function buildingsLayer(settings: BuildingSettings): GeoLibreLayer {
       extrusionEnabled: true,
       extrusionOpacity: settings.opacity,
       extrusionBase: 0,
-      extrusionHeightProperty: "render_height",
+      extrusionHeightProperty: BUILDING_HEIGHT_PROPERTY,
       extrusionHeightScale: settings.heightScale,
       extrusionColor: settings.flatColor,
       extrusionAdvancedStyleEnabled: palette !== null,

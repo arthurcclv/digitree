@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { getExternalNativePaintBridge } from "@geolibre/core";
+import type { BuildingSource } from "../buildings";
 import { createGraph } from "../../lib/dag";
 import { fakeMap } from "../../lib/mount/fakeMap";
 import { AO_NATIVE_LAYER_ID, ThreeAoLayer } from "./aoLayer";
@@ -12,9 +13,11 @@ const SETTINGS: AmbientOcclusionMountSettings = {
   buildings: { visible: true, heightScale: 1, minHeight: 0 },
 };
 
+const BUILDINGS: BuildingSource = { tileJson: "https://example.test/b.json", sourceLayer: "building", attribution: "" };
+
 const mount = () => {
   const f = fakeMap();
-  return { f, m: mountAmbientOcclusion({ map: f.map, graph: createGraph() }, SETTINGS) };
+  return { f, m: mountAmbientOcclusion({ map: f.map, graph: createGraph() }, { buildings: BUILDINGS }, SETTINGS) };
 };
 
 describe("mountAmbientOcclusion", () => {

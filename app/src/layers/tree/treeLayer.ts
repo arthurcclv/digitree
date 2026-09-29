@@ -6,7 +6,7 @@ import {
   type Map as MapLibreMap,
 } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
-import { TREES_SOURCE_LAYER, TREE_POINTS_LAYER_ID } from "./constants";
+import { TREE_POINTS_LAYER_ID } from "./constants";
 import { formOf, type TreeForm } from "./forms";
 import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
 import {
@@ -18,6 +18,7 @@ import {
   type ModelPart,
 } from "./models";
 import { rotationOf } from "./placement";
+import { treeOf } from "./schema";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
 export type TreeKind = "all" | "street" | "park" | "custom";
@@ -185,7 +186,8 @@ export class ThreeTreeLayer implements CustomLayerInterface {
   /** Lets the panel report how much of the modelled source actually arrived. */
   onModelsChanged: (() => void) | null = null;
 
-  constructor() {
+  /** `sourceLayer`: the MVT layer of the tree source the points record reads. */
+  constructor(private readonly sourceLayer: string) {
     this.materials = buildMaterials();
     for (const material of this.materials) this.materialRegistry.add(material);
     for (const form of TREE_FORMS) this.geometries.set(form, buildForm(form));
@@ -350,7 +352,7 @@ export class ThreeTreeLayer implements CustomLayerInterface {
 
     let features;
     try {
-      features = map.querySourceFeatures(src, { sourceLayer: TREES_SOURCE_LAYER });
+      features = map.querySourceFeatures(src, { sourceLayer: this.sourceLayer });
     } catch {
       // The source exists but has not finished loading its first tiles.
       this.clear();
@@ -363,20 +365,18 @@ export class ThreeTreeLayer implements CustomLayerInterface {
     const seen = new Set<string>();
     const instances: TreeInstance[] = [];
     for (const feature of features) {
-      const props = feature.properties ?? {};
+      // The same reading of a tree the direct-sun layer casts shade from.
+      const tree = treeOf(feature.properties, feature.geometry);
+      if (!tree) continue;
       // GeoLibre cannot apply a record's `filterExpression` to a custom layer it
       // does not paint, so the kind filter has to be applied here by hand —
       // otherwise the circles narrow and the meshes do not.
-      if (this.kind !== "all" && props.kind !== this.kind) continue;
-      const treeId = props.tree_id as string | undefined;
-      if (typeof treeId !== "string" || seen.has(treeId)) continue;
-      if (feature.geometry?.type !== "Point") continue;
-      seen.add(treeId);
+      if (this.kind !== "all" && tree.kind !== this.kind) continue;
+      if (seen.has(tree.id)) continue;
+      seen.add(tree.id);
 
-      const [lng, lat] = feature.geometry.coordinates as [number, number];
-      const raw = props.height_m;
-      const height = typeof raw === "number" && raw > 0 ? raw : TREE_FALLBACK_HEIGHT_M;
-      instances.push({ id: treeId, lng, lat, height, form: formOf(props.species) });
+      const height = tree.heightM ?? TREE_FALLBACK_HEIGHT_M;
+      instances.push({ id: tree.id, lng: tree.lng, lat: tree.lat, height, form: formOf(tree.species) });
     }
 
     // Global, and before the split by form below. Culling within a form would

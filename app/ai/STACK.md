@@ -38,6 +38,7 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | `@gltf-transform/cli` | `^4.5.0` | meshoptimizer `weld` + `simplify`, driven by `tools/prepare-tree-models.py` to build each rung of a model's detail ladder (`<name>.L1.glb` and up). Build-time only — nothing imports it |
 | `@types/node` | `^26.6.2` | `node:fs` in `models.test.ts`, which asserts against the real `public/models/trees/` rather than against a module's claims about it |
 | `vitest` | `^5.0.1` | `npm test`; runs the tree layer's form tests under Vite's own transform |
+| `@maplibre/maplibre-gl-style-spec` | `26.4.4` (exact) | `featureFilter` in `buildings/schema.test.ts`, which evaluates the extrusion's filter the way MapLibre does, against `buildingHeight`. Already installed as `maplibre-gl`'s own dependency; declared so the test doesn't rely on hoisting. Pinned to the version `maplibre-gl` resolves, and must move with it |
 
 ## Not used, deliberately
 
@@ -85,6 +86,9 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | OpenFreeMap — `https://tiles.openfreemap.org/planet` | OSM vector tiles, OpenMapTiles schema, both basemap and `building` source layer | no |
 | OpenFreeMap styles — `/styles/{dark,fiord,liberty,positron}` | the four basemaps | no |
 | Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `localhost:3000` | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
+
+Every endpoint above except the basemap styles is configured in one file,
+`src/sources.ts`. The layers take descriptors and name none of them.
 
 Martin is **local and optional**: it is not a deployed service but a container
 started with `infra/load.sh`, and the app runs without it — the tree layers

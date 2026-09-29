@@ -11,8 +11,12 @@ import {
   rotationOf,
   TREE_FALLBACK_HEIGHT_M,
   TREE_FORMS,
+  treeTiles,
+  type TreeFeature,
   type TreeForm,
+  type TreeSource,
 } from "../tree";
+import { buildingTiles, type BuildingSource } from "../buildings";
 import {
   cellCentre,
   cellM,
@@ -46,6 +50,7 @@ import {
   type BuildingFeature,
   type TileCounts,
   type TilePrisms,
+  type TileSource,
 } from "../../lib/tiles";
 import { alphaOf, BUILDING_TAU, tauOf } from "./transmittance";
 
@@ -271,7 +276,10 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   private renderer: THREE.WebGLRenderer | null = null;
   private gl: WebGL2RenderingContext | null = null;
   private supported = true;
-  private readonly store = new TileStore();
+  private readonly store: TileStore<{
+    trees: TileSource<TreeFeature>;
+    buildings: TileSource<BuildingFeature>;
+  }>;
 
   private readonly nearLevel: Level = { domain: makeDomain(0, 0), target: null };
   private readonly farLevel: Level = { domain: makeDomain(0, 0, FAR_GRID_SIZE, FAR_DOMAIN_M), target: null };
@@ -333,7 +341,12 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
   /** Lets the panel follow the readouts. */
   onStatus: ((status: SunlightStatus) => void) | null = null;
 
-  constructor(private readonly graph: Graph) {
+  /** `sources`: where the occluders are, from the host. See `src/lib/tiles/specs/spec.md`. */
+  constructor(
+    private readonly graph: Graph,
+    sources: { trees: TreeSource; buildings: BuildingSource },
+  ) {
+    this.store = new TileStore({ trees: treeTiles(sources.trees), buildings: buildingTiles(sources.buildings) });
     this.crownMaterial = lightMaterial(CROWN_VERT, CROWN_FRAG, { uLight: { value: new THREE.Matrix4() } });
     this.prismMaterial = lightMaterial(FLAT_VERT, FLAT_FRAG, {
       uLight: { value: new THREE.Matrix4() },
@@ -641,7 +654,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     const trees: PlacedTree[] = [];
     const seen = new Set<string>();
     for (const tile of covered) {
-      for (const t of this.store.treesOf(tile)) {
+      for (const t of this.store.featuresOf("trees", tile)) {
         // The tile buffer repeats a tree in each tile it overlaps.
         if (seen.has(t.id)) continue;
         seen.add(t.id);
@@ -691,7 +704,7 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
 
   /** A tile's buildings, triangulated in tile units — once per tile per session. */
   private tilePrisms(tile: TileId): TilePrisms {
-    const features = this.store.buildingsOf(tile);
+    const features = this.store.featuresOf("buildings", tile);
     const cached = this.prismCache.get(features);
     if (cached) return cached;
     const out = triangulateTile(tile, features);

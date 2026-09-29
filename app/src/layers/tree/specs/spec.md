@@ -34,17 +34,36 @@ now carries real data.
 
 ## Data source
 
-One Martin source feeds both records.
+One source feeds both records. **Where** it is comes from a `TreeSource`
+descriptor that the host passes in (`treePointsLayer(settings, source)`,
+`mountTree(ctx, { trees }, …)`). The layer holds no endpoint. **How** it is
+read is the schema below, fixed here and in `schema.ts`. See
+`src/lib/tiles/specs/spec.md`.
+
+This app's descriptor is `TREES` in `src/sources.ts`, pointing at the local
+Martin stack:
 
 | | |
 | --- | --- |
-| tile URL | `/tiles/trees/{z}/{x}/{y}` (relative — see below) |
+| tile URL (`tiles`) | `/tiles/trees/{z}/{x}/{y}` (relative — see below) |
 | MVT layer (`sourceLayer`) | `trees` |
-| zoom range | 14 – 20 |
-| bounds | `[121.4619, 24.9771, 121.6268, 25.1606]` |
+| zoom range (`minzoom`, `maxzoom`) | 14 – 20 |
+| `bounds` | `[121.4619, 24.9771, 121.6268, 25.1606]` |
+| `attribution` | `臺北市政府 · Taipei City open data` |
+| open-data rows | 162,930, published as `TREES_SURVEYED` in `src/sources.ts` (see *Panel readouts*) |
+
+The schema, which any tree source must publish:
+
+| | |
+| --- | --- |
+| geometry | Point |
 | feature id | integer `id` (MVT requires integers; `tree_id` is text) |
 | properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm` |
-| open-data rows | 162,930, published as `TREES_TOTAL` (see *Panel readouts*) |
+
+`treeOf(properties, geometry)` in `schema.ts` is the one reading of a tree,
+shared by the meshes and the direct-sun layer. It returns `null` unless the
+geometry is a Point and `tree_id` is a string, and it reads `height_m` as a
+height only when it is a positive number (otherwise `null`).
 
 `kind` is `"street"`, `"park"` or `"custom"`. The first two are the city's open
 data; `"custom"` is whatever a contributor dropped into `infra/data/custom/`,
@@ -58,7 +77,7 @@ tree. `district` and `place` are
 
 The bounds above are the *open data's* extent, and MapLibre requests no tile
 outside them. Custom trees beyond that box therefore render nothing until this
-constant is widened — `infra`'s load prints the loaded extent per kind so the
+descriptor's `bounds` is widened — `infra`'s load prints the loaded extent per kind so the
 mismatch is visible rather than mysterious.
 
 `infra/CLAUDE.md` holds the other side of this contract. The source id, the MVT
@@ -130,8 +149,9 @@ So `visible` is `pointsVisible || meshVisible`, and "points off" is expressed as
 the only place the two records are not independent.
 
 The sunlight layer does **not** read these tiles: it fetches its own copy of
-the same Martin source (see its spec, *Data*), using `TREES_TILES` and
-`TREES_BOUNDS`, which `index.ts` exports for that purpose.
+the same source (see its spec, *Data*), from the same `TreeSource`
+descriptor, decoded by `treeTiles(source)`, which `index.ts` exports for that
+purpose.
 
 ### `tree-mesh` — `treeMeshRecord(settings)`
 
@@ -949,16 +969,15 @@ no prose paragraph in this card:
 
 | line | value | shown |
 | --- | --- | --- |
-| **Surveyed trees** | `TREES_TOTAL`, grouped (`162,930`) | always |
-| **Points from** | `z` + `TREES_MIN_ZOOM` | always |
+| **Surveyed trees** | `TREES_SURVEYED`, grouped (`162,930`) | always |
+| **Points from** | `z` + `TREES.minzoom` | always |
 | **Meshes from** | `z` + `TREE_MESH_MIN_ZOOM` | always |
 | **Modelled forms** | `loaded/total`, plus ` · N failed` | only while `meshSource === "model"` |
 
 The count is the **inventory's** size — how many trees the loaded open data
 holds — not how many are in view, which moves with the viewport and belongs to
-no readout. It is a constant in `constants.ts` beside the rest of the source
-contract, because it is a fact about what `infra/` loaded, not about what the
-layer draws. It does not count custom trees: `infra/` decides how many of those
+no readout. It is a constant in `src/sources.ts` beside the descriptor, because it is a
+fact about what `infra/` loaded, not about what the layer draws. It does not count custom trees: `infra/` decides how many of those
 exist, the app never learns it, and a figure that silently excludes them is
 honest only while it is labelled as the surveyed inventory.
 
@@ -973,7 +992,7 @@ does not.
 
 The inventory is Taipei City open data. It is a **second** source alongside
 OpenStreetMap, and therefore a second attribution obligation: MapLibre's own
-control is disabled (`attributionControl: false`), so `TREES_ATTRIBUTION` MUST be
+control is disabled (`attributionControl: false`), so the descriptor's `attribution` (`TREES.attribution`) MUST be
 rendered by the app's status bar beside `OSM_ATTRIBUTION` whenever this layer is
 visible. Removing it is a licensing regression, not a style choice.
 
@@ -1018,7 +1037,7 @@ procedural source would credit evolveduk for icosahedra.
 8. Points and meshes always show the same subset of the data.
 9. The `tree-points` record is never `visible: false` while `meshVisible` is
    true — that starves the mesh layer of its data.
-10. `TREES_ATTRIBUTION` is displayed whenever the layer is.
+10. The tree source's `attribution` is displayed whenever the layer is.
 11. A species maps to exactly one form, and an unmapped species maps to
     `generic`. The layer never guesses a form from a neighbouring tree, a
     substring match, or a genus.

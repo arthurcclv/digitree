@@ -6,6 +6,58 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — Layers take their data sources as descriptors; one schema per dataset
+
+**Decision.** No layer holds an endpoint.
+- Where a dataset is served is a plain descriptor the host passes in:
+  `TreeSource` (`tiles`, `sourceLayer`, zoom range, `bounds`,
+  `attribution`) and `BuildingSource` (`tileJson`, `sourceLayer`,
+  `attribution`). The app's values live in one file, `src/sources.ts`
+  (`TREES`, `BUILDINGS`, `TREES_SURVEYED`).
+- How a feature is read is the owning layer's `schema.ts`. `treeOf` is the one
+  reading of a tree, shared by the meshes and the direct-sun layer.
+  `buildingHeight` sits beside the extrusion's MapLibre filter and height
+  expression.
+- `TileStore` becomes generic: `new TileStore({ trees: treeTiles(TREES),
+  buildings: buildingTiles(BUILDINGS) })`, read with `featuresOf(name,
+  tile)`. `lib/tiles` imports nothing from `src/layers/`.
+
+The contract is `src/lib/tiles/specs/spec.md`.
+
+**Why.** Porting a layer meant editing constants inside it, and `lib/tiles`
+imported from `layers/tree` and `layers/basemaps`, so the dependency pointed
+the wrong way. Both reading rules were also written twice. Another city is now
+a change to `src/sources.ts` alone, provided its data publishes the same
+schema.
+
+**Supersedes, in part.** 2026-09-22 *One OSM snapshot*: `buildings` no longer
+imports `OSM_TILEJSON`. `src/sources.ts` builds `BUILDINGS` from basemaps'
+`OSM_TILEJSON` and `OSM_ATTRIBUTION` and hands that one descriptor to the
+extrusion, the sunlight store and the AO store. The snapshot is still one;
+`sources.test.ts` asserts it.
+
+**Found while doing it.** With no minimum height, the extrusion filter keeps a
+footprint whose `render_height` is 0 or missing and draws it flat.
+`buildingHeight` drops it. The difference is harmless: a flat footprint has
+nothing to shade or occlude. It is pinned by a test that evaluates the filter
+with MapLibre's own `featureFilter`, so it cannot widen unnoticed. Making the
+extrusion drop those footprints too would change what the map shows, so that
+would be its own spec change.
+
+**Also decided.**
+- Property names are part of the schema and not configurable. A mapping
+  table would be a seam with one adapter.
+- `@maplibre/maplibre-gl-style-spec` is declared as a dev dependency, pinned
+  to the version `maplibre-gl` already installs, for that test (`STACK.md`).
+- Two tests read the source tree (`lib/tiles/structure.test.ts`): no shared
+  module in `src/lib` imports a layer, and no layer except basemaps holds a
+  tile endpoint.
+
+**Revisit if** a second dataset with a different schema needs to be read.
+That is the second adapter that would justify a mapping seam.
+
+---
+
 ## 2026-09-29 — Each layer mounts itself; upstream state travels through the DAG
 
 **Decision.** Every layer with a custom (three.js) half exports a mount,
@@ -1011,6 +1063,8 @@ does not offer one, and re-anchoring after the fact is honest about that.
 ---
 
 ## 2026-09-22 — One OSM snapshot for ground plane and extrusions
+
+*Partly superseded by 2026-09-29 — Layers take their data sources as descriptors.*
 
 **Decision.** `OSM_TILEJSON` (`https://tiles.openfreemap.org/planet`,
 OpenMapTiles schema, no API key) is owned by `basemaps` and imported by

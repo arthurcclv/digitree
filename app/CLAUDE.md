@@ -25,7 +25,10 @@ src/
                       building suppression, label anchoring
       specs/spec.md
     buildings/
-      index.ts        buildingsLayer() GeoLibre record, BuildingSettings, PALETTES
+      index.ts        buildingsLayer(settings, source) GeoLibre record,
+                      BuildingSettings, PALETTES
+      schema.ts       BuildingSource; the OSM building rule in both forms
+                      (MapLibre filter + buildingHeight), buildingTiles()
       specs/spec.md
     tree/
       index.ts        TreeSettings; the folder's entry, re-exporting the rest
@@ -38,7 +41,10 @@ src/
                       mesh source; interchangeable with formGeometry.ts
       forms.ts        TreeForm, the species -> silhouette table, formOf()
       placement.ts    rotationOf() — each tree's yaw, hashed from its tree_id
-      constants.ts    the Martin source contract, shared by the two above
+      schema.ts       TreeSource; treeOf() — the one reading of a tree,
+                      shared by the meshes and the direct-sun layer;
+                      treeTiles()
+      constants.ts    the record ids and MODELS_ATTRIBUTION
       *.test.ts       vitest, beside the modules they cover
       specs/spec.md
     sunlight/
@@ -83,13 +89,16 @@ src/
                       another's (sunlight.lpi → temperature.pet); pure, with
                       its own specs/spec.md
     tiles/            shared by the self-fetching layers (sunlight, AO): z14
-                      grid, TileStore (fetch + decode + cache), building
-                      prisms, ground footprint; *.test.ts beside them
+                      grid, TileStore (generic over its sources: fetch +
+                      decode + cache), building prisms, ground footprint;
+                      the data-sources specs/spec.md; *.test.ts beside them
   ui/
     Panel.tsx       Panel / Toggle / Slider primitives
     Compass.tsx     bearing rose
     cameraReadout.ts  the status bar's lat/lon/zoom formatting (pure, tested)
   App.tsx           the interface: control state, panel, status bar, telemetry
+  sources.ts        the app's datasets (TREES, BUILDINGS) — the only place
+                    an endpoint lives; layers take them as descriptors
   main.tsx          React root
   styles.css        the design system (all styling lives here; no CSS modules)
 public/             copied verbatim by Vite, never imported
@@ -120,7 +129,8 @@ each layer's mount its settings (`update`) → each mount returns its
 `GeoLibreLayer` records (`prepareSync`) → `useMapEngine.ts` passes them to
 GeoLibre's `sync()`. A layer with a custom half must stay portable: everything
 it needs on a map lives in its own `mount.ts`, never in the host (see
-`src/lib/mount/specs/spec.md`). Only `useMapEngine.ts`, the mounts (for their
+`src/lib/mount/specs/spec.md`). No layer holds an endpoint: datasets reach it
+as descriptors from `src/sources.ts` (see `src/lib/tiles/specs/spec.md`). Only `useMapEngine.ts`, the mounts (for their
 own custom layer) and `layers/basemaps` touch the MapLibre map directly.
 
 Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,

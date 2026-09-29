@@ -1,10 +1,21 @@
 import { describe, expect, test } from "vitest";
-import { tileOfLngLat, type TileId } from "./grid";
-import { buildingHeight, FETCH_CONCURRENCY, TileStore } from "./store";
+import { tileIntersects, tileOfLngLat, type TileId } from "./grid";
+import { FETCH_CONCURRENCY, TileStore, type TileSource } from "./store";
 
-const TILEJSON = "https://tiles.openfreemap.org/planet";
-const inTaipei = tileOfLngLat(121.55, 25.04);
-const offshore = tileOfLngLat(120.2, 22.6); // Kaohsiung: outside the tree inventory
+// Fixture sources only: the store knows no dataset, so its tests name none.
+// One source by template with bounds, one by TileJSON, as trees and buildings are.
+const TILEJSON = "https://tiles.example.test/b.json";
+const POINTS_TILES = "/fixture/points/{z}/{x}/{y}";
+const inside = tileOfLngLat(121.55, 25.04);
+const outside = tileOfLngLat(120.2, 22.6); // outside the points' bounds
+
+const points: TileSource<string> = {
+  location: { tiles: POINTS_TILES },
+  decode: () => ["p"],
+  mayHold: (t) => tileIntersects(t, [121.4, 24.9, 121.7, 25.2]),
+};
+const polys: TileSource<string> = { location: { tileJson: TILEJSON }, decode: () => ["b"] };
+const both = { points, polys };
 
 /** A fake fetch recording what was asked, answering by URL. */
 function fakeFetch(answer: (url: string) => Response | Promise<Response>) {
@@ -19,83 +30,82 @@ function fakeFetch(answer: (url: string) => Response | Promise<Response>) {
 
 const tilejson = () =>
   new Response(JSON.stringify({ tiles: ["https://example.test/b/{z}/{x}/{y}.pbf"] }), { status: 200 });
-// An empty buffer is a valid, empty vector tile.
-const empty = () => new Response(new ArrayBuffer(0), { status: 200 });
+const ok = () => new Response(new ArrayBuffer(0), { status: 200 });
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
-async function drain(store: TileStore) {
+async function drain(store: TileStore<Record<string, TileSource<unknown>>>) {
   for (let i = 0; i < 50 && store.counts().pending; i++) await settle();
 }
 
 describe("TileStore", () => {
-  test("a tile is covered once both sources have arrived", async () => {
-    const { fn } = fakeFetch((url) => (url === TILEJSON ? tilejson() : empty()));
-    const store = new TileStore(fn);
-    store.want([inTaipei]);
+  test("a tile is covered once every held source has it", async () => {
+    const { fn } = fakeFetch((url) => (url === TILEJSON ? tilejson() : ok()));
+    const store = new TileStore(both, fn);
+    store.want([inside]);
     expect(store.counts()).toMatchObject({ covered: 0 });
     await drain(store);
     expect(store.counts()).toEqual({ covered: 1, pending: 0, failed: 0 });
-    expect(store.covered()).toEqual([inTaipei]);
+    expect(store.covered()).toEqual([inside]);
   });
 
   test("Martin's 204 for an empty tile counts as arrived", async () => {
     const { fn } = fakeFetch((url) =>
-      url === TILEJSON ? tilejson() : url.startsWith("/tiles/trees") ? new Response(null, { status: 204 }) : empty(),
+      url === TILEJSON ? tilejson() : url.startsWith("/fixture/points") ? new Response(null, { status: 204 }) : ok(),
     );
-    const store = new TileStore(fn);
-    store.want([inTaipei]);
+    const store = new TileStore(both, fn);
+    store.want([inside]);
     await drain(store);
     expect(store.counts().covered).toBe(1);
   });
 
-  test("a tree tile outside the inventory is never requested", async () => {
-    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : empty()));
-    const store = new TileStore(fn);
-    store.want([offshore]);
+  test("a tile a source cannot hold is never requested, and counts as arrived", async () => {
+    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : ok()));
+    const store = new TileStore(both, fn);
+    store.want([outside]);
     await drain(store);
-    expect(calls.some((u) => u.startsWith("/tiles/trees"))).toBe(false);
+    expect(calls.some((u) => u.startsWith("/fixture/points"))).toBe(false);
     expect(store.counts().covered).toBe(1);
   });
 
   test("a failed tile is uncovered, reported, and retried on the next want", async () => {
     let fail = true;
     const { fn } = fakeFetch((url) =>
-      url === TILEJSON ? tilejson() : fail && url.includes("example.test") ? new Response(null, { status: 500 }) : empty(),
+      url === TILEJSON ? tilejson() : fail && url.includes("example.test") ? new Response(null, { status: 500 }) : ok(),
     );
-    const store = new TileStore(fn);
-    store.want([inTaipei]);
+    const store = new TileStore(both, fn);
+    store.want([inside]);
     await drain(store);
     expect(store.counts()).toEqual({ covered: 0, pending: 0, failed: 1 });
     expect(store.covered()).toEqual([]);
     fail = false;
-    store.want([inTaipei]);
+    store.want([inside]);
     await drain(store);
     expect(store.counts()).toEqual({ covered: 1, pending: 0, failed: 0 });
   });
 
-  test("an unreadable TileJSON fails the building tiles, and is retried", async () => {
+  test("an unreadable TileJSON fails that source's tiles, and is retried", async () => {
     let broken = true;
     const { fn, calls } = fakeFetch((url) =>
-      url === TILEJSON ? (broken ? new Response("nope", { status: 503 }) : tilejson()) : empty(),
+      url === TILEJSON ? (broken ? new Response("nope", { status: 503 }) : tilejson()) : ok(),
     );
-    const store = new TileStore(fn);
-    store.want([inTaipei]);
+    const store = new TileStore(both, fn);
+    store.want([inside]);
     await drain(store);
     expect(store.counts().failed).toBe(1);
     broken = false;
-    store.want([inTaipei]);
+    store.want([inside]);
     await drain(store);
     expect(store.counts().covered).toBe(1);
     expect(calls.filter((u) => u === TILEJSON).length).toBe(2);
   });
 
   test("a tile already held is not fetched again", async () => {
-    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : empty()));
-    const store = new TileStore(fn);
-    store.want([inTaipei]);
+    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : ok()));
+    const store = new TileStore(both, fn);
+    store.want([inside]);
     await drain(store);
     const before = calls.length;
-    store.want([inTaipei]);
+    store.want([inside]);
     await drain(store);
     expect(calls.length).toBe(before);
   });
@@ -109,33 +119,33 @@ describe("TileStore", () => {
       peak = Math.max(peak, inFlight);
       await settle();
       inFlight--;
-      return empty();
+      return ok();
     });
-    const store = new TileStore(fn);
+    const store = new TileStore(both, fn);
     const tiles: TileId[] = [];
-    for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) tiles.push({ ...inTaipei, x: inTaipei.x + dx, y: inTaipei.y + dy });
+    for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) tiles.push({ ...inside, x: inside.x + dx, y: inside.y + dy });
     store.want(tiles);
     await drain(store);
     expect(store.counts().covered).toBe(16);
     expect(peak).toBeLessThanOrEqual(FETCH_CONCURRENCY);
   });
 
-  test("a buildings-only store never asks for trees, and covers on buildings alone", async () => {
-    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : empty()));
-    const store = new TileStore(fn, ["buildings"]);
-    store.want([inTaipei]);
+  test("a store given one source never requests another, and covers on it alone", async () => {
+    const { fn, calls } = fakeFetch((url) => (url === TILEJSON ? tilejson() : ok()));
+    const store = new TileStore({ polys }, fn);
+    store.want([inside]);
     await drain(store);
-    expect(calls.some((u) => u.startsWith("/tiles/trees"))).toBe(false);
+    expect(calls.some((u) => u.startsWith("/fixture/points"))).toBe(false);
     expect(store.counts()).toEqual({ covered: 1, pending: 0, failed: 0 });
   });
-});
 
-describe("buildingHeight", () => {
-  test("drops hide_3d and non-positive heights, as the extrusion filter does", () => {
-    expect(buildingHeight({ render_height: 30 })).toBe(30);
-    expect(buildingHeight({ render_height: "12.5" })).toBe(12.5);
-    expect(buildingHeight({ render_height: 30, hide_3d: true })).toBeNull();
-    expect(buildingHeight({ render_height: 0 })).toBeNull();
-    expect(buildingHeight({})).toBeNull();
+  test("features are read per source, once the tile is ready", async () => {
+    const { fn } = fakeFetch((url) => (url === TILEJSON ? tilejson() : ok()));
+    const store = new TileStore(both, fn);
+    expect(store.featuresOf("points", inside)).toEqual([]);
+    store.want([inside]);
+    await drain(store);
+    expect(store.featuresOf("points", inside)).toEqual(["p"]);
+    expect(store.featuresOf("polys", inside)).toEqual(["b"]);
   });
 });
