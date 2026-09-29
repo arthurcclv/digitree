@@ -1,6 +1,3 @@
-import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core";
-import { SUNLIGHT_NATIVE_LAYER_ID } from "./sunlightLayer";
-
 // Only what the app reads. Tests import the folder's modules directly.
 export {
   SUNLIGHT_NATIVE_LAYER_ID,
@@ -14,9 +11,9 @@ export { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField, type LpiLevel } from "./lpi";
 export type { Domain } from "./frame";
 export { MIN_SUN_ELEVATION_DEG } from "./sun";
 export type { TileCounts } from "../../lib/tiles";
-
-/** GeoLibre record id. */
-export const SUNLIGHT_LAYER_ID = "sunlight";
+export { SUNLIGHT_LAYER_ID, sunlightRecord } from "./records";
+/** The layer attached to a map. See `src/lib/mount/specs/spec.md`. */
+export { mountSunlight, type SunlightMount } from "./mount";
 
 export interface SunlightSettings {
   /**
@@ -66,34 +63,3 @@ export const DEFAULT_SUNLIGHT_SETTINGS: SunlightSettings = {
   opacity: 0.8,
   sunTime: defaultSunTime(),
 };
-
-/**
- * The external-native record, on the tree mesh's pattern: GeoLibre moves and
- * shows the custom layer we add, and routes opacity and visibility to it
- * through the paint bridge.
- */
-/**
- * `demanded`: the `sunlight.lpi` node is wanted, by the overlay or a
- * dependent. It is what MapLibre's visibility follows, because MapLibre runs no
- * `prerender` for a hidden layer and the light pass lives there. Whether the
- * overlay is *drawn* is `ThreeSunlightLayer.setVisibility`, set by the engine.
- */
-export function sunlightRecord(settings: SunlightSettings, demanded = settings.visible): GeoLibreLayer {
-  return {
-    id: SUNLIGHT_LAYER_ID,
-    name: "Direct sun · three.js",
-    // Inert on the external-native path, as for the tree mesh.
-    type: "3d-tiles",
-    // Empty on purpose: the layer fetches its own tree and building tiles
-    // (tiles.ts), which GeoLibre has no part in.
-    source: {},
-    visible: demanded,
-    opacity: settings.opacity,
-    style: { ...DEFAULT_LAYER_STYLE },
-    metadata: {
-      customLayerType: "threejs",
-      nativeLayerIds: [SUNLIGHT_NATIVE_LAYER_ID],
-      paintMode: "plugin",
-    },
-  };
-}

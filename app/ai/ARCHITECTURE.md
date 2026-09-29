@@ -12,15 +12,22 @@ app is entered with `cd app`. `app/` never imports from `infra/`; it reaches its
 data over HTTP like any other tile source. Three tiers:
 
 ```
-App.tsx                 state + chrome          (knows settings, not MapLibre)
+App.tsx                   state + chrome        (knows settings, not MapLibre)
   ↓ settings objects
-layers/<name>/index.ts  description             (knows GeoLibre, not MapLibre*)
-  ↓ GeoLibreLayer records
-lib/useMapEngine.ts     the only map owner      (knows MapLibre)
+layers/<name>/records.ts  description           (knows GeoLibre, not MapLibre*)
+layers/<name>/mount.ts    attachment            (the layer's own lifecycle on a map)
+  ↓ GeoLibreLayer records, via prepareSync()
+lib/useMapEngine.ts       the host              (owns the map, the sync, the graph)
 ```
 
 \* `layers/basemaps` is the deliberate exception — it is an *extension*, not a
-layer, and it does touch the map (see below).
+layer, and it does touch the map (see below). `buildings` has a record builder
+and no mount: it needs nothing else.
+
+A layer with a custom (three.js) half is **portable**: any GeoLibre host that
+owns a MapLibre map and a `LayerSync` can run it with `mount<Name>(ctx,
+settings)`, then `update` and `prepareSync`. Nothing the layer needs lives in
+the host. The contract is `src/lib/mount/specs/spec.md`.
 
 ## The one-way flow
 
@@ -36,36 +43,44 @@ const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
 // the engine reports probe clicks back
 useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
 
-// useMapEngine.ts — applyLayers()
+// useMapEngine.ts — on any settings change
+mounts.ao.update({ ao, buildings: settings }); // every update first: one
+mounts.sunlight.update(sun);                    // layer's may change another's
+mounts.temperature.update(temp);                // records through DAG demand
+mounts.tree.update(tree);
+// applyLayers()
 sync.sync([
   buildingsLayer(settings),
-  ambientOcclusionRecord(ao, settings), // shown only while the buildings are
-  sunlightRecord(sun, graph.demanded(LPI_NODE)), // fetches its own tiles; shares no source
-  temperatureRecord(temp),      // derives from sunlight through the DAG
-  treePointsLayer(treeSettings),
-  treeMeshRecord(treeSettings),
+  ...mounts.ao.prepareSync(),          // shown only while the buildings are
+  ...mounts.sunlight.prepareSync(),    // visible while sunlight.lpi is demanded
+  ...mounts.temperature.prepareSync(), // derives from sunlight through the DAG
+  ...mounts.tree.prepareSync(),        // [points, mesh]
 ]);
 ```
 
 Every control is a `setState`. React re-renders, the effect in `useMapEngine`
-re-runs `applyLayers`, the layer records are rebuilt from scratch, and
-`createLayerSync` diffs them against what is on the map. There is no imperative
-path from a control to a style property, and no state lives in the map that is
-not derivable from `App.tsx`.
+hands every mount its settings, then `applyLayers` rebuilds the records and
+syncs them. `sync` re-applies every layer it is given, so `applyLayers` skips
+it when the records are identical to the last ones synced (a sun-time step
+changes none). There is no imperative path from a control to a style property,
+and no state lives in the map that is not derivable from `App.tsx`.
 
-`settingsRef`/`treeSettingsRef`/`sunlightSettingsRef`/`aoSettingsRef`/`temperatureSettingsRef` exist only so that `applyLayers` can stay a
-stable `useCallback` and still be called from the `style.load` handler, which was
-registered once at map creation.
+`settingsRef` exists only so that `applyLayers` can stay a stable
+`useCallback` and still be called from the `style.load` handler, which was
+registered once at map creation. Each mount keeps its own last settings.
 
 ## Who may touch the MapLibre map
 
-Exactly two places:
+Three places:
 
-1. **`lib/useMapEngine.ts`** — constructs the map, owns the style-load lifecycle,
-   drives the camera, holds the `LayerSync`, the derived-layer `Graph`, and the
-   `ThreeTreeLayer`, `ThreeSunlightLayer`, `ThreeTemperatureLayer` and
-   `ThreeAoLayer` instances.
-2. **`layers/basemaps/index.ts`** — `hideBasemapBuildings`, `firstLabelLayerId`,
+1. **`lib/useMapEngine.ts`**, the host. It constructs the map, owns the
+   style-load lifecycle, drives the camera, and holds the `LayerSync`, the
+   derived-layer `Graph`, and the four mounts.
+2. **Each layer's `mount.ts`**, which uses the map for exactly two things:
+   `getLayer` and `addLayer` for its own custom layer (through
+   `nativeLayer` in `src/lib/mount`). It also registers the layer's paint
+   bridge.
+3. **`layers/basemaps/index.ts`** — `hideBasemapBuildings`, `firstLabelLayerId`,
    `anchorUnderLabels`. These are style surgery, not layer description, and they
    are called *by* `useMapEngine`.
 
@@ -73,8 +88,8 @@ The four custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer`,
 `ThreeTemperatureLayer` and `ThreeAoLayer`, are handed the map by MapLibre in `onAdd` and use it only for
 what a custom layer needs: the camera, repaints, and — for the two
 self-fetching layers — `idle` and `unproject`, to replan their tiles when the
-view settles. They are constructed and added by
-`useMapEngine`, never by anything else.
+view settles. Each is constructed and added by its own folder's mount, never
+by anything else.
 
 Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
 
@@ -86,6 +101,9 @@ Nothing in `App.tsx`, `ui/`, or the other layer folders imports `maplibre-gl`.
   (`buildings` imports `OSM_TILEJSON` and `OSM_ATTRIBUTION` from `basemaps`). It
   must not reach into another folder's internals.
 - `specs/spec.md` is mandatory.
+- A layer with a custom half keeps its record builders in `records.ts` and its
+  mount in `mount.ts`. `mount.ts` imports `records.ts` and only *types* from
+  `index.ts`, so the two never form a module cycle.
 
 Current folders: `basemaps` (extension — produces no record), `buildings`
 (vector-tile extrusion record), `tree` (external-native record + the custom
@@ -98,14 +116,18 @@ the sunlight layer's result through the DAG).
 
 **Derived layers go through the DAG** (`src/lib/dag`, its own spec). A layer
 whose output another layer derives from owns a node (`sunlight.lpi`); the
-dependent owns one downstream of it (`temperature.pet`). The engine creates
-the one graph per map, adds the nodes in dependency order, and hands the graph
-to each layer's constructor; the two layers never hold a reference to each
-other. Publishing a node notifies everything downstream. Demand flows the other
+dependent owns one downstream of it (`temperature.pet`). The host creates
+the one graph per map and hands it to every mount; each mount adds its own
+node, so mount order is dependency order (a dependent mounted first throws).
+The two layers never hold a reference to each other, and the host forwards
+nothing between them: value **and state** travel through the graph (the
+temperature layer reads `graph.state("sunlight.lpi")` to report `zoom`,
+`low-sun`, …). Publishing a node notifies everything downstream. Demand flows the other
 way: a shown dependent makes its upstream compute even when that upstream's own
 overlay is hidden. Because MapLibre runs no `prerender` for a hidden layer, a
 record's visibility is whether its node is *demanded*, and the overlay's drawn
-visibility is set on the layer by the engine, not through the paint bridge.
+visibility is set on the layer by its mount's `update`, not through the paint
+bridge.
 
 The temperature layer shares the sunlight layer's GPU result without a copy:
 the `LpiField` it publishes carries the render targets' `WebGLTexture`s, which
@@ -137,7 +159,9 @@ dependency rather than by topic:
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | the two GeoLibre records, `TreeSettings` | no |
+| `index.ts` | the folder's entry: `TreeSettings`, re-exports | no |
+| `records.ts` | the two GeoLibre records | no |
+| `mount.ts` | `mountTree` — the layer attached to a map | yes, via `treeLayer.ts` |
 | `constants.ts` | the Martin source contract | no |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
 | `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
@@ -160,7 +184,9 @@ tested, one module for the GL:
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | the GeoLibre record, `SunlightSettings`, Taipei-time helpers | no |
+| `index.ts` | `SunlightSettings`, Taipei-time helpers, re-exports | no |
+| `records.ts` | the GeoLibre record | no |
+| `mount.ts` | `mountSunlight` — adds `sunlight.lpi`, the bridge, the re-add | yes, via `sunlightLayer.ts` |
 | `sun.ts` | `sunPosition()` — the NOAA solar position formulas | **no** |
 | `state.ts` | `SunlightState`, `SUNLIGHT_MIN_ZOOM`, `blockedState()` (what stops all work), `readoutSun()`, `lpiNodeAction()` | **no** |
 | `lpi.ts` | the DAG node: `LPI_NODE`, `LpiField`, and `LPI_SAMPLE_GLSL`, the sampling code both overlays share | **no** |
@@ -181,7 +207,9 @@ is reached.
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | the GeoLibre record, `TemperatureSettings`, `PET_DEPS`, `PET_PARAM_RANGES` | no |
+| `index.ts` | `TemperatureSettings`, `PET_PARAM_RANGES`, re-exports | no |
+| `records.ts` | the GeoLibre record | no |
+| `mount.ts` | `mountTemperature`, `PET_DEPS` — adds `temperature.pet` after `sunlight.lpi` | yes, via `temperatureLayer.ts` |
 | `pet.ts` | `PET_NODE`, `PetField`, the formula (`PET_COEFFS`, `petOf`, `petGlsl`), the ramp, `classOf`, `petProbeOf` | **no** |
 | `state.ts` | `TemperatureState`, `temperatureState()` | **no** |
 | `temperatureLayer.ts` | `ThreeTemperatureLayer` — the overlay, and probe and export through the `LpiField` | yes |
@@ -193,14 +221,16 @@ coefficient table as `petOf`, so the GPU and CPU forms cannot drift.
 
 | Module | Owns | Imports three.js |
 | --- | --- | --- |
-| `index.ts` | the GeoLibre record, `AmbientOcclusionSettings` | no |
+| `index.ts` | `AmbientOcclusionSettings`, re-exports | no |
+| `records.ts` | the GeoLibre record | no |
+| `mount.ts` | `mountAmbientOcclusion` — takes `{ ao, buildings }` | yes, via `aoLayer.ts` |
 | `state.ts` | `AoState`, `AO_MIN_ZOOM`, `aoState()` | **no** |
 | `kernel.ts` | the hemisphere kernel, the 4 × 4 rotation tile, `compositeFactor` | **no** |
 | `geometry.ts` | tile planning, prism placement with exaggeration and the min-height filter | **no** |
 | `aoLayer.ts` | `ThreeAoLayer` — G-buffer, AO, blur, composite | yes |
 
-It reads the buildings' `heightScale` and `minHeight` (set on it by
-`useMapEngine`), so its redrawn prisms match the extrusions; it reaches
+It reads the buildings' `heightScale` and `minHeight` (handed to its mount's
+`update` by the host), so its redrawn prisms match the extrusions; it reaches
 nothing of the `buildings` folder but the settings type.
 
 `formGeometry.ts` and `models.ts` are the two **mesh sources**, and they are
@@ -224,13 +254,12 @@ initialisation path and runs on every basemap change, not once:
 ```
 style.load
   → styleReadyRef = true
+  → syncedRef = null                   // the style is new: always sync
   → hideBasemapBuildings(map)          // kill the basemap's own buildings
-  → re-add ThreeTreeLayer if missing   // sync only *moves* native layers
-  → re-add ThreeSunlightLayer if missing
-  → re-add ThreeTemperatureLayer if missing
-  → re-add ThreeAoLayer if missing
   → map.setLight(...)                  // tolerated to throw
-  → applyLayers()                      // overlay visibility → demand, then
+  → applyLayers()                      // each mount's prepareSync re-adds its
+                                       // custom layer if missing (sync only
+                                       // *moves* native layers), then
                                        // sync([buildings, ao, sunlight, temperature, tree…]) + re-anchor
   → setReady(true)
 ```
@@ -255,28 +284,28 @@ metadata: { customLayerType: "threejs", nativeLayerIds: [...], paintMode: "plugi
 On that path GeoLibre only **moves and shows** the named native layer — it does
 not create it and does not paint it. Opacity and visibility reach three.js
 through `setExternalNativePaintBridge(TREE_LAYER_ID, { setOpacity, setVisibility })`,
-registered once per map in `useMapEngine` and cleared on teardown. Height is not
-a GeoLibre concept, so `setHeight` is driven directly by an effect in
-`useMapEngine`. Full contract: `src/layers/tree/specs/spec.md`.
+registered by `mountTree` and cleared by its `dispose`. Height is not
+a GeoLibre concept, so `setHeightScale` is pushed by the mount's `update`. Full contract: `src/layers/tree/specs/spec.md`.
 
 The sunlight overlay is a second member on the same path, with its own paint
 bridge (`SUNLIGHT_LAYER_ID`) and its own `WebGLRenderer` on the shared context.
 It also uses MapLibre's `prerender` hook — the offscreen pass — for its light
 pass and for every readback (probe, export), so no GL work of its own ever runs
-between MapLibre's draws. The sun time is driven by an effect, like height.
+between MapLibre's draws. The sun time is pushed by the mount's `update`, like
+height.
 
 The temperature overlay is a fourth member, with its own paint bridge
 (`TEMPERATURE_LAYER_ID`, opacity only) and its own `WebGLRenderer`. Its
 `prerender` only publishes its DAG node; `render` draws the PET quad from the
-sunlight textures. `G0`, `Ta` and `V` reach it through `setParams`, driven by
-an effect, and the sunlight state through `setUpstreamState`, from the sunlight
-layer's `onStatus`.
+sunlight textures. `G0`, `Ta` and `V` reach it through `setParams`, pushed by
+its mount's `update`, and the sunlight state through the DAG
+(`graph.state("sunlight.lpi")`).
 
 The ambient-occlusion layer is a third member, with its own paint bridge
 (`AO_LAYER_ID`, visibility only). Its G-buffer, AO and blur passes run in
 `prerender`; `render` only multiplies the result over the frame. Intensity,
 radius and the buildings' exaggeration and filter reach it through
-`setParams`, driven by an effect.
+`setParams`, pushed by its mount's `update`.
 
 ## Module inventory
 
@@ -284,7 +313,8 @@ radius and the buildings' exaggeration and filter reach it through
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
-| `src/lib/useMapEngine.ts` | map lifecycle, layer sync, the DAG and its nodes, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
+| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`, `Viewpoint`, `HOME`; keeps `flyTo` / `setPitch` with no caller yet |
+| `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
 | `src/lib/tiles/` | the self-fetching layers' shared tile grid, `TileStore`, building prisms and ground footprint |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |

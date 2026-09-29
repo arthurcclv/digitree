@@ -28,8 +28,9 @@ src/
       index.ts        buildingsLayer() GeoLibre record, BuildingSettings, PALETTES
       specs/spec.md
     tree/
-      index.ts        both GeoLibre records (treePointsLayer, treeMeshRecord),
-                      TreeSettings
+      index.ts        TreeSettings; the folder's entry, re-exporting the rest
+      records.ts      both GeoLibre records (treePointsLayer, treeMeshRecord)
+      mount.ts        mountTree() — the layer attached to any GeoLibre map
       treeLayer.ts    ThreeTreeLayer — the MapLibre custom layer + instanced mesh
       formGeometry.ts the eight procedural form shapes + the shared materials,
                       and canopyHullOf() — each form's convex canopy hull
@@ -41,7 +42,9 @@ src/
       *.test.ts       vitest, beside the modules they cover
       specs/spec.md
     sunlight/
-      index.ts        sunlightRecord() GeoLibre record, SunlightSettings
+      index.ts        SunlightSettings, Taipei-time helpers; the entry
+      records.ts      sunlightRecord() GeoLibre record
+      mount.ts        mountSunlight() — adds the sunlight.lpi node
       sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe, export
       sun.ts, state.ts, transmittance.ts, frame.ts, tileGrid.ts, geotiff.ts
                       the pure parts: sun position, state gate, α table,
@@ -49,8 +52,9 @@ src/
       *.test.ts
       specs/spec.md
     ambient-occlusion/
-      index.ts        ambientOcclusionRecord() GeoLibre record,
-                      AmbientOcclusionSettings
+      index.ts        AmbientOcclusionSettings; the entry
+      records.ts      ambientOcclusionRecord() GeoLibre record
+      mount.ts        mountAmbientOcclusion()
       aoLayer.ts      ThreeAoLayer — G-buffer, SSAO, blur, multiply composite
       kernel.ts, geometry.ts, state.ts
                       the pure parts: sample kernel + composite factor,
@@ -58,8 +62,10 @@ src/
       *.test.ts
       specs/spec.md
     temperature/
-      index.ts        temperatureRecord() GeoLibre record, TemperatureSettings,
-                      PET_DEPS
+      index.ts        TemperatureSettings; the entry
+      records.ts      temperatureRecord() GeoLibre record
+      mount.ts        mountTemperature(), PET_DEPS — adds temperature.pet
+                      after sunlight.lpi
       temperatureLayer.ts ThreeTemperatureLayer — PET overlay drawn from the
                       sunlight textures; probe and export through the LpiField
       pet.ts, state.ts
@@ -68,7 +74,11 @@ src/
       *.test.ts
       specs/spec.md
   lib/              shared engine + config, not layers
-    useMapEngine.ts   map lifecycle, GeoLibre layer sync, camera; owns Camera/Viewpoint
+    useMapEngine.ts   the host: map lifecycle, the mounts, GeoLibre layer
+                      sync, camera; owns Camera/Viewpoint
+    mount/            LayerMount — how a layer with a custom half attaches
+                      to any GeoLibre map; nativeLayer, fakeMap (tests); its
+                      own specs/spec.md
     dag/              the derived-layer DAG: one layer's output feeding
                       another's (sunlight.lpi → temperature.pet); pure, with
                       its own specs/spec.md
@@ -105,17 +115,21 @@ dist/               build output (gitignored)
 
 ### How a layer reaches the map
 
-Settings flow one way: `App.tsx` holds the state → each layer's `index.ts` turns
-settings into a `GeoLibreLayer` record → `useMapEngine.ts` passes the records to
-GeoLibre's `sync()`. Nothing outside `useMapEngine.ts` and `layers/basemaps`
-touches the MapLibre map directly.
+Settings flow one way: `App.tsx` holds the state → `useMapEngine.ts` hands
+each layer's mount its settings (`update`) → each mount returns its
+`GeoLibreLayer` records (`prepareSync`) → `useMapEngine.ts` passes them to
+GeoLibre's `sync()`. A layer with a custom half must stay portable: everything
+it needs on a map lives in its own `mount.ts`, never in the host (see
+`src/lib/mount/specs/spec.md`). Only `useMapEngine.ts`, the mounts (for their
+own custom layer) and `layers/basemaps` touch the MapLibre map directly.
 
 Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 `npm run preview`, `npm test` (vitest). There is no linter configured.
 
 `npm test` covers only what is pure — the species table, the geometry builders,
 `normalizeModel`, the sunlight, temperature and ambient-occlusion layers' pure
-modules, the derived-layer DAG, the
+modules, the derived-layer DAG, each layer's mount (on the fake map in
+`src/lib/mount/fakeMap.ts`, which never calls `onAdd`, so no GL), the
 shared tile store (on a fake `fetch`) and building prisms, and assertions about
 the served model folder itself (every `.glb` is CC-BY, prepared, and credited). There is no jsdom and no headless GL,
 so anything needing a map or a GL context — including whether a model actually

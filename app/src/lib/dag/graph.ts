@@ -15,6 +15,8 @@ export interface Graph {
   clear(id: string): void;
   value<T>(id: string): T | null;
   version(id: string): number;
+  setState(id: string, state: string): void;
+  state<S extends string = string>(id: string): S;
   setOwnDemand(id: string, on: boolean): void;
   demanded(id: string): boolean;
   subscribe(id: string, listener: GraphListener): () => void;
@@ -25,6 +27,7 @@ interface Node {
   dependents: string[];
   value: unknown;
   version: number;
+  state: string;
   ownDemand: boolean;
   demanded: boolean;
   listeners: Set<GraphListener>;
@@ -96,6 +99,7 @@ export function createGraph(): Graph {
         dependents: [],
         value: null,
         version: 0,
+        state: "off",
         ownDemand: false,
         demanded: false,
         listeners: new Set(),
@@ -119,6 +123,19 @@ export function createGraph(): Graph {
 
     version(id) {
       return node(id).version;
+    },
+
+    setState(id, state) {
+      const n = node(id);
+      if (n.state === state) return;
+      n.state = state;
+      // Allowed inside a notification, as `clear` is: a layer's state changes
+      // inside its own demand listener.
+      for (const d of dependentsOf(id)) emit(node(d), { kind: "upstream", from: id });
+    },
+
+    state<S extends string = string>(id: string) {
+      return node(id).state as S;
     },
 
     setOwnDemand(id, on) {

@@ -157,9 +157,9 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
     this.scene.add(this.overlay);
 
     this.unsubscribe = graph.subscribe(PET_NODE, (e) => {
-      if (e.kind === "upstream") this.take(graph.value<LpiField>(LPI_NODE));
+      if (e.kind === "upstream") this.pull();
     });
-    this.take(graph.value<LpiField>(LPI_NODE));
+    this.pull();
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -205,13 +205,6 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
     this.changed();
   }
 
-  /** The direct-sun layer's state, which this layer's state follows. */
-  setUpstreamState(state: SunlightState): void {
-    if (state === this.upstream) return;
-    this.upstream = state;
-    this.changed();
-  }
-
   // --- readback ------------------------------------------------------------
 
   /** PET at a point, from the direct-sun layer's own probe. */
@@ -247,6 +240,17 @@ export class ThreeTemperatureLayer implements CustomLayerInterface {
     const s = temperatureState(this.visible, this.upstream);
     // Ready only once there is a result to draw from.
     return s === "ready" && !this.field ? "waiting" : s;
+  }
+
+  /**
+   * Read the direct-sun node: its state, which this layer's follows, and its
+   * result. Both arrive through the DAG. Runs inside a DAG notification.
+   */
+  private pull(): void {
+    this.upstream = this.graph.state<SunlightState>(LPI_NODE);
+    const field = this.graph.value<LpiField>(LPI_NODE);
+    if (field !== this.field) this.take(field);
+    else this.changed();
   }
 
   /** A new upstream result, or none. Runs inside a DAG notification. */

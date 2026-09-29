@@ -186,9 +186,10 @@ pattern of the sunlight record:
 
 `visible` is `settings.enabled && buildings.visible`, and reaches the layer
 through the paint bridge; `opacity` is fixed at 1 and unused. Height is not a
-GeoLibre concept, so `useMapEngine` sets `intensity`, `radiusM` and the
+GeoLibre concept, so the layer's mount (`mountAmbientOcclusion`, `mount.ts`,
+see `src/lib/mount/specs/spec.md`) sets `intensity`, `radiusM` and the
 buildings' `heightScale` and `minHeight` on the layer directly (`setParams`),
-as it sets the tree layer's height scale.
+from the `{ ao, buildings }` settings the host hands its `update`.
 
 ## Settings
 

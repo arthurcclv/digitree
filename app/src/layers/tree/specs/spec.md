@@ -878,7 +878,11 @@ switch must not read as a change in the weather.
 
 GeoLibre only moves and shows native layers that already exist, and
 `map.setStyle()` destroys custom layers. Therefore, on **every** `style.load`,
-the custom layer must be re-added before the next sync.
+the custom layer must be re-added before the next sync. `mountTree`
+(`mount.ts`, see `src/lib/mount/specs/spec.md`) does this in `prepareSync`,
+registers the paint bridge, and pushes `heightScale`, `kind` and `meshSource`
+to the class when they change. So a host needs only `mountTree(...)`, then
+`update` and `prepareSync`.
 
 The `ThreeTreeLayer` instance outlives style changes:
 

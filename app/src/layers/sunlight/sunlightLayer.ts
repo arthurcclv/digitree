@@ -542,6 +542,8 @@ export class ThreeSunlightLayer implements CustomLayerInterface {
     const action = lpiNodeAction(this.state, state, passed);
     this.state = state;
     this.overlay.visible = state === "ready" && this.visible;
+    // Before the publish or clear, so a dependent sees both together.
+    this.graph.setState(LPI_NODE, state);
     if (action === "clear") this.graph.clear(LPI_NODE);
     if (action === "publish") this.graph.publish(LPI_NODE, this.field());
     this.onStatus?.(this.status());

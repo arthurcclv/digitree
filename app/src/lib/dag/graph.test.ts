@@ -103,3 +103,38 @@ describe("demand", () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe("state", () => {
+  test("a new node is off", () => {
+    expect(diamond().state("a")).toBe("off");
+  });
+
+  test("a change notifies each transitive dependent once and leaves the version", () => {
+    const g = diamond();
+    const log = record(g, ["a", "b", "c", "d"]);
+    g.setState("a", "waiting");
+    expect(g.state("a")).toBe("waiting");
+    expect(log.map(([id]) => id)).toEqual(["b", "c", "d"]);
+    expect(log.every(([, e]) => e.kind === "upstream" && e.from === "a")).toBe(true);
+    expect(g.version("a")).toBe(0);
+  });
+
+  test("an unchanged state notifies nothing", () => {
+    const g = diamond();
+    g.setState("a", "zoom");
+    const log = record(g, ["b", "c", "d"]);
+    g.setState("a", "zoom");
+    expect(log).toEqual([]);
+  });
+
+  test("is allowed inside a notification", () => {
+    const g = diamond();
+    g.subscribe("a", (e) => {
+      if (e.kind === "demand") g.setState("a", e.demanded ? "waiting" : "off");
+    });
+    const log = record(g, ["b"]);
+    g.setOwnDemand("d", true);
+    expect(g.state("a")).toBe("waiting");
+    expect(log.filter(([, e]) => e.kind === "upstream")).toEqual([["b", { kind: "upstream", from: "a" }]]);
+  });
+});

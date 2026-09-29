@@ -73,8 +73,14 @@ incomplete. So is one that silently invalidates an `ai/` doc.
    `README.md` and `CLAUDE.md`.
 
 If the new thing renders itself rather than being rendered by GeoLibre, follow
-the tree: external-native metadata, a paint bridge for anything GeoLibre models,
-re-add on `style.load`, and direct calls only for concepts GeoLibre lacks.
+the tree and keep it portable (`src/lib/mount/specs/spec.md`). The record goes
+in `records.ts`, with external-native metadata. `mount.ts` exports
+`mount<Name>(ctx, settings, hooks)`: `nativeLayer` handles the paint bridge
+and the re-add after `style.load`, `update` pushes the concepts GeoLibre
+lacks, and a derived layer adds its DAG node there. Step 3 then becomes
+mounting it in `useMapEngine` (after anything it derives from), calling its
+`update` in the settings effect, and spreading its `prepareSync()` into the
+`sync([...])` array. Nothing layer-specific goes in the host.
 
 ## Debugging
 

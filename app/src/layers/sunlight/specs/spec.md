@@ -427,6 +427,9 @@ no deps.
     and non-complete cells written as `nodata`. `exportGeoTiff()` is
     `readNear(identity, -1)`.
 - **Clear.** Whenever the state leaves `ready`, and on `dispose`.
+- **State.** Every state change is set on the node (`graph.setState`) before
+  the publish or clear it causes. That is how a dependent reports `zoom`,
+  `low-sun`, `unsupported` or `waiting`.
 - A target is resized only between a clear and the next publish, so a
   published `WebGLTexture` stays valid until the node is cleared or
   re-published.
@@ -454,9 +457,12 @@ does not:
   the layer must stay visible to MapLibre while a dependent wants the index,
   drawn or not. `sunlightRecord(settings, demanded)` takes it as an argument.
 - Whether the overlay is **drawn** is `ThreeSunlightLayer.setVisibility`,
-  which `useMapEngine` calls with `SunlightSettings.visible` before each
-  sync. That call also sets the node's own demand, so the engine reads
-  `demanded` after it.
+  which the layer's mount calls with `SunlightSettings.visible` in `update`.
+  That call also sets the node's own demand. The host applies every update
+  before any `prepareSync`, so the record reads the final `demanded`.
+- `mountSunlight` (`mount.ts`, see `src/lib/mount/specs/spec.md`) adds the
+  node, registers the bridge, and re-adds the custom layer after a style
+  reset.
 - The bridge's `setVisibility` is a no-op.
 The sync order is buildings → ambient occlusion → sunlight → temperature →
 tree points → tree mesh, so the overlay sits above the extrusions' ground,

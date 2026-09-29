@@ -6,6 +6,61 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-29 — Each layer mounts itself; upstream state travels through the DAG
+
+**Decision.** Every layer with a custom (three.js) half exports a mount,
+`mount<Name>(ctx, settings, hooks)`, from a `mount.ts` in its own folder. The
+mount constructs the class, registers its paint bridge, adds its DAG node,
+pushes non-GeoLibre settings when they change (`update`), re-adds the custom
+layer after a style reset and returns the records (`prepareSync`), and tears
+down (`dispose`). The contract is `src/lib/mount/specs/spec.md`.
+`useMapEngine` becomes a host: it owns the map, the sync, the one graph, the
+mount order and the stack order, and knows nothing layer-specific.
+The DAG gains a node **state** (`setState`/`state`). Sunlight sets its state
+on `sunlight.lpi`, and temperature reads it from there.
+`ThreeTemperatureLayer.setUpstreamState` is gone.
+
+**Why.** The goal is that a layer folder can be ported to another GeoLibre
+application. Before this change, a layer's real interface was the ~250 lines
+of engine glue for it. Any other host would have had to rediscover that glue:
+re-adding on every `style.load`, routing visibility around the bridge,
+forwarding sunlight's status. Forwarding status was also the alternative the
+DAG entry below rejected, back in the code for one field.
+
+**Supersedes, in part.**
+- 2026-09-22 *The three.js tree rides in the same `sync()` call*, and
+  ARCHITECTURE's "exactly two places touch the map". The custom layers are now
+  constructed and added by their own mounts, not by `useMapEngine`. Its rule
+  that opacity and visibility go through the paint bridge, never the UI,
+  stands, and the mounts now register the bridges.
+- 2026-09-29 *Derived layers go through a DAG*: "the engine adds the nodes".
+  The host still owns the one graph, but each mount adds its own node.
+
+**Also decided.**
+- Overlay visibility, which sets demand, is applied in `update`, not
+  `prepareSync`. `prepareSync` runs in stack order, sunlight before
+  temperature, so doing it there would build sunlight's record before
+  temperature's demand arrived.
+- `buildings` gets no mount: it would only pass settings through.
+- Record builders move to each folder's `records.ts`, so `mount.ts` and
+  `index.ts` never import each other.
+- The host skips `sync` when the records are identical to the last ones
+  synced. `sync` re-applies every layer, and a sun-time step now reaches the
+  host as a settings change that alters no record.
+
+**Rejected.**
+- *A mount that listens for `style.load` itself.* It works only if its
+  listener runs before the host's sync, which depends on listener
+  registration order.
+- *A sibling `sunlight.state` node.* State changes happen inside sunlight's
+  demand listener, where `publish` throws. `setState` is allowed there, as
+  `clear` is.
+
+**Revisit if** a host needs to unmount one layer from a live map, or mount one
+twice. Both are out of scope for the mount spec.
+
+---
+
 ## 2026-09-29 — The direct-sun overlay computes down to a 5° sun
 
 **Decision.** `MIN_SUN_ELEVATION_DEG` drops from 10° to 5°, so the overlay and
@@ -55,6 +110,8 @@ a tour, a tree lookup). `flyTo` is already waiting for it.
 ---
 
 ## 2026-09-29 — Derived layers go through a DAG; PET is derived from LPI on the GPU
+
+*Partly superseded by 2026-09-29 — Each layer mounts itself; upstream state travels through the DAG.*
 
 **Decision.** A small pure graph (`src/lib/dag`) carries one layer's output
 to another's. The first edge is `sunlight.lpi` → `temperature.pet`:
@@ -875,6 +932,8 @@ auditable rather than accidental.
 ---
 
 ## 2026-09-22 — The three.js tree rides in the same `sync()` call as the buildings
+
+*Partly superseded by 2026-09-29 — Each layer mounts itself; upstream state travels through the DAG.*
 
 **Decision.** The tree is a `GeoLibreLayer` record on GeoLibre's external-native
 path (`metadata.customLayerType: "threejs"`, `nativeLayerIds`,

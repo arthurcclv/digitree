@@ -117,7 +117,9 @@ hot) and `classOf(pet)` names one; the probe readout shows it.
 
 ## State
 
-`TemperatureState` is `off`, or else the upstream sunlight state:
+`TemperatureState` is `off`, or else the upstream sunlight state, read from
+the DAG as `graph.state("sunlight.lpi")` whenever that node notifies. Nothing
+outside the graph forwards it:
 
 | state | when |
 | --- | --- |
@@ -159,12 +161,13 @@ export's `-1`: at the panel's extremes (`G0 = 0`, `Ta = 15`, `V = 10`) PET is
   from PET, so that is `TemperatureSettings.visible`.
 
 Opacity reaches the layer through the paint bridge; visibility, as for the
-direct-sun layer, through `ThreeTemperatureLayer.setVisibility`, called by
-`useMapEngine` before each sync (the bridge's `setVisibility` is a no-op). See
+direct-sun layer, through `ThreeTemperatureLayer.setVisibility`, called by the layer's mount in
+`update` (the bridge's `setVisibility` is a no-op). See
 the sunlight spec, *The GeoLibre records*, for why.
 
-The node is added by `useMapEngine` with `PET_DEPS` (`["sunlight.lpi"]`),
-exported from `index.ts`.
+`mountTemperature` (`mount.ts`, see `src/lib/mount/specs/spec.md`) adds the
+node with deps `["sunlight.lpi"]`, so it must be mounted after `mountSunlight`
+on the same graph.
 
 The sync order becomes buildings → ambient occlusion → sunlight →
 **temperature** → tree points → tree mesh, so with both overlays on, PET is
