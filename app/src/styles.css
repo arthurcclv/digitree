@@ -111,11 +111,6 @@ input { font: inherit; }
   letter-spacing: 0.01em;
 }
 
-.top-bar__sub {
-  font-size: 11px;
-  color: var(--fg-dim);
-}
-
 .top-bar__right {
   margin-left: auto;
   display: flex;
@@ -626,8 +621,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
     border: none;
     border-top: 1px solid var(--border-subtle);
   }
-
-  .top-bar__sub { display: none; }
 
   /* Collapsed: the map and its toolbars, nothing else. */
   .app-shell[data-collapsed="true"] .column { display: none; }

@@ -223,8 +223,7 @@ export default function App() {
   return (
     <div className="app-shell" data-collapsed={collapsed}>
       <header className="top-bar">
-        <span className="top-bar__title">Taipei 3D</span>
-        <span className="top-bar__sub">OpenStreetMap buildings · GeoLibre 3.0.0 headless</span>
+        <span className="top-bar__title">Digitree</span>
         <div className="top-bar__right">
           {ready ? (
             <Badge tone={error ? "tile-error" : "sync"}>
