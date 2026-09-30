@@ -225,6 +225,42 @@ The layer is reachable as
 `__map.getLayer("threejs-ambient-occlusion-native").implementation`. Its
 `state` and `buildings` fields say whether it is drawing.
 
+## Checking the USD export
+
+The writers, the frame, the packages' contents and the host's composition are
+tested. What needs a browser: the PNG encoding, the basemap capture, model
+loading and the GL read of the near grid. Turn on Direct sun and PET, pick
+**Modelled** trees, wait for the direct-sun readout to show no pending tiles,
+then **Export USD**:
+
+- **Every package is valid.** Unzip, then `usdchecker <file>.usdz` for each
+  package and `usdchecker scene.usda`. macOS ships `usdchecker`, `usdcat` and
+  `usdrecord` in `/usr/bin`. `--arkit` fails by design, on Z-up and
+  `PointInstancer`.
+- **The rasters hold values.** Each `.tif` is the same file its GeoTIFF button
+  writes: PET spans the panel's *Shade → sun* range, and NoData is roofs. An
+  export made while tiles are still pending is mostly NoData, like the
+  GeoTIFF export at that moment.
+- **The light.** `light.usdz` holds one `DomeLight` at intensity 1000, and
+  its customLayerData azimuth and elevation equal the Direct sun readout. It
+  is there at night too. Check its effect in a real renderer (Omniverse,
+  Houdini, Blender): `usdrecord`'s Storm ignores it and falls back to its own
+  light, so renders at intensity 0 and 1000 are identical.
+- **Both ends of the side.** The overlay quads and GeoTIFFs cover the whole
+  square: 1,000² at 0.5 m cells for 0.5 km, 4,096² (about 2.44 m) for 10 km,
+  with values in every quadrant. Both GeoTIFFs have identical NoData cells,
+  because PET maps the same export pass. A 10 km export takes about 50 s
+  here.
+- **The basemap capture cleans up.** After an export, and after one that
+  failed, the page holds no hidden map container (`document.body` has no
+  off-screen `div` left). A style that never settles rejects with *basemap:
+  the basemap did not finish loading* after 60 s.
+- **It lines up.** Add a camera in a layer that sublayers `scene.usda` and
+  `usdrecord` it. Buildings stand in the overlays' roof holes, and trees sit on
+  the tree-lined streets. Give the camera a near clip of a few hundred metres
+  at city distances: with 1 m, Storm bands the overlays (depth precision, not
+  the export).
+
 ## Preparing tree models
 
 The `.glb` files under `public/models/trees/` are not the files that were

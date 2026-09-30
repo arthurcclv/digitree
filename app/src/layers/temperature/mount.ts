@@ -3,6 +3,8 @@ import { changed, nativeLayer, type LayerMount, type MountContext } from "../../
 import { PET_NODE, type PetProbe } from "./pet";
 import { TEMPERATURE_LAYER_ID, temperatureRecord } from "./records";
 import { ThreeTemperatureLayer, type TemperatureStatus } from "./temperatureLayer";
+import { temperaturePackage } from "./usd";
+import type { ExportFrame, UsdPackage } from "../../lib/usd";
 import type { TemperatureSettings } from "./index";
 
 /** What `temperature.pet` derives from; the mount adds the node with these. */
@@ -17,6 +19,8 @@ export interface TemperatureMount extends LayerMount<TemperatureSettings> {
   probe(lng: number, lat: number): Promise<PetProbe>;
   /** The near grid in PET, or `null` when there is nothing to export. */
   exportGeoTiff(): Promise<Blob | null>;
+  /** The near grid in PET as a USD package. See `src/lib/usd/specs/spec.md`. */
+  exportUsd(frame: ExportFrame): Promise<UsdPackage>;
 }
 
 /**
@@ -59,6 +63,7 @@ export function mountTemperature(
     },
     probe: (lng, lat) => temperature.probe(lng, lat),
     exportGeoTiff: () => temperature.exportGeoTiff(),
+    exportUsd: (frame) => temperature.exportFrame(frame).then((r) => temperaturePackage(r, frame)),
     dispose() {
       native.dispose();
       temperature.dispose();

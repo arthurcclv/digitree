@@ -1,5 +1,6 @@
 import type { Domain, Vec2 } from "./frame";
 import type { ProbeResult } from "./sunlightLayer";
+import type { ExportFrame } from "../../lib/usd";
 
 /**
  * The layer's DAG node and what it publishes. See *The LPI node* in
@@ -13,6 +14,25 @@ export interface LpiLevel {
   /** Valid until the node is cleared or re-published. Never delete it. */
   texture: WebGLTexture;
   domain: Domain;
+}
+
+/** The near grid as values, from one read. See *The LPI node* in `specs/spec.md`. */
+export interface NearGrid {
+  size: number;
+  /** Row-major, row 0 at the north; every non-complete cell is `nodata`. */
+  values: Float32Array;
+  nodata: number;
+  domain: Domain;
+  /** The moment the grid was computed for, epoch ms. */
+  sunTime: number;
+  /** The GeoTIFF's GDAL metadata: the sun, the cell size and the job's own. */
+  metadata: Record<string, string>;
+}
+
+/** One read of the near grid: its GeoTIFF, and the values it was written from. */
+export interface NearRead {
+  tiff: Blob;
+  grid: NearGrid;
 }
 
 export interface LpiField {
@@ -35,6 +55,17 @@ export interface LpiField {
     nodata: number,
     metadata: Record<string, string>,
   ): Promise<Blob | null>;
+  /**
+   * Direct sun over exactly `frame`, from an export pass (*The export pass*),
+   * each complete cell's index mapped through `transform`, every other cell
+   * `nodata`. Rejects with a `UsdExportError`.
+   */
+  readFrame(
+    frame: ExportFrame,
+    transform: (index: number) => number,
+    nodata: number,
+    metadata: Record<string, string>,
+  ): Promise<NearRead>;
 }
 
 /**

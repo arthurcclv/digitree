@@ -1,15 +1,6 @@
 import * as THREE from "three";
 import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
-import {
-  canopyHullOf,
-  formOf,
-  rotationOf,
-  TREE_FORMS,
-  treeTiles,
-  type TreeFeature,
-  type TreeForm,
-  type TreeSource,
-} from "../tree";
+import { treeTiles, type TreeFeature, type TreeSource } from "../tree";
 import { buildingTiles, type BuildingSource } from "../buildings";
 import {
   cellCentre,
@@ -17,9 +8,10 @@ import {
   clipToSquare,
   counterClockwise,
   DOMAIN_M,
+  EXPORT_MAX_CELLS,
+  exportGridFor,
   FAR_DOMAIN_M,
   FAR_GRID_SIZE,
-  geoTransform3857,
   levelOf,
   lightMatrixRowMajor,
   makeDomain,
@@ -30,16 +22,21 @@ import {
   type Domain,
   type Vec2,
 } from "./frame";
-import { writeGeoTiff } from "./geotiff";
+import { INCOMPLETE_GREY, SUNLIGHT_RAMP } from "./ramp";
 import { blockedState, lpiNodeAction, readoutSun, type SunlightState } from "./state";
-import { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField } from "./lpi";
+import { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField, type NearGrid, type NearRead } from "./lpi";
+import { nearGridTiff } from "./nearGrid";
+import { coveredKeys, Occluders, type OccluderMaterials } from "./occluders";
+import { SUNLIGHT_USD_NAME } from "./usd";
 import type { Graph } from "../../lib/dag";
+import { hexRgb } from "../../lib/colour";
 import { mercatorFrame, PREMULTIPLIED_OVER, projection, ThreeLayer } from "../../lib/three";
+import { UsdExportError, type ExportFrame } from "../../lib/usd";
 import { MIN_SUN_ELEVATION_DEG, sunPosition } from "./sun";
-import { classifyByTiles, planTiles, tileKey, tileSquareLocal, type TileId } from "./tileGrid";
+import { classifyByTiles, exportTiles, planTiles, type TileId } from "./tileGrid";
 import {
   groundFootprint,
-  placeTile,
+  settle,
   TileStore,
   triangulateTile,
   type BuildingFeature,
@@ -47,13 +44,10 @@ import {
   type TilePrisms,
   type TileSource,
 } from "../../lib/tiles";
-import { alphaOf, BUILDING_TAU, tauOf } from "./transmittance";
+import { BUILDING_TAU } from "./transmittance";
 
 /** The MapLibre style-layer id GeoLibre is told to manage on our behalf. */
 export const SUNLIGHT_NATIVE_LAYER_ID = "threejs-sunlight-native";
-
-/** More than the whole inventory, so in practice nothing is dropped. */
-export const SUNLIGHT_MAX_TREES = 200_000;
 
 /** Tile arrivals are coalesced into at most one rebuild per this. */
 export const REBUILD_DEBOUNCE_MS = 150;
@@ -79,22 +73,7 @@ export type ProbeResult =
   | { kind: "value"; index: number }
   | { kind: "roof" | "incomplete" | "outside" | "none" };
 
-/** The ramp in the spec's *Ramp* table, as sRGB — written raw, never colour-managed. */
-const RAMP: [number, string][] = [
-  [0, "#2b2f6b"],
-  [0.25, "#5a4f9c"],
-  [0.5, "#a0679e"],
-  [0.75, "#e39a6d"],
-  [1, "#ffe3a1"],
-];
-const INCOMPLETE_GREY = "#8a8f98";
-
-const rgb = (hex: string) =>
-  new THREE.Vector3(
-    parseInt(hex.slice(1, 3), 16) / 255,
-    parseInt(hex.slice(3, 5), 16) / 255,
-    parseInt(hex.slice(5, 7), 16) / 255,
-  );
+const rgb = (hex: string) => new THREE.Vector3(...hexRgb(hex));
 
 // ---------------------------------------------------------------------------
 // Shaders
@@ -209,7 +188,9 @@ interface Result {
 
 type Pending =
   | { kind: "probe"; lng: number; lat: number; resolve: (r: ProbeResult) => void }
-  | { kind: "export"; job: ExportJob; resolve: (b: Blob | null) => void };
+  | { kind: "export"; job: ExportJob; resolve: (r: NearRead | null) => void }
+  /** GPU work of an export pass: run inside `prerender`, or with no renderer to fail. */
+  | { kind: "run"; run: (renderer: THREE.WebGLRenderer | null) => void };
 
 /** What an export writes: see `LpiField.readNear`. */
 interface ExportJob {
@@ -224,36 +205,17 @@ const DIRECT_SUN_EXPORT: ExportJob = {
   metadata: { definition: "direct-sun transmittance; see app/src/layers/sunlight/specs/spec.md" },
 };
 
-type PlacedTree = { id: string; x: number; y: number; h: number; species: unknown; form: TreeForm };
-
-/** One form's crowns: its hull, instanced, near trees first. */
-interface CrownSet {
-  mesh: THREE.InstancedMesh;
-  /** This layer's own copy of the hull — it carries `aTau`, the tree layer's must not. */
-  geometry: THREE.BufferGeometry;
-  matrix: THREE.InstancedBufferAttribute;
-  tau: THREE.InstancedBufferAttribute;
-  capacity: number;
-  /** Instances drawn by the near pass: the prefix that can shade the near grid. */
-  nearCount: number;
-  count: number;
+/** Kept after an export pass: the raw index per cell, NaN where there is none. */
+interface IndexGrid {
+  key: string;
+  domain: Domain;
+  values: Float32Array;
+  sunTime: number;
+  azimuthDeg: number;
+  elevationDeg: number;
 }
 
-/** The tree layer's Y-up frame onto this layer's east-north-up one: (x, y, z) → (x, −z, y). */
-const Y_UP_TO_Z_UP = new THREE.Matrix4().makeRotationX(Math.PI / 2);
-
-/**
- * A tree's hull instance: scaled by its height, yawed as the tree layer yaws
- * it, stood up into this frame, moved to its trunk. The tree layer's yaw about
- * its +Y is the same angle about +Z here. See *Trees*.
- */
-export function crownMatrix(x: number, y: number, h: number, yaw: number, out = new THREE.Matrix4()): THREE.Matrix4 {
-  return out
-    .makeRotationZ(yaw)
-    .multiply(Y_UP_TO_Z_UP)
-    .multiply(new THREE.Matrix4().makeScale(h, h, h))
-    .setPosition(x, y, 0);
-}
+export { crownMatrix, SUNLIGHT_MAX_TREES } from "./occluders";
 
 /**
  * A MapLibre custom layer that computes the direct-sun index for the ground in
@@ -274,21 +236,17 @@ export class ThreeSunlightLayer extends ThreeLayer {
   private readonly nearLevel: Level = { domain: makeDomain(0, 0), target: null };
   private readonly farLevel: Level = { domain: makeDomain(0, 0, FAR_GRID_SIZE, FAR_DOMAIN_M), target: null };
 
-  private readonly lightScene = new THREE.Scene();
-  private readonly footScene = new THREE.Scene();
-  private readonly coverScene = new THREE.Scene();
   private readonly overlayScene = new THREE.Scene();
   private readonly lightCamera = new THREE.Camera();
   private readonly camera = new THREE.Camera();
 
-  /** One instanced hull per form, drawn by both levels. Allocated on first use. */
-  private readonly crowns = new Map<TreeForm, CrownSet>();
-  /** Occluders have been placed at least once, so a pass has something to draw. */
-  private placedOnce = false;
-
-  private readonly prisms = new THREE.Mesh(new THREE.BufferGeometry());
-  private readonly floors = new THREE.Mesh(new THREE.BufferGeometry());
-  private readonly squares = new THREE.Mesh(new THREE.BufferGeometry());
+  /** The display's occluders, drawn by both levels. An export pass builds its own. */
+  private readonly occluders: Occluders;
+  /** Where the occluders are, for an export pass's own store. */
+  private readonly sources: { trees: TileSource<TreeFeature>; buildings: TileSource<BuildingFeature> };
+  /** The last export pass, reused by a second request for the same frame and sun. */
+  /** The last export pass, keyed by frame and sun; held while it runs, so a request made meanwhile joins it. */
+  private exportGrid: { key: string; grid: Promise<IndexGrid> } | null = null;
   private readonly overlay: THREE.Mesh;
 
   private readonly crownMaterial: THREE.ShaderMaterial;
@@ -336,7 +294,8 @@ export class ThreeSunlightLayer extends ThreeLayer {
     sources: { trees: TreeSource; buildings: BuildingSource },
   ) {
     super();
-    this.store = new TileStore({ trees: treeTiles(sources.trees), buildings: buildingTiles(sources.buildings) });
+    this.sources = { trees: treeTiles(sources.trees), buildings: buildingTiles(sources.buildings) };
+    this.store = new TileStore(this.sources);
     // The same height the meshes draw a tree with none at: one value per inventory.
     this.fallbackHeightM = sources.trees.fallbackHeightM;
     this.crownMaterial = lightMaterial(CROWN_VERT, CROWN_FRAG, { uLight: { value: new THREE.Matrix4() } });
@@ -352,13 +311,7 @@ export class ThreeSunlightLayer extends ThreeLayer {
       uLight: { value: new THREE.Matrix4() },
       uValue: { value: new THREE.Vector4(0, 0, 1, 0) },
     });
-    this.prisms.material = this.prismMaterial;
-    this.floors.material = this.footMaterial;
-    this.squares.material = this.coverMaterial;
-    for (const m of [this.prisms, this.floors, this.squares]) m.frustumCulled = false;
-    this.lightScene.add(this.prisms);
-    this.footScene.add(this.floors);
-    this.coverScene.add(this.squares);
+    this.occluders = new Occluders(this.occluderMaterials());
 
     this.overlayMaterial = new THREE.ShaderMaterial({
       vertexShader: OVERLAY_VERT,
@@ -370,7 +323,7 @@ export class ThreeSunlightLayer extends ThreeLayer {
         uFarDomain: { value: FAR_DOMAIN_M },
         uOpacity: { value: this.opacity },
         uReach: { value: new THREE.Vector2() },
-        uRamp: { value: RAMP.map(([, hex]) => rgb(hex)) },
+        uRamp: { value: SUNLIGHT_RAMP.map(([, hex]) => rgb(hex)) },
         uGrey: { value: rgb(INCOMPLETE_GREY) },
       },
       transparent: true,
@@ -484,10 +437,15 @@ export class ThreeSunlightLayer extends ThreeLayer {
 
   /** The near grid as a GeoTIFF, or `null` when there is nothing to export. */
   exportGeoTiff(): Promise<Blob | null> {
-    return this.readNear(DIRECT_SUN_EXPORT);
+    return this.readNear(DIRECT_SUN_EXPORT).then((r) => r?.tiff ?? null);
   }
 
-  private readNear(job: ExportJob): Promise<Blob | null> {
+  /** Direct sun over exactly `frame`, from an export pass: the USD export's. */
+  exportFrame(frame: ExportFrame): Promise<NearRead> {
+    return this.readFrame(frame, DIRECT_SUN_EXPORT);
+  }
+
+  private readNear(job: ExportJob): Promise<NearRead | null> {
     if (!this.result || this.state !== "ready") return Promise.resolve(null);
     return new Promise((resolve) => {
       this.pending.push({ kind: "export", job, resolve });
@@ -548,7 +506,9 @@ export class ThreeSunlightLayer extends ThreeLayer {
       azimuthDeg: r.azimuthDeg,
       elevationDeg: r.elevationDeg,
       probe: (lng, lat) => this.probe(lng, lat),
-      readNear: (transform, nodata, metadata) => this.readNear({ transform, nodata, metadata }),
+      readNear: (transform, nodata, metadata) =>
+        this.readNear({ transform, nodata, metadata }).then((r) => r?.tiff ?? null),
+      readFrame: (frame, transform, nodata, metadata) => this.readFrame(frame, { transform, nodata, metadata }),
     };
   }
 
@@ -624,56 +584,21 @@ export class ThreeSunlightLayer extends ThreeLayer {
     const started = performance.now();
     const near = this.nearLevel.domain;
     const covered = this.store.covered();
-
-    const trees: PlacedTree[] = [];
-    const seen = new Set<string>();
-    for (const tile of covered) {
-      for (const t of this.store.featuresOf("trees", tile)) {
-        // The tile buffer repeats a tree in each tile it overlaps.
-        if (seen.has(t.id)) continue;
-        seen.add(t.id);
-        const [x, y] = toLocal(near, t.lng, t.lat);
-        const form = formOf(t.species);
-        trees.push({ id: t.id, x, y, h: t.heightM ?? this.fallbackHeightM, species: t.species, form });
-      }
-    }
-    if (trees.length > SUNLIGHT_MAX_TREES) {
-      trees.sort((a, b) => b.h - a.h);
-      trees.length = SUNLIGHT_MAX_TREES;
-    }
-    // Trees that can shade the near grid first, so the near pass draws a prefix.
-    const nearReach = near.domainM / 2 + MIN_SUN_ELEVATION_REACH_M;
-    const isNear = (t: PlacedTree) => Math.abs(t.x) < nearReach && Math.abs(t.y) < nearReach;
-    this.placeCrowns(trees, isNear);
-
-    let buildings = 0;
-    const parts = covered.map((tile) => {
-      const p = this.tilePrisms(tile);
-      buildings += p.count;
-      return { tile, p };
+    const placed = this.occluders.place({
+      covered,
+      treesOf: (tile) => this.store.featuresOf("trees", tile),
+      prismsOf: (tile) => this.tilePrisms(tile),
+      domain: near,
+      fallbackHeightM: this.fallbackHeightM,
+      nearReachM: near.domainM / 2 + MIN_SUN_ELEVATION_REACH_M,
     });
-    const prism = new Float32Array(parts.reduce((n, { p }) => n + p.prism.length, 0));
-    const floor = new Float32Array(parts.reduce((n, { p }) => n + p.floor.length, 0));
-    let pi = 0;
-    let fi = 0;
-    for (const { tile, p } of parts) {
-      pi = placeTile(near, tile, p.prism, prism, pi);
-      fi = placeTile(near, tile, p.floor, floor, fi);
-    }
-    setPositions(this.prisms.geometry, prism);
-    setPositions(this.floors.geometry, floor);
-
-    // Coverage: one square per covered tile.
-    const sq: number[] = [];
-    for (const tile of covered) {
-      const [w, s, e, n] = tileSquareLocal(near, tile);
-      sq.push(w, s, 0, e, s, 0, e, n, 0, w, s, 0, e, n, 0, w, n, 0);
-    }
-    setPositions(this.squares.geometry, sq);
-
-    this.placedCovered = new Set(covered.map(tileKey));
-    this.counts = { trees: trees.length, buildings, rebuildMs: performance.now() - started };
+    this.placedCovered = coveredKeys(covered);
+    this.counts = { ...placed, rebuildMs: performance.now() - started };
     this.passDue = true;
+  }
+
+  private occluderMaterials(): OccluderMaterials {
+    return { crown: this.crownMaterial, prism: this.prismMaterial, foot: this.footMaterial, cover: this.coverMaterial };
   }
 
   /** A tile's buildings, triangulated in tile units — once per tile per session. */
@@ -684,58 +609,6 @@ export class ThreeSunlightLayer extends ThreeLayer {
     const out = triangulateTile(tile, features);
     this.prismCache.set(features, out);
     return out;
-  }
-
-  /** Write every tree into its form's hull instances, near trees first. */
-  private placeCrowns(trees: PlacedTree[], isNear: (t: PlacedTree) => boolean): void {
-    const byForm = new Map<TreeForm, { near: PlacedTree[]; far: PlacedTree[] }>();
-    for (const t of trees) {
-      let g = byForm.get(t.form);
-      if (!g) byForm.set(t.form, (g = { near: [], far: [] }));
-      (isNear(t) ? g.near : g.far).push(t);
-    }
-    const m = new THREE.Matrix4();
-    for (const form of TREE_FORMS) {
-      const g = byForm.get(form);
-      const total = g ? g.near.length + g.far.length : 0;
-      const set = total ? this.crownSet(form, total) : this.crowns.get(form);
-      if (!set) continue;
-      set.nearCount = g?.near.length ?? 0;
-      set.count = total;
-      if (!g) continue;
-      const matrices = set.matrix.array;
-      const tau = set.tau.array;
-      [...g.near, ...g.far].forEach((t, i) => {
-        crownMatrix(t.x, t.y, t.h, rotationOf(t.id), m).toArray(matrices, i * 16);
-        tau[i] = tauOf(alphaOf(t.species));
-      });
-      set.matrix.needsUpdate = true;
-      set.tau.needsUpdate = true;
-    }
-    this.placedOnce = true;
-  }
-
-  /** A form's instanced hull, grown by doubling to hold `needed` trees. */
-  private crownSet(form: TreeForm, needed: number): CrownSet {
-    const existing = this.crowns.get(form);
-    if (existing && existing.capacity >= needed) return existing;
-    let capacity = Math.max(1024, existing?.capacity ?? 0);
-    while (capacity < needed) capacity *= 2;
-    if (existing) {
-      this.lightScene.remove(existing.mesh);
-      existing.mesh.dispose();
-    }
-    const geometry = existing?.geometry ?? canopyHullOf(form).clone();
-    const matrix = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
-    const tau = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-    geometry.setAttribute("aTau", tau);
-    const mesh = new THREE.InstancedMesh(geometry, this.crownMaterial, capacity);
-    mesh.instanceMatrix = matrix;
-    mesh.frustumCulled = false;
-    this.lightScene.add(mesh);
-    const set: CrownSet = { mesh, geometry, matrix, tau, capacity, nearCount: 0, count: 0 };
-    this.crowns.set(form, set);
-    return set;
   }
 
   /** The model matrix: the local metre frame onto Mercator, y flipped. */
@@ -749,7 +622,7 @@ export class ThreeSunlightLayer extends ThreeLayer {
     // Pending probes are answered even without a renderer, as `none`.
     if (!this.renderer || !this.supported) return this.flush(null);
     this.pass((renderer) => {
-      if (this.passDue && this.centre && this.placedOnce) {
+      if (this.passDue && this.centre && this.occluders.placedOnce) {
         this.passDue = false;
         const sun = this.sunNow();
         if (sun && sun.elevationDeg >= MIN_SUN_ELEVATION_DEG) {
@@ -781,7 +654,14 @@ export class ThreeSunlightLayer extends ThreeLayer {
     });
   }
 
-  private lightPass(renderer: THREE.WebGLRenderer, level: Level, az: number, el: number, near: boolean): void {
+  private lightPass(
+    renderer: THREE.WebGLRenderer,
+    level: Level,
+    az: number,
+    el: number,
+    near: boolean,
+    occluders: Occluders = this.occluders,
+  ): void {
     const { domain } = level;
     const size = domain.size;
     if (!level.target || level.target.width !== size) {
@@ -807,15 +687,14 @@ export class ThreeSunlightLayer extends ThreeLayer {
     this.prismMaterial.uniforms.uLight.value = shear;
     this.footMaterial.uniforms.uLight.value = down;
     this.coverMaterial.uniforms.uLight.value = down;
-    // The near pass draws each form's near prefix; the far pass draws them all.
-    for (const set of this.crowns.values()) set.mesh.count = near ? set.nearCount : set.count;
+    occluders.drawCounts(near);
 
     renderer.setRenderTarget(level.target);
     renderer.setClearColor(0x000000, 0);
     renderer.clear(true, false, false);
-    renderer.render(this.lightScene, this.lightCamera);
-    renderer.render(this.footScene, this.lightCamera);
-    renderer.render(this.coverScene, this.lightCamera);
+    renderer.render(occluders.lightScene, this.lightCamera);
+    renderer.render(occluders.footScene, this.lightCamera);
+    renderer.render(occluders.coverScene, this.lightCamera);
     renderer.setRenderTarget(null);
   }
 
@@ -826,6 +705,10 @@ export class ThreeSunlightLayer extends ThreeLayer {
     this.pending = [];
     const r = this.result;
     for (const job of jobs) {
+      if (job.kind === "run") {
+        job.run(renderer);
+        continue;
+      }
       if (!renderer || !r) {
         if (job.kind === "probe") job.resolve({ kind: "none" });
         else job.resolve(null);
@@ -851,10 +734,26 @@ export class ThreeSunlightLayer extends ThreeLayer {
     return { kind: "value", index: Math.exp(-px[0]) };
   }
 
-  private readExport(renderer: THREE.WebGLRenderer, r: Result, job: ExportJob): Blob | null {
+  private readExport(renderer: THREE.WebGLRenderer, r: Result, job: ExportJob): NearRead | null {
     const target = this.nearLevel.target;
     if (!target) return null;
     const d = r.near;
+    const index = this.readIndex(renderer, target, d, r.covered, r.reach);
+    return nearRead(d, index, r, job);
+  }
+
+  /**
+   * A target's index per cell, rows from the north, NaN for roof, outside and
+   * incomplete cells. Read in strips, so the grid is never held twice at RGBA
+   * width. Shared by the display export and the export pass.
+   */
+  private readIndex(
+    renderer: THREE.WebGLRenderer,
+    target: THREE.WebGLRenderTarget,
+    d: Domain,
+    covered: ReadonlySet<string>,
+    reach: Vec2,
+  ): Float32Array {
     const size = d.size;
     const out = new Float32Array(size * size);
     const strip = new Float32Array(size * EXPORT_STRIP_ROWS * 4);
@@ -866,36 +765,88 @@ export class ThreeSunlightLayer extends ThreeLayer {
         const outRow = size - 1 - row; // image rows run from the north
         for (let col = 0; col < size; col++) {
           const i = (j * size + col) * 4;
-          let v = job.nodata;
+          let v = NaN;
           // B is coverage and G roof; the reach test needs the tile set.
           if (strip[i + 2] > 0.5 && strip[i + 1] <= 0.5) {
-            if (classifyByTiles(d, r.covered, r.reach, cellCentre(d, col, row)) === "complete") {
-              v = job.transform(Math.exp(-strip[i]));
-            }
+            if (classifyByTiles(d, covered, reach, cellCentre(d, col, row)) === "complete") v = Math.exp(-strip[i]);
           }
           out[outRow * size + col] = v;
         }
       }
     }
-    const gt = geoTransform3857(d);
-    const bytes = writeGeoTiff({
-      width: size,
-      height: size,
-      data: out,
-      originX: gt.originX,
-      originY: gt.originY,
-      pixelSize: gt.pixel,
-      epsg: 3857,
-      noData: job.nodata,
-      metadata: {
-        sun_time: new Date(r.sunTime).toISOString(),
-        sun_azimuth_deg: r.azimuthDeg.toFixed(4),
-        sun_elevation_deg: r.elevationDeg.toFixed(4),
-        cell_m: String(cellM(d)),
-        ...job.metadata,
-      },
-    });
-    return new Blob([bytes], { type: "image/tiff" });
+    return out;
+  }
+
+  // --- the export pass -----------------------------------------------------
+
+  /**
+   * Direct sun over exactly `frame`, mapped through `job`: see *The export
+   * pass*. A second request for the same frame and sun reuses the last pass,
+   * or joins it while it still runs.
+   */
+  async readFrame(frame: ExportFrame, job: ExportJob): Promise<NearRead> {
+    const key = `${frame.centre.lng},${frame.centre.lat},${frame.sizeM},${this.sunTime}`;
+    if (this.exportGrid?.key !== key) {
+      const entry = { key, grid: this.exportPass(frame, key) };
+      this.exportGrid = entry;
+      // A failed pass is not kept: the next request tries again.
+      entry.grid.catch(() => {
+        if (this.exportGrid === entry) this.exportGrid = null;
+      });
+    }
+    const grid = await this.exportGrid.grid;
+    return nearRead(grid.domain, grid.values, grid, job);
+  }
+
+  private async exportPass(frame: ExportFrame, key: string): Promise<IndexGrid> {
+    const fail = (reason: "not-ready" | "failed", detail: string) => new UsdExportError(SUNLIGHT_USD_NAME, reason, detail);
+    if (!this.supported) throw fail("not-ready", "this GPU cannot render float targets");
+    const { lng, lat } = frame.centre;
+    const sunTime = this.sunTime;
+    const sun = sunPosition(new Date(sunTime), lng, lat);
+    if (sun.elevationDeg < MIN_SUN_ELEVATION_DEG) throw fail("not-ready", "the sun is too low");
+    const grid = exportGridFor(frame.sizeM, this.gridSize(EXPORT_MAX_CELLS));
+    const domain = makeDomain(lng, lat, grid.size, grid.domainM);
+
+    // Its own store and occluders: the display's plan and meshes are not touched.
+    const store = new TileStore(this.sources);
+    const tiles = exportTiles(domain);
+    const counts = await settle(store, tiles);
+    if (counts.failed) throw fail("failed", `${counts.failed} occluder tile(s) failed to load`);
+    const occluders = new Occluders(this.occluderMaterials());
+    try {
+      occluders.place({
+        covered: tiles,
+        treesOf: (tile) => store.featuresOf("trees", tile),
+        prismsOf: (tile) => triangulateTile(tile, store.featuresOf("buildings", tile)),
+        domain,
+        fallbackHeightM: this.fallbackHeightM,
+        nearReachM: Infinity,
+      });
+      const covered = coveredKeys(tiles);
+      const reach = reachVector(sun.azimuthDeg, sun.elevationDeg);
+      const values = await new Promise<Float32Array>((resolve, reject) => {
+        this.pending.push({
+          kind: "run",
+          run: (renderer) => {
+            if (!renderer) return reject(fail("not-ready", "the layer is not on the map"));
+            const level: Level = { domain, target: null };
+            try {
+              this.lightPass(renderer, level, sun.azimuthDeg, sun.elevationDeg, true, occluders);
+              resolve(this.readIndex(renderer, level.target!, domain, covered, reach));
+            } catch (e) {
+              reject(fail("failed", e instanceof Error ? e.message : String(e)));
+            } finally {
+              level.target?.dispose();
+            }
+          },
+        });
+        this.repaint();
+      });
+      return { key, domain, values, sunTime, ...sun };
+    } finally {
+      occluders.dispose();
+    }
   }
 
   /**
@@ -936,13 +887,9 @@ export class ThreeSunlightLayer extends ThreeLayer {
     if (this.state === "ready") this.graph.clear(LPI_NODE);
     this.state = "off";
     this.store.onChange = null;
-    for (const set of this.crowns.values()) {
-      set.mesh.dispose();
-      // The layer's own copy; the tree layer's cached hull is left alone.
-      set.geometry.dispose();
-    }
-    this.crowns.clear();
-    for (const m of [this.prisms, this.floors, this.squares, this.overlay]) m.geometry.dispose();
+    this.occluders.dispose();
+    this.overlay.geometry.dispose();
+    this.exportGrid = null;
     for (const m of [this.crownMaterial, this.prismMaterial, this.footMaterial, this.coverMaterial, this.overlayMaterial]) {
       m.dispose();
     }
@@ -954,8 +901,28 @@ export class ThreeSunlightLayer extends ThreeLayer {
   }
 }
 
-/** Replace a geometry's positions; a non-indexed triangle soup. */
-function setPositions(geometry: THREE.BufferGeometry, positions: number[] | Float32Array): void {
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setDrawRange(0, positions.length / 3);
+/** A read index grid mapped through an export job, as a GeoTIFF and its values. */
+function nearRead(
+  d: Domain,
+  index: Float32Array,
+  sun: { sunTime: number; azimuthDeg: number; elevationDeg: number },
+  job: ExportJob,
+): NearRead {
+  const values = new Float32Array(index.length);
+  for (let i = 0; i < index.length; i++) values[i] = Number.isNaN(index[i]) ? job.nodata : job.transform(index[i]);
+  const grid: NearGrid = {
+    size: d.size,
+    values,
+    nodata: job.nodata,
+    domain: d,
+    sunTime: sun.sunTime,
+    metadata: {
+      sun_time: new Date(sun.sunTime).toISOString(),
+      sun_azimuth_deg: sun.azimuthDeg.toFixed(4),
+      sun_elevation_deg: sun.elevationDeg.toFixed(4),
+      cell_m: String(cellM(d)),
+      ...job.metadata,
+    },
+  };
+  return { tiff: nearGridTiff(grid), grid };
 }

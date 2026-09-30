@@ -29,6 +29,7 @@ These explain the product, the structure, and the process around the specs.
 | the three.js layer host (`src/lib/three`, not a layer) | [`src/lib/three/specs/spec.md`](../src/lib/three/specs/spec.md) |
 | the place (`src/place.ts`, `src/lib/place`) | [`src/lib/place/specs/spec.md`](../src/lib/place/specs/spec.md) |
 | data sources (`src/sources.ts`, `src/lib/tiles`, the schemas) | [`src/lib/tiles/specs/spec.md`](../src/lib/tiles/specs/spec.md) |
+| the USD export (`src/lib/usd`, each layer's `usd.ts`) | [`src/lib/usd/specs/spec.md`](../src/lib/usd/specs/spec.md) |
 
 ## Keeping these honest
 

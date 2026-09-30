@@ -6,7 +6,10 @@ here require this file to change first.
 Modules: `src/layers/sunlight/` — `index.ts` (record, settings, exports),
 `sunlightLayer.ts` (the custom layer), and
 the pure modules `sun.ts`, `state.ts`, `transmittance.ts`, `frame.ts`,
-`tileGrid.ts`, `geotiff.ts`. Its tile fetching, the z14 grid, the
+`tileGrid.ts`, `geotiff.ts`, `ramp.ts`, `nearGrid.ts` (a grid written as a
+GeoTIFF), `occluders.ts` (one set of placed occluders and the scenes a light
+pass draws, the display's or an export pass's), and `usd.ts` (the USD package,
+`src/lib/usd/specs/spec.md`). Its tile fetching, the z14 grid, the
 per-tile building triangulation and the ground footprint live in
 `src/lib/tiles/`, shared with the ambient-occlusion layer; this spec still
 defines their behaviour (*Data*, *Coverage*, *Recompute*).
@@ -310,6 +313,10 @@ never writes depth. For each fragment it:
 
 ### Ramp
 
+The table lives once, as `SUNLIGHT_RAMP` in `ramp.ts`. The shader takes it as
+a uniform, and `sunlightRampAt(index)` is its CPU twin, which the USD export
+colours with.
+
 | index | colour |
 | --- | --- |
 | 0 | `#2b2f6b` |
@@ -415,8 +422,57 @@ Float32 GeoTIFF of the whole **near** grid (the far grid is for display):
   (direct-sun transmittance) and pointing at this spec.
 
 The pixels are read back in strips of 256 rows, so the whole grid is never held
-twice at RGBA width. `geotiff.ts` is a hand-written writer with no dependency.
-It writes only the tags listed in its header comment.
+twice at RGBA width. The same read also hands back the values it wrote
+(`NearGrid`: `size`, `values` with rows from the north, `nodata`, the `Domain`,
+the sun time and the GDAL metadata), so the USD export makes its texture and
+its GeoTIFF from one read. `geotiff.ts` is a hand-written writer with no
+dependency. It writes only the tags listed in its header comment.
+
+`exportUsd(frame)` (the mount's) returns this layer's USD package, from an
+export pass over the frame (below): the index grid through the ramp as a
+ground texture, with its GeoTIFF beside it. `exportLightUsd(frame)` returns the
+scene's light package: one `DomeLight`, in every export, with the sun at the
+set time (`sunPosition` at the frame's centre) recorded in its metadata. It
+needs no tiles, no GPU and no visible overlay. See `src/lib/usd/specs/spec.md`
+(*Light*).
+
+## The export pass
+
+The USD export needs direct sun over an arbitrary square (0.5–10 km), but the
+display computes only the near grid, whose side follows the zoom. So an
+export runs one extra light pass over exactly the requested frame. It uses
+the same light pass as the display, with its own inputs:
+
+- **Grid.** Centred on the frame's centre, side `sizeM`, `n = min(ceil(sizeM /
+  0.5), 4096, MAX_TEXTURE_SIZE)` cells per side (`exportGridFor(sizeM, maxCells)` in
+  `frame.ts`). Cells are 0.5 m up to a 2,048 m side, and grow beyond it
+  (about 2.44 m at 10 km).
+- **Tiles.** Its own `TileStore`, over every z14 tile within the frame grown
+  by `FETCH_MARGIN_M` on every side, so nothing that could shade the frame is
+  missing. The display's store and plan are untouched. A tile that fails
+  rejects the export with `failed`.
+- **Occluders.** The same rules as the display (*Trees*, *Buildings*), placed
+  in the export grid's frame into their own meshes. The display's placed
+  occluders are not moved. Building occluders and tree crowns are gathered by
+  the same code the display's rebuild uses.
+- **Sun.** The layer's current sun time, at the frame's centre. Below
+  `MIN_SUN_ELEVATION_DEG`, the pass rejects with `not-ready`, as does an
+  unsupported GPU.
+- **When.** The CPU work (fetch, decode, placement) runs outside MapLibre's
+  frame. The GPU work (the light pass into a target of its own, then the strip
+  readback) is queued like a probe and served inside `prerender`. The target
+  and the export meshes are disposed straight after the readback.
+- **Values.** The readback classifies cells exactly as the display export
+  does: roof, outside and incomplete are NoData. With the margin fetched, a
+  cell is incomplete only next to a failed tile, which has already rejected.
+  The index grid is kept, keyed by the frame and the sun time, until the next
+  export pass or `dispose`. A second request for the same frame and sun time
+  (the PET overlay's) maps the kept grid through its own transform, with no
+  second pass.
+
+`LpiField.readFrame(frame, transform, nodata, metadata)` is this pipeline,
+published with every result, and `exportUsd` uses it with the identity and
+`-1`.
 
 ## The LPI node
 
@@ -433,7 +489,10 @@ no deps.
   - `readNear(transform, nodata)`: this layer's export pipeline, returning the
     near grid as a GeoTIFF `Blob` with each value mapped through `transform`
     and non-complete cells written as `nodata`. `exportGeoTiff()` is
-    `readNear(identity, -1)`.
+    `readNear(identity, -1)`;
+  - `readFrame(frame, transform, nodata, metadata)`: the export pass (*The
+    export pass*) over a frame, resolving to `{ tiff, grid }`, the GeoTIFF and
+    the `NearGrid` it was written from, each value mapped through `transform`.
 - **Clear.** Whenever the state leaves `ready`, and on `dispose`.
 - **State.** Every state change is set on the node (`graph.setState`) before
   the publish or clear it causes. That is how a dependent reports `zoom`,

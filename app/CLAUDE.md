@@ -51,10 +51,15 @@ src/
       index.ts        SunlightSettings (the moment is the host's); the entry
       records.ts      sunlightRecord() GeoLibre record
       mount.ts        mountSunlight() — adds the sunlight.lpi node
-      sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe, export
-      sun.ts, state.ts, transmittance.ts, frame.ts, tileGrid.ts, geotiff.ts
+      sunlightLayer.ts ThreeSunlightLayer — light pass, overlay, probe,
+                      export, and the USD export pass over any square
+      occluders.ts    placed crowns/prisms/footprints/coverage and their
+                      scenes: the display's set, or an export pass's own
+      sun.ts, state.ts, transmittance.ts, frame.ts, tileGrid.ts, geotiff.ts,
+      ramp.ts, nearGrid.ts
                       the pure parts: sun position, state gate, α table,
-                      grid/shear maths, tile planning/coverage, GeoTIFF writer
+                      grid/shear maths, tile planning/coverage, GeoTIFF
+                      writer, the ramp table + its CPU twin
       *.test.ts
       specs/spec.md
     ambient-occlusion/
@@ -95,8 +100,18 @@ src/
                       its own specs/spec.md
     tiles/            shared by the self-fetching layers (sunlight, AO): z14
                       grid, TileStore (generic over its sources: fetch +
-                      decode + cache), building prisms, ground footprint;
-                      the data-sources specs/spec.md; *.test.ts beside them
+                      decode + cache), settle (wait for a store of your
+                      own), building prisms, ground footprint; the
+                      data-sources specs/spec.md; *.test.ts beside them
+    usd/              the USD export's shared writer: .usda text, stored
+                      zip + .usdz, ExportFrame, ground/raster packages, the
+                      root layer; knows no layer; its own specs/spec.md.
+                      Each participating layer adds a usd.ts (buildings,
+                      tree, sunlight, temperature, basemaps)
+    sceneExport.ts    the host's scene-export rules: its participants in
+                      stack order, and when it may start (pure, tested)
+    colour.ts         hex → sRGB, sRGB → linear, a ramp of stops: shared by
+                      the layers' ramps and src/lib/usd (pure, tested)
   ui/
     Panel.tsx       Panel / Toggle / Slider primitives
     Compass.tsx     bearing rose
@@ -188,8 +203,9 @@ other.**
    daylight range are `PLACE` in `src/place.ts`; record names and dataset facts
    (such as the fallback tree height) are descriptor fields
    (`src/lib/place/specs/spec.md`). *Guard: `lib/tiles/structure.test.ts`.*
-9. **The shared modules (`src/lib/tiles`, `mount`, `dag`, `three`, `place`)
-   import nothing from `src/layers/`.** `useMapEngine.ts` is the one exception,
+9. **The shared modules (`src/lib/tiles`, `mount`, `dag`, `three`, `place`,
+   `usd`, and the single-file `colour.ts` and `sceneExport.ts`) import
+   nothing from `src/layers/`.** `useMapEngine.ts` is the one exception,
    because it is the host. *Guard: `lib/tiles/structure.test.ts`.*
 
 Moving the app to another city should touch `src/sources.ts` and
@@ -219,6 +235,8 @@ Commands (run from `app/`): `npm run dev` (port 5173), `npm run build`,
 - `ThreeLayer`'s lifecycle, on a fake renderer;
 - the tile store (on a fake `fetch`) and building prisms;
 - the schemas, with MapLibre's own filter evaluator;
+- the USD writers (`.usda`, zip, `.usdz`, the frame, the root) and each
+  layer's USD package, built from fake features;
 - assertions about the source tree itself (`lib/tiles/structure.test.ts`,
   the guards for the portability rules above);
 - assertions about the served model folder (every `.glb` is CC-BY, prepared,

@@ -1,4 +1,5 @@
-import type { LpiField, ProbeResult } from "../sunlight";
+import { hexRgb, interpolateStops, type Rgb } from "../../lib/colour";
+import type { LpiField, NearRead, ProbeResult } from "../sunlight";
 
 /**
  * PET from LPI: the formula, its GLSL form, the ramp and the comfort classes.
@@ -8,6 +9,12 @@ import type { LpiField, ProbeResult } from "../sunlight";
 
 /** The layer's DAG node, and the nodes it derives from. */
 export const PET_NODE = "temperature.pet";
+
+/** PET over the export frame, and the parameters it was computed with. */
+export interface PetRead {
+  read: NearRead;
+  params: PetParams;
+}
 
 export interface PetParams {
   /** Global irradiance, W/m². */
@@ -81,22 +88,12 @@ export const PET_RAMP: readonly [number, string][] = [
 export const PET_RAMP_MIN = PET_RAMP[0][0];
 export const PET_RAMP_STEP = PET_RAMP[1][0] - PET_RAMP[0][0];
 
-const hexRgb = (hex: string): [number, number, number] => [
-  parseInt(hex.slice(1, 3), 16) / 255,
-  parseInt(hex.slice(3, 5), 16) / 255,
-  parseInt(hex.slice(5, 7), 16) / 255,
-];
-
 export const PET_RAMP_RGB = PET_RAMP.map(([, hex]) => hexRgb(hex));
+const PET_STOPS = PET_RAMP.map(([pet], i) => [pet, PET_RAMP_RGB[i]] as const);
 
 /** The ramp at a PET, as sRGB 0–1 — the shader's `ramp`, on the CPU. */
-export function petRampAt(pet: number): [number, number, number] {
-  const n = PET_RAMP.length;
-  const s = Math.min(Math.max((pet - PET_RAMP_MIN) / PET_RAMP_STEP, 0), n - 1);
-  const i = Math.min(Math.floor(s), n - 2);
-  const t = s - i;
-  const [a, b] = [PET_RAMP_RGB[i], PET_RAMP_RGB[i + 1]];
-  return [0, 1, 2].map((k) => a[k] + (b[k] - a[k]) * t) as [number, number, number];
+export function petRampAt(pet: number): Rgb {
+  return interpolateStops(PET_STOPS, pet);
 }
 
 // ---------------------------------------------------------------------------

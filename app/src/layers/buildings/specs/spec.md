@@ -3,7 +3,8 @@
 Source of truth for the extruded-building layer. Behaviour changes here require
 this file to change first.
 
-Module: `src/layers/buildings/index.ts`
+Modules: `src/layers/buildings/index.ts`, `schema.ts`, and `usd.ts` (the USD
+package; see *USD export*)
 
 ## Purpose
 
@@ -124,6 +125,27 @@ ground are unreadable over lit building faces. `labelsOnTop: true` calls
 The record's own `opacity` is fixed at `1`; the user-facing opacity is
 `style.extrusionOpacity`. The two are distinct in GeoLibre and must not be
 conflated.
+
+## USD export
+
+`exportBuildingsUsd(source, settings, frame)` returns the buildings as a USD
+package, as the extrusion draws them now. `src/lib/usd/specs/spec.md`
+(*Buildings*) is the contract. This layer has no mount, so the host calls it
+directly (the host's allowlist admits `export…Usd`). It reads through this
+layer's own rules and nothing else:
+- `buildingTiles(source)`, so `buildingHeight` drops `hide_3d` and non-positive
+  heights;
+- `meetsMinHeight(settings.minHeight)` when `minHeight > 0`, the JS twin of
+  the extrusion's filter;
+- the top at `height × heightScale`, the base at 0;
+- the colour the extrusion paints: `flatColor`, or `PALETTES` interpolated at
+  the true height.
+
+It keeps each **footprint** with a vertex inside the frame, not each feature,
+and reports `extentM`, the half-side covering what it kept, which the basemap
+grows to.
+
+It is written only while `visible`.
 
 ## Invariants
 

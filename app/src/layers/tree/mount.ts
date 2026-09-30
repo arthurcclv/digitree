@@ -3,6 +3,8 @@ import { TREE_LAYER_ID } from "./constants";
 import { treeMeshRecord, treePointsLayer } from "./records";
 import type { TreeSource } from "./schema";
 import { ThreeTreeLayer, type ModelStatus } from "./treeLayer";
+import { exportTreesUsd } from "./usd";
+import type { ExportFrame, UsdPackage } from "../../lib/usd";
 import type { TreeSettings } from "./index";
 
 export interface TreeMountHooks {
@@ -10,7 +12,10 @@ export interface TreeMountHooks {
   onModelStatus?: (status: ModelStatus) => void;
 }
 
-export type TreeMount = LayerMount<TreeSettings>;
+export interface TreeMount extends LayerMount<TreeSettings> {
+  /** The meshes as a USD package, as drawn now. See `src/lib/usd/specs/spec.md`. */
+  exportUsd(frame: ExportFrame): Promise<UsdPackage>;
+}
 
 /**
  * The tree layer attached to a map: both records, and the three.js half with
@@ -51,6 +56,7 @@ export function mountTree(
       // Points first: the meshes sit above the circles.
       return [treePointsLayer(settings!, trees), treeMeshRecord(settings!)];
     },
+    exportUsd: (frame) => exportTreesUsd(trees, settings!, frame),
     dispose() {
       native.dispose();
       tree.dispose();

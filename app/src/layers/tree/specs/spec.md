@@ -10,6 +10,7 @@ Modules:
   normalisation that makes a downloaded model instanceable
 - `src/layers/tree/placement.ts` — per-tree variation derived from `tree_id`
   (owns the fact that no tree is identical to its neighbour)
+- `src/layers/tree/usd.ts` — the meshes as a USD package (see *USD export*)
 
 ## Purpose
 
@@ -924,6 +925,23 @@ The `ThreeTreeLayer` instance outlives style changes:
 
 A basemap swap also discards the vector source, so the instance list is empty
 until tiles reload. The refresh on `idle` covers this; no special case is needed.
+
+## USD export
+
+`mountTree`'s `exportUsd(frame)` returns the meshes as a USD package, as the
+layer draws them now. `src/lib/usd/specs/spec.md` (*Trees*) is the contract;
+this layer's part is that the package reuses its own rules:
+- the tree source, read with `treeOf`, over the frame's z14 tiles, through a
+  `TileStore` of the export's own. The meshes read MapLibre's loaded tiles,
+  which cover only the viewport;
+- the `kind` filter and the `fallbackHeightM` rule exactly as the meshes apply
+  them, with one tree per `tree_id`;
+- `formOf`, `rotationOf`, and the scale `height × heightScale / baseHeightM`;
+- the prototypes of the **active** mesh source: `buildForm` with the shared
+  materials, or each form's glTF at level 0 through `normalizeModel`, its
+  textures re-encoded as PNG.
+
+It is written only while the meshes are visible. The circles are not exported.
 
 ## Settings
 

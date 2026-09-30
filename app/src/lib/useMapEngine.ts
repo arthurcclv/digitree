@@ -2,8 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapLibreMap, config as maplibreConfig, type ErrorEvent } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { createLayerSync, installMapTransformCompat, type LayerSync } from "@geolibre/map";
-import { anchorUnderLabels, hideBasemapBuildings, type Basemap } from "../layers/basemaps";
-import { BUILDINGS_STYLE_LAYER_IDS, buildingsLayer, type BuildingSettings } from "../layers/buildings";
+import { anchorUnderLabels, exportBasemapUsd, hideBasemapBuildings, type Basemap } from "../layers/basemaps";
+import {
+  BUILDINGS_STYLE_LAYER_IDS,
+  buildingsLayer,
+  exportBuildingsUsd,
+  type BuildingSettings,
+} from "../layers/buildings";
 import { mountTree, type ModelStatus, type TreeMount, type TreeSettings } from "../layers/tree";
 import {
   mountSunlight,
@@ -28,6 +33,8 @@ import {
   type ShadedExtrusion,
 } from "../layers/ambient-occlusion";
 import { createGraph } from "./dag";
+import { exportFrame, rootLayer, sceneZip, type UsdPackage } from "./usd";
+import { sceneParticipants, type SceneParticipant } from "./sceneExport";
 import { BUILDINGS, TREES } from "../sources";
 import { PLACE } from "../place";
 import type { Viewpoint } from "./place";
@@ -90,6 +97,13 @@ export function useMapEngine(
   sunlightVisibleRef.current = sunlightSettings.visible;
   const temperatureVisibleRef = useRef(temperatureSettings.visible);
   temperatureVisibleRef.current = temperatureSettings.visible;
+  // What the USD export reads at the moment it runs.
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
+  const treeMeshVisibleRef = useRef(treeSettings.meshVisible);
+  treeMeshVisibleRef.current = treeSettings.meshVisible;
+  const sunTimeRef = useRef(sunlightSettings.sunTime);
+  sunTimeRef.current = sunlightSettings.sunTime;
   // The first mount's settings; every later change reaches the mounts through
   // `update`, in the effect below.
   const initialRef = useRef({ treeSettings, sunlightSettings, aoSettings, temperatureSettings });
@@ -291,6 +305,42 @@ export function useMapEngine(
     [],
   );
 
+  /**
+   * The visible layers as USD, over a `sizeM` square at the map centre: one
+   * package each, and a root referencing them, zipped. Rejects as a whole when any layer does. See the host's part in
+   * `src/lib/usd/specs/spec.md`.
+   */
+  const exportScene = useCallback(async (sizeM: number): Promise<Blob> => {
+    const map = mapRef.current;
+    const mounts = mountsRef.current;
+    if (!map || !mounts) throw new Error("the map is not ready yet");
+    const c = map.getCenter();
+    const frame = exportFrame(c.lng, c.lat, sizeM);
+    const participants = sceneParticipants({
+      buildings: settingsRef.current.visible,
+      sunlight: sunlightVisibleRef.current,
+      temperature: temperatureVisibleRef.current,
+      treeMeshes: treeMeshVisibleRef.current,
+    });
+    // Asked for once, by whichever of the two jobs below needs it first.
+    let buildings: Promise<UsdPackage> | undefined;
+    const buildingsJob = () => (buildings ??= exportBuildingsUsd(BUILDINGS, settingsRef.current, frame));
+    const basemap = basemapRef.current;
+    const jobs: Record<SceneParticipant, () => Promise<UsdPackage>> = {
+      // The ground grows to cover every exported building, so the basemap waits for them.
+      basemap: async () =>
+        exportBasemapUsd(basemap, frame, participants.includes("buildings") ? (await buildingsJob()).extentM : undefined),
+      buildings: buildingsJob,
+      sunlight: () => mounts.sunlight.exportUsd(frame),
+      temperature: () => mounts.temperature.exportUsd(frame),
+      trees: () => mounts.tree.exportUsd(frame),
+      light: () => mounts.sunlight.exportLightUsd(frame),
+    };
+    const packages = await Promise.all(participants.map((p) => jobs[p]()));
+    const sunTime = packages.find((p) => p.sunTime !== undefined)?.sunTime ?? sunTimeRef.current;
+    return sceneZip(rootLayer(frame, packages, Date.now(), sunTime), packages);
+  }, []);
+
   const flyTo = useCallback((view: Viewpoint) => {
     mapRef.current?.flyTo({
       center: view.center,
@@ -332,6 +382,7 @@ export function useMapEngine(
     temperatureStatus,
     exportSunlight,
     exportTemperature,
+    exportScene,
     flyTo,
     zoomBy,
     setPitch,

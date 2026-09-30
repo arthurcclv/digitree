@@ -60,6 +60,7 @@ describe("the host", () => {
     /^BUILDINGS_STYLE_LAYER_IDS$/, // …and its style-layer ids, for anchoring
     /^(anchorUnderLabels|hideBasemapBuildings)$/, // the basemaps extension's style surgery
     /^\w+_NATIVE_LAYER_ID$/, // custom-layer ids, for stacking only
+    /^export\w+Usd$/, // the record-only layers' USD export functions
   ];
 
   test("imports from the layers only mount factories and stacking ids at runtime", () => {

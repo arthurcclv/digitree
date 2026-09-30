@@ -4,6 +4,8 @@ import { LPI_NODE } from "./lpi";
 import { changed, nativeLayer, type LayerMount, type MountContext } from "../../lib/mount";
 import { SUNLIGHT_LAYER_ID, sunlightRecord } from "./records";
 import { ThreeSunlightLayer, type ProbeResult, type SunlightStatus } from "./sunlightLayer";
+import { lightPackage, sunlightPackage } from "./usd";
+import type { ExportFrame, UsdPackage } from "../../lib/usd";
 import type { SunlightSettings } from "./index";
 
 export interface SunlightMountHooks {
@@ -15,6 +17,10 @@ export interface SunlightMount extends LayerMount<SunlightSettings> {
   probe(lng: number, lat: number): Promise<ProbeResult>;
   /** The near grid as a GeoTIFF, or `null` when there is nothing to export. */
   exportGeoTiff(): Promise<Blob | null>;
+  /** The near grid as a USD package. See `src/lib/usd/specs/spec.md`. */
+  exportUsd(frame: ExportFrame): Promise<UsdPackage>;
+  /** The scene's light: a `DomeLight` package, with the set sun as metadata. */
+  exportLightUsd(frame: ExportFrame): Promise<UsdPackage>;
 }
 
 /**
@@ -57,6 +63,12 @@ export function mountSunlight(
     },
     probe: (lng, lat) => sunlight.probe(lng, lat),
     exportGeoTiff: () => sunlight.exportGeoTiff(),
+    exportUsd: (frame) =>
+      sunlight
+        .exportFrame(frame)
+        .then((read) => sunlightPackage(read, frame, [sources.trees.attribution, sources.buildings.attribution])),
+    // No tiles, no GPU, and not gated on the overlay.
+    exportLightUsd: (frame) => Promise.resolve(lightPackage(frame, settings!.sunTime)),
     dispose() {
       native.dispose();
       sunlight.dispose();

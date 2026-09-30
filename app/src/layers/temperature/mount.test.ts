@@ -48,7 +48,7 @@ describe("mountTemperature", () => {
   // it means changing the factory table in the mount spec first (invariant 8).
   test("exposes exactly its members", () => {
     const { temperature, dispose } = mountBoth();
-    expect(Object.keys(temperature).sort()).toEqual(["dispose", "exportGeoTiff", "prepareSync", "probe", "update"]);
+    expect(Object.keys(temperature).sort()).toEqual(["dispose", "exportGeoTiff", "exportUsd", "prepareSync", "probe", "update"]);
     dispose();
   });
 

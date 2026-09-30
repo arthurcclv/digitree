@@ -370,11 +370,16 @@ radius and the buildings' exaggeration and filter reach it through
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
-| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs; exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
+| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs, `exportScene` (the USD export: frame, packages, root, zip); exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
-| `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, building prisms and ground footprint; the *Data sources* spec |
+| `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; the *Data sources* spec |
+| `src/lib/usd/` | the USD export's shared writer: `.usda` text, stored zip and `.usdz`, the `ExportFrame`, ground and raster packages, the root layer and the outer zip; knows no layer; its own spec |
+| `src/lib/sceneExport.ts` | the host's scene-export rules, pure: `sceneParticipants` (who is written, in stack order) and `sceneExportReady`; shared by `useMapEngine` and `App.tsx` |
+| `src/lib/colour.ts` | `hexRgb`, `srgbToLinear`, `interpolateStops`: the one colour reading behind the direct-sun and PET ramps, the buildings' palette colour and `lib/usd`'s linear colours |
+| `src/layers/sunlight/occluders.ts` | one set of placed occluders and the scenes a light pass draws; the display holds one, each USD export pass builds and disposes its own |
+| `src/layers/<name>/usd.ts` | that layer's USD package (buildings, tree, sunlight, temperature, basemaps), exposed as a mount's `exportUsd(frame)` or, for the two mount-less folders, as `exportBuildingsUsd` / `exportBasemapUsd` |
 | `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`. The only place an endpoint lives |
 | `src/lib/place/` | `Place`, `Viewpoint`, local time at a fixed offset; its own spec |
 | `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Xinyi home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |

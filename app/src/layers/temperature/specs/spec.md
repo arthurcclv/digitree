@@ -5,7 +5,8 @@ file to change first.
 
 Modules: `src/layers/temperature/` — `index.ts` (record, settings, exports),
 `temperatureLayer.ts` (the custom layer), and the pure modules `pet.ts` (the
-formula, the ramp, the comfort classes) and `state.ts`.
+formula, the ramp, the comfort classes) and `state.ts`, and `usd.ts` (the USD
+package, `src/lib/usd/specs/spec.md`).
 
 ## Purpose
 
@@ -151,6 +152,14 @@ size, `g0`, `ta`, `v`, and a `definition` naming the quantity (PET, °C), the
 formula, and pointing at this spec. **NoData is `-9999`**, not the direct-sun
 export's `-1`: at the panel's extremes (`G0 = 0`, `Ta = 15`, `V = 10`) PET is
 −8.4 °C, so `-1` is a real value here.
+
+`exportUsd(frame)` (the mount's) returns this layer's USD package: the PET grid
+over the frame, through the ramp (`petRampAt`), as a ground texture 4 cm up,
+above the direct-sun one, with the PET GeoTIFF beside it. It asks the
+`LpiField` for `readFrame(frame, petOf, -9999, …)`, so it reuses the direct-sun
+layer's export pass for that frame and sun time, and covers exactly the same
+cells. It rejects as `not-ready` without a field. See
+`src/lib/usd/specs/spec.md`.
 
 ## The GeoLibre record
 

@@ -3,7 +3,7 @@
  * Pure — no fetch, no GL. See *Data* and *Coverage* in `specs/spec.md`.
  */
 import { TILE_ZOOM, tileKey, tileOfMercator, type TileId } from "../../lib/tiles";
-import { MIN_SUN_ELEVATION_REACH_M, type Domain, type MercatorPoint, type Vec2 } from "./frame";
+import { makeDomain, MIN_SUN_ELEVATION_REACH_M, type Domain, type MercatorPoint, type Vec2 } from "./frame";
 
 // The grid itself is shared with the ambient-occlusion layer.
 export { TILE_ZOOM, tileIntersects, tileKey, tileOfLngLat, tileOfMercator, type TileId } from "../../lib/tiles";
@@ -70,4 +70,14 @@ export function classifyByTiles(d: Domain, covered: ReadonlySet<string>, reach: 
   const at = (x: number, y: number) => covered.has(tileKey(tileOfMercator(localToMercator(d, x, y))));
   if (!at(p[0], p[1])) return "outside";
   return at(p[0] + reach[0], p[1] + reach[1]) ? "complete" : "incomplete";
+}
+
+/**
+ * An export pass's tiles: every tile within its grid grown by the fetch margin
+ * on every side, so nothing that could shade the grid is missing. See *The
+ * export pass*.
+ */
+export function exportTiles(d: Domain): TileId[] {
+  const reach = makeDomain(d.centre[0], d.centre[1], 1, d.domainM + 2 * FETCH_MARGIN_M);
+  return planTiles(reach, [], d.domainM / 2, FETCH_MARGIN_M);
 }

@@ -1,4 +1,6 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
+import type { ExportFrame, UsdPackage } from "../../lib/usd";
+import { basemapPackage } from "./usd";
 
 /**
  * OpenFreeMap serves OpenStreetMap data as OpenMapTiles-schema vector tiles —
@@ -98,4 +100,14 @@ export function anchorUnderLabels(map: MapLibreMap, layerIds: string[]): void {
       }
     }
   }
+}
+
+/**
+ * The basemap as a USD package: `basemap`'s style, top-down over the frame
+ * grown to `extentM` (the buildings package's half-side), without its
+ * buildings or labels. See *Basemap* in
+ * `src/lib/usd/specs/spec.md`.
+ */
+export function exportBasemapUsd(basemap: Basemap, frame: ExportFrame, extentM?: number): Promise<UsdPackage> {
+  return basemapPackage(basemap.styleUrl, frame, OSM_ATTRIBUTION, hideBasemapBuildings, extentM);
 }

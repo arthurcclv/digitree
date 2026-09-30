@@ -297,6 +297,15 @@ than a poster with controls over it.
   is a stat line, not a sentence: `.hint` (11px `--fg-muted`) stays in the
   stylesheet, but no card uses it, and reaching for it again means arguing for
   prose over a number.
+- **USD export card**: the last card, and no new component. A **Side** slider
+  (km, 0.5–10 in 0.5 steps, one decimal; a typed value snaps to the step)
+  sets the exported square. A plain-value `.stat-line` *Includes* names the
+  layers the export will write, in stack order and joined with ` · ` (the
+  visible ones, plus the basemap and the light, which are always written).
+  One `.btn.secondary` reads **Export USD**, or "Exporting…" while it runs. It
+  is disabled like the GeoTIFF buttons: until the map is ready and each
+  visible raster overlay is ready. A *Failed* stat line appears under the
+  button, only after a rejected export.
 - **Badge** (`.badge`): pill, 11px/600. Variants: `sync` (green on `#123a2b`, the
   layer sync is live), `loading` (neutral blue `#7fb8e6`), and `tile-error`
   (amber on `#4a3410`). The old blinking square is replaced by a labelled badge —

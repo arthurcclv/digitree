@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { LPI_NODE, LPI_SAMPLE_GLSL, type Domain, type LpiField, type SunlightState } from "../sunlight";
 import type { Graph } from "../../lib/dag";
+import type { ExportFrame } from "../../lib/usd";
 import { mercatorFrame, PREMULTIPLIED_OVER, projection, ThreeLayer } from "../../lib/three";
 import {
   PET_NODE,
@@ -15,6 +16,7 @@ import {
   petRange,
   type PetField,
   type PetParams,
+  type PetRead,
   type PetProbe,
 } from "./pet";
 import { temperatureState, type TemperatureState } from "./state";
@@ -191,14 +193,18 @@ export class ThreeTemperatureLayer extends ThreeLayer {
     const field = this.field;
     if (!field || this.state() !== "ready") return Promise.resolve(null);
     const p = { ...this.params };
-    return field.readNear((lpi) => petOf(lpi, p), PET_NODATA, {
-      g0_w_m2: String(p.g0),
-      ta_c: String(p.ta),
-      v_m_s: String(p.v),
-      definition:
-        "physiological equivalent temperature (PET, degC) = 0.0126*(G0*(0.5986*LPI+0.0116)) + 1.2537*Ta - 2.5537*V - 1.6374; " +
-        "see app/src/layers/temperature/specs/spec.md",
-    });
+    return field.readNear((lpi) => petOf(lpi, p), PET_NODATA, petMetadata(p));
+  }
+
+  /**
+   * PET over exactly `frame`, from the direct-sun layer's export pass, which
+   * the direct-sun USD package shares: the USD export's. `null` without a field.
+   */
+  exportFrame(frame: ExportFrame): Promise<PetRead | null> {
+    const field = this.field;
+    if (!field || this.state() !== "ready") return Promise.resolve(null);
+    const p = { ...this.params };
+    return field.readFrame(frame, (lpi) => petOf(lpi, p), PET_NODATA, petMetadata(p)).then((read) => ({ read, params: p }));
   }
 
   status(): TemperatureStatus {
@@ -289,4 +295,16 @@ export class ThreeTemperatureLayer extends ThreeLayer {
     // The external textures are deliberately not disposed; see their field.
     super.dispose();
   }
+}
+
+/** The PET GeoTIFF's GDAL metadata: the parameters and the definition. */
+function petMetadata(p: PetParams): Record<string, string> {
+  return {
+    g0_w_m2: String(p.g0),
+    ta_c: String(p.ta),
+    v_m_s: String(p.v),
+    definition:
+      "physiological equivalent temperature (PET, degC) = 0.0126*(G0*(0.5986*LPI+0.0116)) + 1.2537*Ta - 2.5537*V - 1.6374; " +
+      "see app/src/layers/temperature/specs/spec.md",
+  };
 }

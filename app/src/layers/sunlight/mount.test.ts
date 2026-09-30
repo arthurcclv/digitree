@@ -38,7 +38,7 @@ describe("mountSunlight", () => {
   // it means changing the factory table in the mount spec first (invariant 8).
   test("exposes exactly its members", () => {
     const { m } = mount();
-    expect(Object.keys(m).sort()).toEqual(["dispose", "exportGeoTiff", "prepareSync", "probe", "update"]);
+    expect(Object.keys(m).sort()).toEqual(["dispose", "exportGeoTiff", "exportLightUsd", "exportUsd", "prepareSync", "probe", "update"]);
     m.dispose();
   });
 

@@ -7,7 +7,9 @@ export {
 } from "./sunlightLayer";
 export { SUNLIGHT_MIN_ZOOM, type SunlightState } from "./state";
 // The DAG node, for the layers that derive from the index.
-export { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField, type LpiLevel } from "./lpi";
+export { LPI_NODE, LPI_SAMPLE_GLSL, type LpiField, type LpiLevel, type NearGrid, type NearRead } from "./lpi";
+// A read of the export pass as a USD raster, for a derived layer's package.
+export { nearRaster } from "./usd";
 export type { Domain } from "./frame";
 export { MIN_SUN_ELEVATION_DEG } from "./sun";
 export type { TileCounts } from "../../lib/tiles";

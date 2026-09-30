@@ -28,6 +28,21 @@ export function nearGridFor(zoom: number): { domainM: number; size: number } {
   return zoom >= NEAR_FINE_MIN_ZOOM ? { domainM: DOMAIN_M, size: GRID_SIZE } : { domainM: WIDE_DOMAIN_M, size: GRID_SIZE };
 }
 
+/** The finest cell an export pass uses, in metres: the near grid's. See *The export pass*. */
+export const EXPORT_MIN_CELL_M = 0.5;
+/** An export pass's most cells per side: one 4096² target, as the near grid's. */
+export const EXPORT_MAX_CELLS = 4096;
+
+/**
+ * An export pass's grid for a side: 0.5 m cells up to a 2,048 m side, then as
+ * many cells as allowed (`maxCells`: `EXPORT_MAX_CELLS` within the GPU's
+ * texture limit) stretched over it.
+ */
+export function exportGridFor(sideM: number, maxCells: number): { domainM: number; size: number } {
+  const size = Math.min(Math.ceil(sideM / EXPORT_MIN_CELL_M - 1e-9), maxCells);
+  return { domainM: sideM, size };
+}
+
 /** The far grid, for the distant ground of a pitched view — 8 m cells. */
 export const FAR_DOMAIN_M = 16_384;
 export const FAR_GRID_SIZE = 2048;

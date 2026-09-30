@@ -6,6 +6,159 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-30 — USD export review: one pass joined, host rules pure, shared colour
+
+**Decision.** After a review of the USD export:
+- **A running export pass is joined.** `readFrame` keeps the pass while it
+  runs, not only once it finishes, so the scene export's two overlays, which
+  ask together, run one pass. A failed pass is not kept.
+- **The host's rules are pure.** Which layers are exported, in what order, and
+  when the button enables live in `src/lib/sceneExport.ts`. The host and the
+  panel's *Includes* line share them, so the two cannot drift.
+- **`settle` belongs to `lib/tiles`.** It drives a `TileStore`, so it sits
+  beside it, not in the USD writer. `lib/usd` exports only what a layer or the
+  host uses.
+- **`nearExtentM` moved back into `sunlight/frame.ts`.** The export frame's
+  side is the user's (*The side is the user's*, below), so the only reason to
+  share it was gone.
+- **One colour reading.** `src/lib/colour.ts` replaces four hex parsers and
+  three ramp interpolations (direct sun, PET, the buildings' palette).
+- **Specced, not removed.** The raster packages' extra metadata (`quantity`,
+  `sunTime`, PET's parameters), the basemap's `style`, `kind = "component"`,
+  sunlight's building attribution, the centred-grid check (as `failed`) and
+  the *Includes* line.
+
+**Rules out.** A second pass per export, and a host that re-encodes the
+visibility table.
+
+---
+
+## 2026-09-30 — The USD export's light is a dome, `light.usdz`
+
+**Decision.** The export's light is `light.usdz`, referenced as `/World/Light`:
+one `DomeLight` at `/Light/Dome`, intensity 1000, white and untextured, in
+every export, day or night. It replaces the sun `DistantLight` below, on
+request. The sun's time, azimuth and elevation stay in its metadata, so a
+consumer can add a sun. The sunlight mount's `exportSunUsd` became
+`exportLightUsd`, which always returns a package.
+
+**Rules out.** Directional sunlight and cast shadows in the exported scene: a
+dome lights evenly from the whole sky.
+
+---
+
+## 2026-09-30 — The USD export carries the sun as a `DistantLight` *(superseded above)*
+
+**Decision.** Every USD export whose sun is above the horizon adds
+`sun.usdz`, referenced from the root as `/World/Sun`: one `DistantLight` whose
+orient turns its local `+Z` onto the vector towards the sun. The sun comes from
+the direct-sun layer's `sunPosition` at the set time and the frame's centre,
+the same sun the shadows are cast with. It is exported whatever the overlays
+show. Intensity is a neutral 1; the angle is 0.53°, the sun's diameter. The
+mount exposes it as `exportSunUsd(frame)`, since the host may not compute the
+sun itself.
+
+**Rules out.** A physical unit for the intensity: renderers disagree, so the
+consumer scales it. A light at night, or a moon.
+
+**Checked.** In a browser export the light's azimuth and elevation equal the
+panel's readout (188.58°, 61.91°). A Storm render seemed to show it lighting
+the sun-facing sides, but `usdrecord` falls back to its own light: renders with
+a scene light at intensity 0 and 1000 are identical. So no render verified it.
+
+---
+
+## 2026-09-30 — Direct sun and PET export over the whole square, from an export pass
+
+**Decision.** At export time the direct-sun layer runs one extra light pass
+over exactly the export square, with its own tile store (the square plus the
+1,714 m fetch margin), its own occluders and render target, off screen. The
+display is not touched. The grid is up to 4,096 cells per side: 0.5 m to a
+2,048 m side, about 2.44 m at 10 km. PET maps the same pass's index grid,
+which is kept for the frame and sun, so both overlays cover identical cells
+from one pass. The display's occluder meshes moved into `occluders.ts`, so
+both sets share the placement code.
+
+**Supersedes** the crop in the entry below: a smaller side no longer crops
+the display grid, and a larger side no longer leaves the overlays at 2 or
+4 km. The `stale` rejection is gone.
+
+**Measured.** At 10 km: 16% NoData (roofs), values in every quadrant,
+identical NoData cells in both GeoTIFFs, and 50 s end to end (was 26 s).
+0.5 km: 1,000² cells, 21 s.
+
+**Revisit if** 2.44 m cells at 10 km are too coarse. Tiled passes at a fixed
+cell size were considered: 10,000² cells at 1 m is about 400 MB per GeoTIFF.
+
+---
+
+## 2026-09-30 — The USD export's side is a slider, 0.5–10 km
+
+**Decision.** The exported square's side is the USD export card's **Side**
+setting (default 2 km), no longer the direct-sun grid's zoom-driven 2 or
+4 km. Buildings, trees and the ground follow it. The direct-sun and PET
+overlays are cropped to a smaller side (GeoTIFF rewritten, centre kept) and
+keep their own grid under a larger one, since they have no values beyond it.
+The raster stale check is now the centre only. *(Superseded above: an export
+pass now computes the overlays over the whole square.)*
+
+The basemap capture is also capped at 4,096 px, MapLibre's default canvas
+limit. Headless Chrome refused an 8,192² WebGL canvas although
+`MAX_TEXTURE_SIZE` said 8,192, and the 10 km export failed until then.
+
+**Measured.** At 10 km around Xinyi: 1,345 building meshes (43 MB),
+95,705 trees (27 MB), and about 220 MB zipped in all, mostly the two
+GeoTIFFs; 26 s end to end, and every package passes `usdchecker`.
+
+**Rules out.** Overlays beyond their near grid (the far grid's 8 m cells are
+for display), and a sharper basemap at large sides (it would need a tiled
+capture).
+
+---
+
+## 2026-09-30 — The scene exports as USD: one `.usdz` per layer, and a root that references them
+
+**Decision.** The **Export USD** button writes the visible layers as OpenUSD,
+in the browser, with hand-written writers (`src/lib/usd`, spec there). Each
+layer builds its own package in its own `usd.ts`, from its own readings
+(`treeOf`, `buildingHeight`, `rotationOf`, the ramps). The host builds one
+`ExportFrame` and a `scene.usda` that references each package, and zips it
+all. Settled with the spec:
+- **What you see, not a re-derivation.** Current settings, sun time, mesh
+  source and basemap. Only visible layers are written.
+- **One frame for every file.** Z-up metres, origin at the map centre. The
+  square is the direct-sun near grid's (`nearExtentM`, moved to `lib/tiles` so
+  the host need not ask sunlight). A raster result of another view rejects as
+  `stale`.
+- **Per layer.** Buildings are one `Mesh` per feature, coloured as painted,
+  keeping only the **footprints** that touch the frame. OpenMapTiles merges
+  footprints into multipolygons, and keeping whole features dragged in
+  buildings up to 3 km out. The basemap ground grows to cover every exported
+  building (the buildings package's `extentM`); the raster quads stay
+  frame-sized, since they have no data outside it.
+  Trees are a `PointInstancer`, with model level 0 or the procedural forms and
+  PNG textures (USDZ allows no WebP). The direct-sun and PET overlays are
+  textured ground quads at 2 and 4 cm, with the GeoTIFF beside the package.
+  The basemap is a hidden, top-down MapLibre capture without buildings or
+  labels.
+- **Guards loosened, by the spec.** The host may import `export…Usd` from a
+  layer, and `lib/usd` joins the shared modules that import no layer.
+
+**Why.** A DCC or simulation tool can light and render the scene, and a
+consumer can swap or drop one layer's file without touching the others.
+Browser-side keeps the one-reading-per-dataset rule; an offline tool would
+re-implement forms, placement and the ramps.
+
+**Rules out.** `.usdc`, animation over sun time, terrain, AO geometry, and
+USD variants for the model ladder.
+
+**Revisit if** consumers need binary files for size (a 2 km scene is about
+160 MB, mostly the two GeoTIFFs), or if the overlay offsets z-fight in a
+target viewer. With a 1 m near clip at 2 km, Hydra Storm bands them; a
+tighter clip range is clean.
+
+---
+
 ## 2026-09-29 — The portability rules are guarded by tests that read the source
 
 **Decision.** The rules in `app/CLAUDE.md`, *Portability rules*, are enforced

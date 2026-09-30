@@ -6,6 +6,8 @@ import {
   minHeightFilter,
   type BuildingSource,
 } from "./schema";
+import { fetchBuildingsUsd } from "./usd";
+import type { ExportFrame, UsdPackage } from "../../lib/usd";
 
 /** Where footprints are, and how one is read. See *Source* in `specs/spec.md`. */
 export {
@@ -156,4 +158,17 @@ export function buildingsLayer(settings: BuildingSettings, source: BuildingSourc
     },
     metadata: { sourceKind: source.sourceKind },
   };
+}
+
+/**
+ * The buildings as a USD package, as the extrusion draws them now. See
+ * *Buildings* in `src/lib/usd/specs/spec.md`.
+ */
+export function exportBuildingsUsd(
+  source: BuildingSource,
+  settings: BuildingSettings,
+  frame: ExportFrame,
+  fetchFn?: typeof fetch,
+): Promise<UsdPackage> {
+  return fetchBuildingsUsd(source, settings, PALETTES, frame, fetchFn);
 }

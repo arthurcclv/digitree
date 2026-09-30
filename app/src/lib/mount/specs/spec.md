@@ -56,13 +56,15 @@ fixed for the mount's life. It returns a
 
 | factory | sources | `S` | hooks | extra members |
 | --- | --- | --- | --- | --- |
-| `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | — |
-| `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
-| `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()` |
+| `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | `exportUsd(frame)` |
+| `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)`, `exportLightUsd(frame)` |
+| `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)` |
 | `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; extrusion: ShadedExtrusion }` | `onStatus(AoState)` | — |
 
 `buildings` gets no mount. Its record builder already needs nothing else, and
-a mount around it would only pass settings through.
+a mount around it would only pass settings through. Its USD export is a plain
+function, `exportBuildingsUsd`, as the basemaps extension's is
+(`src/lib/usd/specs/spec.md`).
 
 ### `mount<Name>(ctx, [sources,] settings, hooks)`
 
@@ -168,8 +170,9 @@ exempting one is a change to this spec.
 
 8. **A mount exposes exactly its members.** A mount's returned object has
    exactly `update`, `prepareSync` and `dispose`, plus the extra members in
-   the factory table above (sunlight and temperature: `probe`,
-   `exportGeoTiff`), and nothing else. A new member is how a host would come
+   the factory table above (tree: `exportUsd`; sunlight: `probe`,
+   `exportGeoTiff`, `exportUsd`, `exportLightUsd`; temperature: `probe`,
+   `exportGeoTiff`, `exportUsd`), and nothing else. A new member is how a host would come
    to push layer-specific state into a layer (a `setUpstreamState`, a
    setter), so adding one means changing that table first.
 9. **The host constructs, wires and names nothing of a layer.**
@@ -184,7 +187,9 @@ exempting one is a change to this spec.
    (`mount…`); the record builders and style-layer ids of the record-only
    layer (`buildingsLayer`, `BUILDINGS_STYLE_LAYER_IDS`); the basemaps
    extension's style functions (`anchorUnderLabels`, `hideBasemapBuildings`);
-   and custom-layer ids used only for stacking (`…_NATIVE_LAYER_ID`). Anything
+   custom-layer ids used only for stacking (`…_NATIVE_LAYER_ID`); and the
+   mount-less folders' USD export functions (`export…Usd`: buildings',
+   basemaps'). Anything
    else is a type import.
 10. **No layer reads another layer's settings.** No non-test module under
     `src/layers/` imports a `…Settings` type from another layer's folder. What

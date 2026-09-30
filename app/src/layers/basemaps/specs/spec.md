@@ -4,7 +4,8 @@ Source of truth for the basemap catalogue and for the style-level surgery every
 GeoLibre layer in this app depends on. Behaviour changes here require this file
 to change first.
 
-Module: `src/layers/basemaps/index.ts`
+Modules: `src/layers/basemaps/index.ts`, and `usd.ts` (the USD package; see
+*USD export*)
 
 ## Purpose
 
@@ -87,6 +88,17 @@ reloading mid-flight; that throw is swallowed deliberately — the next
 This exists because `createLayerSync` always appends to the **top** of the stack.
 Top is the app's default (labels styled for a dark ground are unreadable over lit
 building faces), so this is only called when the user opts in.
+
+## USD export
+
+`exportBasemapUsd(basemap, frame, extentM?)` returns the current basemap as a
+USD package: a ground quad textured with the style rendered top-down over the
+frame, grown to `extentM` (the buildings package's) so it lies under every
+exported building. `src/lib/usd/specs/spec.md` (*Basemap*) is the contract. It renders in a
+hidden, offscreen MapLibre map, which it creates and always removes. It
+applies this extension's own `hideBasemapBuildings` there, and hides every
+symbol layer, because labels drawn in screen space would sit at the wrong
+scale on a ground texture. The package carries `OSM_ATTRIBUTION`.
 
 ## Invariants
 

@@ -3,6 +3,7 @@
 // generic over its sources; see `specs/spec.md`.
 export * from "./grid";
 export { groundFootprint } from "./footprint";
+export { settle } from "./settle";
 export { addPrism, placeTile, TILE_UNITS, triangulateTile, type LocalFrame, type TilePrisms } from "./prisms";
 export {
   decodeMvt,

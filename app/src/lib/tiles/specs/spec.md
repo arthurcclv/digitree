@@ -7,7 +7,11 @@ Modules:
 - `src/sources.ts`: the app's configuration. It names the datasets this app
   points its layers at. It is the only file that knows the Taipei endpoints.
 - `src/lib/tiles/`: `TileStore`, which is generic over its sources and knows no
-  dataset, and `structure.test.ts`, which checks invariants 1 and 2.
+  dataset, and `structure.test.ts`, which checks invariants 1 and 2. Its
+  `settle(store, tiles)` asks a store for tiles and resolves with the counts
+  once none is pending, every one ready or failed. It takes the store's
+  `onChange`, so it is for a store of the caller's own (the USD export's and
+  the export pass's).
 - `src/layers/tree/schema.ts` and `src/layers/buildings/schema.ts`: each
   dataset's **schema**, meaning how a feature is read. Every consumer shares it.
 
@@ -180,7 +184,8 @@ store.featuresOf(name, tile)         // typed by the source under `name`
 
 All asserted by vitest.
 
-1. No shared module in `src/lib/` (`tiles`, `mount`, `dag`, `three`, `place`) imports from
+1. No shared module in `src/lib/` (`tiles`, `mount`, `dag`, `three`, `place`, `usd`,
+   `colour.ts`, `sceneExport.ts`) imports from
    `src/layers/`. `useMapEngine.ts` is exempt, because it is the host and
    composing the layers is its job. A test reads the source files to check
    this.

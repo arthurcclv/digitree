@@ -33,6 +33,7 @@ import {
   type PetProbe,
   type TemperatureSettings,
 } from "./layers/temperature";
+import { sceneExportReady, sceneParticipants, type SceneParticipant } from "./lib/sceneExport";
 import { useMapEngine } from "./lib/useMapEngine";
 import { TREES, TREES_SURVEYED } from "./sources";
 import { fromLocal, localDate, localMinutes, noonToday, offsetLabel } from "./lib/place";
@@ -82,13 +83,30 @@ const AO_STATE_TEXT: Record<AoState, string | null> = {
 const tilesText = ({ covered, pending, failed }: TileCounts): string =>
   `${covered}` + (pending ? ` · ${pending} loading` : "") + (failed ? ` · ${failed} failed` : "");
 
+/** A sun time as an export's file stamp, in UTC: `20260621T0400Z`. */
+const utcStamp = (sunTime: number): string => `${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z`;
+
 /** `direct-sun-20260621T0400Z.tif` for the export's sun time. */
-const exportName = (sunTime: number): string =>
-  `direct-sun-${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z.tif`;
+const exportName = (sunTime: number): string => `direct-sun-${utcStamp(sunTime)}.tif`;
 
 /** `pet-20260621T0400Z.tif` for the export's sun time. */
-const petExportName = (sunTime: number): string =>
-  `pet-${new Date(sunTime).toISOString().replace(/[:]/g, "").slice(0, 15)}Z.tif`;
+const petExportName = (sunTime: number): string => `pet-${utcStamp(sunTime)}.tif`;
+
+/** The USD export's side, in km. See *The export frame* in `src/lib/usd/specs/spec.md`. */
+const USD_SIDE_KM = { min: 0.5, max: 10, step: 0.5, initial: 2 } as const;
+
+/** `scene-20260621T0400Z.zip`: the USD export, named for its sun time like the GeoTIFFs. */
+const sceneExportName = (sunTime: number): string => `scene-${utcStamp(sunTime)}.zip`;
+
+/** Each scene participant in the panel's words. */
+const PARTICIPANT_TEXT: Record<SceneParticipant, string> = {
+  basemap: "Basemap",
+  buildings: "Buildings",
+  sunlight: "Direct sun",
+  temperature: "PET",
+  trees: "Tree meshes",
+  light: "Light",
+};
 
 /** A probe's non-value answers, shared by both overlays. */
 const probeKindText = (kind: "roof" | "incomplete" | "outside" | "none"): string =>
@@ -148,6 +166,9 @@ export default function App() {
   const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
   const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
   const [exportingPet, setExportingPet] = useState(false);
+  const [exportingUsd, setExportingUsd] = useState(false);
+  const [usdError, setUsdError] = useState<string | null>(null);
+  const [usdSideKm, setUsdSideKm] = useState<number>(USD_SIDE_KM.initial);
   const [collapsed, setCollapsed] = useState(false);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
@@ -162,6 +183,7 @@ export default function App() {
     temperatureStatus,
     exportSunlight,
     exportTemperature,
+    exportScene,
     zoomBy,
     resetNorth,
   } = useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
@@ -210,6 +232,24 @@ export default function App() {
   };
   const downloadSunlight = () => download(exportSunlight, exportName(sun.sunTime), setExporting);
   const downloadTemperature = () => download(exportTemperature, petExportName(sun.sunTime), setExportingPet);
+  const downloadScene = async () => {
+    setUsdError(null);
+    try {
+      await download(() => exportScene(usdSideKm * 1000), sceneExportName(sun.sunTime), setExportingUsd);
+    } catch (e) {
+      setUsdError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const usdLayers = sceneParticipants({
+    buildings: settings.visible,
+    sunlight: sun.visible,
+    temperature: temp.visible,
+    treeMeshes: tree.meshVisible,
+  }).map((p) => PARTICIPANT_TEXT[p]);
+  const usdReady = sceneExportReady(ready, [
+    { visible: sun.visible, state: sunState },
+    { visible: temp.visible, state: petState },
+  ]);
 
   const patch = (next: Partial<BuildingSettings>) =>
     setSettings((prev) => ({ ...prev, ...next }));
@@ -542,6 +582,26 @@ export default function App() {
             >
               {exportingPet ? "Exporting…" : "Export GeoTIFF"}
             </button>
+          </Panel>
+
+          <Panel title="USD export">
+            <Slider
+              label="Side"
+              value={usdSideKm}
+              min={USD_SIDE_KM.min}
+              max={USD_SIDE_KM.max}
+              step={USD_SIDE_KM.step}
+              unit="km"
+              decimals={1}
+              title="Side of the exported square, centred on the map"
+              // Typed values are clamped by the slider; snap them to its steps too.
+              onChange={(km) => setUsdSideKm(Math.round(km / USD_SIDE_KM.step) * USD_SIDE_KM.step)}
+            />
+            <StatLine k="Includes" v={usdLayers.join(" · ")} plain />
+            <button className="btn secondary" disabled={!usdReady || exportingUsd} onClick={downloadScene}>
+              {exportingUsd ? "Exporting…" : "Export USD"}
+            </button>
+            {usdError ? <StatLine k="Failed" v={usdError} plain /> : null}
           </Panel>
         </div>
 
