@@ -44,3 +44,4 @@ postgres:
         species: text
         height_m: real
         diameter_cm: real
+        canopy_width_m: real

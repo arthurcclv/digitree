@@ -3,6 +3,7 @@ import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
 import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
 import { TREE_POINTS_LAYER_ID } from "./constants";
+import { crownScale } from "./crown";
 import { formOf, type TreeForm } from "./forms";
 import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
 import {
@@ -56,6 +57,8 @@ interface TreeInstance {
   lng: number;
   lat: number;
   height: number;
+  /** The surveyed canopy width, or `null`: the form's own proportions then. */
+  width: number | null;
   form: TreeForm;
 }
 
@@ -91,6 +94,7 @@ interface FormMeshes {
 interface FormParts {
   parts: readonly ModelPart[];
   baseHeightM: number;
+  baseWidthM: number;
   source: MeshSource;
 }
 
@@ -199,6 +203,7 @@ export class ThreeTreeLayer extends ThreeLayer {
       return {
         parts: model.levels[lod].parts,
         baseHeightM: model.baseHeightM,
+        baseWidthM: model.baseWidthM,
         source: "model",
       };
     }
@@ -209,6 +214,7 @@ export class ThreeTreeLayer extends ThreeLayer {
         { geometry: geometry.canopy, material: this.materials[1] },
       ],
       baseHeightM: geometry.baseHeightM,
+      baseWidthM: geometry.baseWidthM,
       source: "procedural",
     };
   }
@@ -328,7 +334,14 @@ export class ThreeTreeLayer extends ThreeLayer {
       seen.add(tree.id);
 
       const height = tree.heightM ?? this.source.fallbackHeightM;
-      instances.push({ id: tree.id, lng: tree.lng, lat: tree.lat, height, form: formOf(tree.species) });
+      instances.push({
+        id: tree.id,
+        lng: tree.lng,
+        lat: tree.lat,
+        height,
+        width: tree.canopyWidthM,
+        form: formOf(tree.species),
+      });
     }
 
     // Global, and before the split by form below. Culling within a form would
@@ -412,13 +425,16 @@ export class ThreeTreeLayer extends ThreeLayer {
         const group = this.meshesFor(form, lod, bucket.length);
         // Measured from whichever geometry is drawing, never declared — which
         // is what lets a source change *and* a level change leave every tree
-        // the same height.
-        const { baseHeightM } = this.partsFor(form, lod);
+        // the same height, and a surveyed tree the same width.
+        const { baseHeightM, baseWidthM } = this.partsFor(form, lod);
+        const base = { heightM: baseHeightM, widthM: baseWidthM };
         const matrices = group.instanceMatrix.array as Float32Array;
         bucket.forEach((item, i) => {
           const { tree } = item;
           position.set(item.x, 0, item.z);
-          scale.setScalar((tree.height / baseHeightM) * this.heightScale);
+          // The one rule the sunlight occluders and the USD export scale by too.
+          const s = crownScale(base, { heightM: tree.height, widthM: tree.width }, this.heightScale);
+          scale.set(s.xz, s.y, s.xz);
           // Yaw only, and hashed from the tree's own id rather than drawn — so
           // it is the same angle on every reload, under either mesh source and
           // at either level. The refresh runs on `idle`, so a random one would

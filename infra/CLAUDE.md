@@ -12,6 +12,11 @@ dropped into `data/custom/` — to `app/` as Mapbox Vector Tiles. It is a
 and there is no deployment story. Do not add one without a decision
 entry.
 
+`infra/` has no `DECISIONS.md` of its own. Its decisions — the drop-in schema,
+the cleaning rules, the published property names — are recorded in
+`app/ai/DECISIONS.md`, beside the app decisions that depend on them, and a
+change here that needs one appends it there.
+
 ```
 docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin
 martin.yaml          which tables are published, and under what names
@@ -54,9 +59,9 @@ right way to start over.
   them. Open data is dirty in specific ways and a bare threshold teaches nobody
   why it is there.
 - **A value that fails a cleaning rule becomes `NULL`, never clamped or
-  zeroed.** An unmeasured trunk must not render as a thin one. Note that neither
-  measurement has an upper bound any more: height and diameter keep any positive
-  value, keying damage included. The `> 0` floor is the rule that remains, and
+  zeroed.** An unmeasured trunk must not render as a thin one. Note that no
+  measurement has an upper bound any more: height, diameter and canopy width
+  keep any positive value, keying damage included. The `> 0` floor is the rule that remains, and
   it is load-bearing — 9,319 rows record a diameter of exactly `0`.
 - **Never modify `data/`.** The extracts are treated as read-only inputs; every
   correction belongs in `02_load.sql` so it is reproducible and reviewable. The
@@ -84,10 +89,15 @@ adding a fourth means editing `TreeKindFilter` in `app/src/layers/tree/index.ts`
 and `TreeKind` in `treeLayer.ts`, plus the spec, in the same commit. Note that
 `district`, `place`, `place_note` and `survey_date` are NULL on every `custom`
 row — the drop-in schema has no columns for them — which is what `03_checks.sql`
-asserts and what the app's spec promises.
+asserts and what the app's spec promises. The mirror image holds for
+`canopy_width_m`: only the drop-ins have a column for it (the optional
+`CanopyWidth`), so it is NULL on every `street` and `park` row, and
+`03_checks.sql` asserts that too. The app scales a tree's crown by it, so the
+custom header's order is part of the interface as well:
+`TreeID,TreeType,Diameter,TreeHeight[,CanopyWidth],LAT,LON`.
 
 The published property names (`tree_id`, `kind`, `district`, `place`, `species`,
-`height_m`, `diameter_cm`) are equally load-bearing: the app styles and filters
+`height_m`, `diameter_cm`, `canopy_width_m`) are equally load-bearing: the app styles and filters
 on them by name, and `tree_id` additionally deduplicates the tile-buffer repeats
 that `querySourceFeatures` returns. Note that `id_column` makes `id` the MVT
 *feature* id, which is not a property — so `tree_id` has to be listed explicitly

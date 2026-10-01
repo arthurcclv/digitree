@@ -52,6 +52,14 @@ BEGIN
       format('%s custom trees carry a district/place/survey_date the drop-in schema has no column for', n);
   END IF;
 
+  -- canopy_width_m comes from the drop-ins' optional CanopyWidth column. The
+  -- city extracts have no such column, so a city row carrying one means the
+  -- loader mapped some other column into it.
+  SELECT count(*) INTO n FROM trees WHERE kind IN ('street', 'park') AND canopy_width_m IS NOT NULL;
+  IF n > 0 THEN
+    problems := problems || format('%s city trees carry a canopy_width_m the extracts have no column for', n);
+  END IF;
+
   -- place_note comes from RegionRemark, which only the street file has.
   SELECT count(*) INTO n FROM trees WHERE kind <> 'street' AND place_note IS NOT NULL;
   IF n > 0 THEN

@@ -1,5 +1,15 @@
 import * as THREE from "three";
-import { canopyHullOf, formOf, rotationOf, TREE_FORMS, type TreeFeature, type TreeForm } from "../tree";
+import {
+  canopyHullBaseOf,
+  canopyHullOf,
+  crownScale,
+  formOf,
+  rotationOf,
+  TREE_FORMS,
+  type CrownScale,
+  type TreeFeature,
+  type TreeForm,
+} from "../tree";
 import { placeTile, type TileId, type TilePrisms } from "../../lib/tiles";
 import { toLocal, type Domain } from "./frame";
 import { tileKey, tileSquareLocal } from "./tileGrid";
@@ -22,7 +32,7 @@ export interface OccluderMaterials {
   cover: THREE.ShaderMaterial;
 }
 
-type PlacedTree = { id: string; x: number; y: number; h: number; species: unknown; form: TreeForm };
+type PlacedTree = { id: string; x: number; y: number; h: number; w: number | null; species: unknown; form: TreeForm };
 
 /** One form's crowns: its hull, instanced, near trees first. */
 interface CrownSet {
@@ -41,15 +51,16 @@ interface CrownSet {
 const Y_UP_TO_Z_UP = new THREE.Matrix4().makeRotationX(Math.PI / 2);
 
 /**
- * A tree's hull instance: scaled by its height, yawed as the tree layer yaws
- * it, stood up into this frame, moved to its trunk. The tree layer's yaw about
- * its +Y is the same angle about +Z here. See *Trees*.
+ * A tree's hull instance: scaled as the tree layer scales the tree (`crownScale`
+ * over the hull's own base, in the hull's Y-up frame), yawed as the tree layer
+ * yaws it, stood up into this frame, moved to its trunk. The tree layer's yaw
+ * about its +Y is the same angle about +Z here. See *Trees*.
  */
-export function crownMatrix(x: number, y: number, h: number, yaw: number, out = new THREE.Matrix4()): THREE.Matrix4 {
+export function crownMatrix(x: number, y: number, scale: CrownScale, yaw: number, out = new THREE.Matrix4()): THREE.Matrix4 {
   return out
     .makeRotationZ(yaw)
     .multiply(Y_UP_TO_Z_UP)
-    .multiply(new THREE.Matrix4().makeScale(h, h, h))
+    .multiply(new THREE.Matrix4().makeScale(scale.xz, scale.y, scale.xz))
     .setPosition(x, y, 0);
 }
 
@@ -103,7 +114,15 @@ export class Occluders {
         if (seen.has(t.id)) continue;
         seen.add(t.id);
         const [x, y] = toLocal(domain, t.lng, t.lat);
-        trees.push({ id: t.id, x, y, h: t.heightM ?? input.fallbackHeightM, species: t.species, form: formOf(t.species) });
+        trees.push({
+          id: t.id,
+          x,
+          y,
+          h: t.heightM ?? input.fallbackHeightM,
+          w: t.canopyWidthM,
+          species: t.species,
+          form: formOf(t.species),
+        });
       }
     }
     if (trees.length > SUNLIGHT_MAX_TREES) {
@@ -165,8 +184,11 @@ export class Occluders {
       if (!g) continue;
       const matrices = set.matrix.array;
       const tau = set.tau.array;
+      const base = canopyHullBaseOf(form);
       [...g.near, ...g.far].forEach((t, i) => {
-        crownMatrix(t.x, t.y, t.h, rotationOf(t.id), m).toArray(matrices, i * 16);
+        // Always at true scale: the index ignores the height exaggeration.
+        const s = crownScale(base, { heightM: t.h, widthM: t.w }, 1);
+        crownMatrix(t.x, t.y, s, rotationOf(t.id), m).toArray(matrices, i * 16);
         tau[i] = tauOf(alphaOf(t.species));
       });
       set.matrix.needsUpdate = true;

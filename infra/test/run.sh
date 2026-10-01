@@ -78,10 +78,10 @@ case_ "a custom directory alongside the extracts"
 schema
 out=$(load "$FIX/custom-ok") || { echo "$out"; echo "load failed unexpectedly" >&2; exit 1; }
 
-expect_query "loads every valid row"                 "SELECT count(*) FROM trees" 9
+expect_query "loads every valid row"                 "SELECT count(*) FROM trees" 14
 expect_query "  3 street"                            "SELECT count(*) FROM trees WHERE kind='street'" 3
 expect_query "  2 park"                              "SELECT count(*) FROM trees WHERE kind='park'" 2
-expect_query "  4 custom, from two files"            "SELECT count(*) FROM trees WHERE kind='custom'" 4
+expect_query "  9 custom, from three files"          "SELECT count(*) FROM trees WHERE kind='custom'" 9
 expect_contains "names each file as it loads it" "$out" "custom: a.csv — 4 rows"
 # Squeezed, because the report is a psql table and its padding is not the point.
 squeezed=$(printf '%s' "$out" | tr -s ' ')
@@ -125,6 +125,22 @@ expect_query "nulls a zero diameter" \
 expect_query "empty columns become NULL, not ''" \
   "SELECT count(*) FROM trees WHERE tree_id='CUSTOM-0002' AND species IS NULL AND height_m IS NULL AND diameter_cm IS NULL" 1
 
+# Canopy width: the optional seventh column. a.csv and b.csv keep the six-column
+# header, so the old format must still load; c.csv carries CanopyWidth, cleaned
+# on the same terms as height and diameter.
+expect_contains "loads the seven-column header" "$out" "custom: c.csv — 5 rows"
+expect_query "keeps a positive canopy width" \
+  "SELECT canopy_width_m::text FROM trees WHERE tree_id='CUSTOM-0007'" "8.5"
+expect_query "nulls an empty, zero, negative or non-numeric canopy width" \
+  "SELECT count(*) FROM trees WHERE tree_id IN ('CUSTOM-0008','CUSTOM-0009','CUSTOM-0010','CUSTOM-0011') AND canopy_width_m IS NULL" 4
+expect_query "a six-column file loads with no canopy width" \
+  "SELECT count(*) FROM trees WHERE tree_id IN ('CUSTOM-0001','CUSTOM-0005') AND canopy_width_m IS NULL" 2
+expect_query "city rows never carry a canopy width" \
+  "SELECT count(*) FROM trees WHERE kind<>'custom' AND canopy_width_m IS NOT NULL" 0
+# The report's columns are trees | with_height | with_diameter |
+# with_canopy_width | with_species: one custom row, CUSTOM-0007, keeps a width.
+expect_contains "reports how many rows kept a width" "$squeezed" "custom | 9 | 7 | 8 | 1 | 8"
+
 # The property the app's spec leans on: a NULL district means a custom row.
 expect_query "custom rows carry no district/place/survey_date" \
   "SELECT count(*) FROM trees WHERE kind='custom' AND (district IS NOT NULL OR place IS NOT NULL OR survey_date IS NOT NULL)" 0
@@ -137,7 +153,7 @@ expect_contains "the checks pass" "$(checks)" "checks passed"
 
 case_ "re-running the loader without recreating the schema"
 out=$(load "$FIX/custom-ok") || { echo "$out"; echo "second load failed" >&2; exit 1; }
-expect_query "truncates rather than duplicating" "SELECT count(*) FROM trees" 9
+expect_query "truncates rather than duplicating" "SELECT count(*) FROM trees" 14
 
 # --- no custom data ---------------------------------------------------------
 
@@ -166,6 +182,34 @@ expect_contains "quotes the mismatch"   "$out" "column name mismatch"
 expect_contains "gives the real header" "$out" "TreeID,TreeType,Diameter,TreeHeight,LAT,LON"
 expect_query   "loads nothing at all"   "SELECT count(*) FROM trees" 0
 
+case_ "a seventh column that is not CanopyWidth"
+schema
+if out=$(load "$FIX/custom-bad-width-header"); then bad "rejects the file" "the load succeeded"; else ok "rejects the file"; fi
+expect_contains "names the file"          "$out" "misspelt.csv"
+expect_contains "says the header is too wide" "$out" "wrong number of fields"
+expect_contains "gives both real headers" "$out" "TreeID,TreeType,Diameter,TreeHeight,CanopyWidth,LAT,LON"
+expect_query   "loads nothing at all"     "SELECT count(*) FROM trees" 0
+
+case_ "CanopyWidth spelt with the wrong case"
+schema
+if out=$(load "$FIX/custom-width-wrong-case"); then bad "rejects the file" "the load succeeded"; else ok "rejects the file"; fi
+expect_contains "names the file"              "$out" "lowercase.csv"
+expect_contains "says the header is too wide" "$out" "wrong number of fields"
+expect_query   "loads nothing at all"         "SELECT count(*) FROM trees" 0
+
+case_ "a header that is not UTF-8"
+schema
+if out=$(load "$FIX/custom-not-utf8"); then bad "rejects the file" "the load succeeded"; else ok "rejects the file"; fi
+expect_contains "names the file"       "$out" "latin1.csv"
+expect_query   "loads nothing at all"  "SELECT count(*) FROM trees" 0
+
+case_ "CanopyWidth anywhere but after TreeHeight"
+schema
+if out=$(load "$FIX/custom-width-out-of-place"); then bad "rejects the file" "the load succeeded"; else ok "rejects the file"; fi
+expect_contains "names the file"        "$out" "last.csv"
+expect_contains "quotes the mismatch"   "$out" "column name mismatch"
+expect_query   "loads nothing at all"   "SELECT count(*) FROM trees" 0
+
 case_ "a drop-in reusing a TreeID from the extracts"
 schema
 if out=$(load "$FIX/custom-dup-extract"); then bad "rejects the file" "the load succeeded"; else ok "rejects the file"; fi
@@ -190,6 +234,12 @@ load "$FIX/custom-ok" > /dev/null
 docker compose exec -T db psql -q -U taipei -d "$DB" -c "DELETE FROM trees WHERE kind='park'" > /dev/null
 if out=$(checks); then bad "fails on a missing extract" "the checks passed"; else ok "fails on a missing extract"; fi
 expect_contains "says which one" "$out" "no park trees loaded"
+
+schema
+load "$FIX/custom-ok" > /dev/null
+docker compose exec -T db psql -q -U taipei -d "$DB" -c "UPDATE trees SET canopy_width_m = 5 WHERE tree_id='BT0000000001'" > /dev/null
+if out=$(checks); then bad "fails on a city tree with a canopy width" "the checks passed"; else ok "fails on a city tree with a canopy width"; fi
+expect_contains "says so" "$out" "city trees carry a canopy_width_m"
 
 docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" > /dev/null
 

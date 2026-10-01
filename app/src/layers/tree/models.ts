@@ -11,6 +11,7 @@
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { radialWidthM } from "./crown";
 import type { TreeForm } from "./forms";
 
 /** Where `prepare-tree-models.py` writes, and Vite serves from `public/`. */
@@ -110,14 +111,21 @@ export interface ModelGeometry {
    * scales by, for the same reason `FormGeometry.baseHeightM` is measured.
    */
   baseHeightM: number;
+  /**
+   * The width it stands at, by `radialWidthM`, over **every part**: a glTF has
+   * no bark/canopy split to rely on. Measured, like the height.
+   */
+  baseWidthM: number;
 }
 
-/** One form's ladder, plus the single height every rung scales from. */
+/** One form's ladder, plus the single size every rung scales from. */
 export interface FormModel {
   /** Indexed by level, so `levels[0]` is the authored model. */
   levels: ModelGeometry[];
   /** Measured from **level 0**, and shared by the ladder. See `matchHeight`. */
   baseHeightM: number;
+  /** Measured from level 0 too, and shared for the same reason. */
+  baseWidthM: number;
 }
 
 /**
@@ -130,16 +138,18 @@ export interface FormModel {
  * height here. The scale is about the origin, which the model already stands
  * on, so this cannot lift it off the ground or shift it sideways.
  */
-export function matchHeight(model: ModelGeometry, heightM: number): ModelGeometry {
+export function matchHeight(model: ModelGeometry, heightM: number, widthM: number): ModelGeometry {
   const factor = heightM / model.baseHeightM;
-  if (!Number.isFinite(factor) || factor === 1) {
-    return { parts: model.parts, baseHeightM: heightM };
+  if (Number.isFinite(factor) && factor !== 1) {
+    for (const part of model.parts) {
+      part.geometry.scale(factor, factor, factor);
+      part.geometry.computeBoundingBox();
+    }
   }
-  for (const part of model.parts) {
-    part.geometry.scale(factor, factor, factor);
-    part.geometry.computeBoundingBox();
-  }
-  return { parts: model.parts, baseHeightM: heightM };
+  // The rung's own width, after the uniform scale, sits within decimation's
+  // error of level 0's. It takes level 0's, so a tree with a surveyed width
+  // draws that width at every level rather than twitching across a threshold.
+  return { parts: model.parts, baseHeightM: heightM, baseWidthM: widthM };
 }
 
 /**
@@ -203,7 +213,11 @@ export function normalizeModel(root: THREE.Object3D): ModelGeometry {
     material.premultipliedAlpha = true;
   }
 
-  return { parts, baseHeightM: bounds.max.y - bounds.min.y };
+  return {
+    parts,
+    baseHeightM: bounds.max.y - bounds.min.y,
+    baseWidthM: radialWidthM(parts.map((p) => p.geometry)),
+  };
 }
 
 /**
@@ -227,9 +241,10 @@ export async function loadFormModel(
       ),
     ),
   );
-  const baseHeightM = levels[0].baseHeightM;
+  const { baseHeightM, baseWidthM } = levels[0];
   return {
-    levels: levels.map((level, i) => (i === 0 ? level : matchHeight(level, baseHeightM))),
+    levels: levels.map((level, i) => (i === 0 ? level : matchHeight(level, baseHeightM, baseWidthM))),
     baseHeightM,
+    baseWidthM,
   };
 }

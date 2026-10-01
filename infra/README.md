@@ -60,11 +60,18 @@ WGS84 at load. Every row parses — there are no malformed coordinates.
 directory, or an empty one, loads nothing and is not an error — only the two
 extracts above are required.
 
-The header must be exactly, in this order:
+The header must be exactly one of these two, in this order:
 
 ```
 TreeID,TreeType,Diameter,TreeHeight,LAT,LON
+TreeID,TreeType,Diameter,TreeHeight,CanopyWidth,LAT,LON
 ```
+
+`CanopyWidth` is optional and, when present, follows `TreeHeight`. A file
+without it loads with every width `NULL`. Write the names bare, exactly as above
+— same case, no surrounding spaces, no quotes: the loader recognises the
+seven-column header by the bare name `CanopyWidth`, and anything else is held to
+the six-column header and rejected.
 
 | column | maps to | notes |
 | --- | --- | --- |
@@ -72,6 +79,7 @@ TreeID,TreeType,Diameter,TreeHeight,LAT,LON
 | `TreeType` | `species` | may be empty |
 | `Diameter` | `diameter_cm` | cm; cleaned like the extracts |
 | `TreeHeight` | `height_m` | m; cleaned like the extracts |
+| `CanopyWidth` | `canopy_width_m` | m, the crown's diameter seen from above; optional; kept when positive, else `NULL`. The extracts have no such column, so city rows are always `NULL` |
 | `LAT`, `LON` | `geom` | **WGS84 degrees** — stored as-is, no transform |
 
 `district`, `place`, `place_note` and `survey_date` are `NULL` for these rows:
@@ -82,7 +90,10 @@ Three failure modes, all deliberate:
 - **A wrong header fails the load**, loudly, naming the file. `COPY … HEADER
   MATCH` compares the header against the expected columns, so a file with
   `LON,LAT` reversed — or with the extracts' own column set — is rejected
-  instead of loading longitude into `lat`.
+  instead of loading longitude into `lat`. The same holds for `CanopyWidth`
+  anywhere but after `TreeHeight`, and for a misspelt, miscased or quoted
+  width column: it is rejected rather than silently dropped. A header that is
+  not UTF-8 fails the same way, with the file named.
 - **A duplicate `TreeID` aborts the load**, naming the offending ids. Silently
   shadowing a city tree with a custom row is worse than refusing to start.
 - **A row whose `LAT`/`LON` is empty, unparseable or outside (-90, 90) /
@@ -100,8 +111,8 @@ this check.
 
 Heights and diameters are usable but carry obvious data-entry damage. The full
 rules, with the values that motivated them, are in the comment above the insert
-in `sql/02_load.sql`. In short: height and diameter are both kept whenever they
-are **positive**, and neither has a ceiling. A value that fails becomes `NULL`
+in `sql/02_load.sql`. In short: height, diameter and canopy width are all kept
+whenever they are **positive**, and none has a ceiling. A value that fails becomes `NULL`
 rather than being clamped or zeroed, so an unmeasured trunk is never rendered as
 a thin one. The same rules apply to custom rows: they are properties of what the
 app can render, not of who supplied the file.

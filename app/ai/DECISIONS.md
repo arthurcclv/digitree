@@ -6,6 +6,32 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-09-30 — A tree's width is a surveyed column, and its scale is no longer uniform
+
+**Decision.**
+- **Canopy width is a nullable `canopy_width_m`**, loaded only from a custom
+  drop-in's optional `CanopyWidth` column (after `TreeHeight`). The city
+  extracts do not survey it, so every city tree is `NULL` and draws as before.
+- **It is never derived.** Not from `diameter_cm` (9,319 rows record a blank as
+  0, and DBH-to-crown fits are per species), and not from species, form or a
+  neighbour.
+- **The instance scale is `crownScale`**, one pure function in `tree/crown.ts`,
+  used by the meshes, the sunlight occluders and the USD export. The vertical is
+  `height × heightScale / baseHeightM`. The horizontal is `width / baseWidthM`
+  where surveyed, and otherwise `height / baseHeightM`.
+- **`heightScale` became vertical-only** for every tree, as the buildings' is.
+  Before, it scaled uniformly and fattened trees as it stretched them.
+- **A form's `baseWidthM` is a measured radius**, `radialWidthM`, not a
+  bounding box. A box's width depends on the tree's hashed yaw.
+
+**Rules out.** An estimated width for city trees, a clamp on odd width/height
+ratios, and a per-consumer scale formula.
+
+**Revisit when** the city publishes crown width, or a species-level
+allometric table with a source is available.
+
+---
+
 ## 2026-09-30 — USD export review: one pass joined, host rules pure, shared colour
 
 **Decision.** After a review of the USD export:

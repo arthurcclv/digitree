@@ -208,9 +208,13 @@ the pass once.
   - `protoIndices`: the prototype of the tree's form (`formOf(species)`);
   - `positions`: `(x, y, 0)` in the export frame;
   - `orientations`: a yaw of `rotationOf(tree_id)` about `+z`, as a `quath`;
-  - `scales`: uniform, `height × heightScale / baseHeightM(form)`. `height` is
-    the surveyed height, or the source's `fallbackHeightM`, and nothing else
-    (tree spec, *Per-instance transform*);
+  - `scales`: `(xz, xz, y)` from the tree layer's `crownScale` over the
+    prototype's `baseHeightM` and `baseWidthM`. The prototype carries the
+    Y-up→Z-up rotation, so the instancer's `z` is the tree's vertical. `y` is
+    `height × heightScale / baseHeightM`, where `height` is the surveyed height
+    or the source's `fallbackHeightM` and nothing else. `xz` is
+    `canopy_width_m / baseWidthM` where a width is surveyed, and otherwise
+    `height / baseHeightM` (tree spec, *Per-instance transform*);
   - `primvars:treeId` and `primvars:species` (string, one per instance), so a
     consumer can find a tree again. A species that is not a string is `""`.
 - **Prototypes** at `/Trees/Instances/Prototypes/<form>`, one per form used,

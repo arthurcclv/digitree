@@ -92,8 +92,11 @@ exactly as the tree layer places that tree:
   the tree layer's Y-up frame. It is measured from the drawn geometry, never
   declared, so the shadow's outline and the drawn crown cannot disagree. It
   has 20–76 triangles per form.
-- **Scale.** Uniform, by the tree's height `h`: the same `h / baseHeightM`
-  scale the tree layer applies, at true scale (exaggeration ignored).
+- **Scale.** `crownScale(canopyHullBaseOf(form), { h, canopy_width_m }, 1)`:
+  the tree layer's own rule, over the hull's base (height 1 and the form's
+  proportions), at true scale (exaggeration ignored). So the vertical is `h`,
+  and a surveyed canopy width makes the shadow's crown exactly that wide, as
+  it makes the drawn crown (tree spec, *Per-instance transform*).
 - **Yaw.** `rotationOf(tree_id)`, the tree layer's own hashed yaw, so a
   lopsided hull (a spreading crown's blobs, a palm's fronds) faces the way
   the drawn tree does. The tree layer's rotation about its +Y (up) axis is a

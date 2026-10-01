@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { radialWidthM } from "./crown";
 import type { TreeForm } from "./forms";
 
 /**
@@ -26,6 +27,14 @@ export interface FormGeometry {
    * height. A declared number can drift again; a measured one cannot.
    */
   baseHeightM: number;
+  /**
+   * The canopy's width at the modelled size: the diameter of the smallest
+   * vertical cylinder about the trunk that holds it (`radialWidthM`). What a
+   * surveyed `canopy_width_m` scales from. The bark is left out: a trunk is
+   * never wider than its crown except on a palm, and a palm's width is its
+   * fronds. Measured, for the same reason `baseHeightM` is.
+   */
+  baseWidthM: number;
 }
 
 /** A round flat-shaded foliage lump, tumbled on all three axes. */
@@ -197,16 +206,16 @@ const BUILDERS: Readonly<Record<TreeForm, Build>> = {
 /** Every form, in table order — the source of truth for what the layer allocates. */
 export const TREE_FORMS = Object.keys(BUILDERS) as readonly TreeForm[];
 
-/** Builds one form's geometry and measures the height it was modelled at. */
+/** Builds one form's geometry and measures the size it was modelled at. */
 export function buildForm(form: TreeForm): FormGeometry {
   const { bark, canopy } = BUILDERS[form]();
   bark.computeBoundingBox();
   canopy.computeBoundingBox();
   const baseHeightM = Math.max(bark.boundingBox!.max.y, canopy.boundingBox!.max.y);
-  return { bark, canopy, baseHeightM };
+  return { bark, canopy, baseHeightM, baseWidthM: radialWidthM([canopy]) };
 }
 
-const hulls = new Map<TreeForm, THREE.BufferGeometry>();
+const hulls = new Map<TreeForm, { hull: THREE.BufferGeometry; base: { heightM: number; widthM: number } }>();
 
 /**
  * A form's canopy as a convex hull, normalised to a tree of height 1, in this
@@ -220,6 +229,20 @@ const hulls = new Map<TreeForm, THREE.BufferGeometry>();
  * `baseHeightM` is: a declared shape would drift from the one that is drawn.
  */
 export function canopyHullOf(form: TreeForm): THREE.BufferGeometry {
+  return hullEntry(form).hull;
+}
+
+/**
+ * The size `canopyHullOf(form)` is modelled at, for `crownScale`: height 1, by
+ * the hull's normalisation, and the hull's own measured width — which is the
+ * form's `baseWidthM / baseHeightM`. With it, a shadow caster scales its hull by
+ * the same rule the meshes scale the drawn tree by.
+ */
+export function canopyHullBaseOf(form: TreeForm): { heightM: number; widthM: number } {
+  return hullEntry(form).base;
+}
+
+function hullEntry(form: TreeForm) {
   const cached = hulls.get(form);
   if (cached) return cached;
   const { bark, canopy, baseHeightM } = buildForm(form);
@@ -234,8 +257,9 @@ export function canopyHullOf(form: TreeForm): THREE.BufferGeometry {
   hull.computeBoundingBox();
   bark.dispose();
   canopy.dispose();
-  hulls.set(form, hull);
-  return hull;
+  const entry = { hull, base: { heightM: 1, widthM: radialWidthM([hull]) } };
+  hulls.set(form, entry);
+  return entry;
 }
 
 /**

@@ -41,6 +41,8 @@ src/
                       mesh source; interchangeable with formGeometry.ts
       forms.ts        TreeForm, the species -> silhouette table, formOf()
       placement.ts    rotationOf() — each tree's yaw, hashed from its tree_id
+      crown.ts        crownScale() — a tree's height/width scale, shared by
+                      the meshes, sunlight and USD; radialWidthM()
       schema.ts       TreeSource; treeOf() — the one reading of a tree,
                       shared by the meshes and the direct-sun layer;
                       treeTiles()

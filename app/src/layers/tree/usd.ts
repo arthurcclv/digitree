@@ -18,6 +18,7 @@ import {
   type ZipEntry,
 } from "../../lib/usd";
 import { MODELS_ATTRIBUTION } from "./constants";
+import { crownScale } from "./crown";
 import { buildForm, buildMaterials } from "./formGeometry";
 import { formOf, type TreeForm } from "./forms";
 import { FORM_MODELS, MODELS_BASE_URL, normalizeModel, type ModelGeometry } from "./models";
@@ -45,6 +46,8 @@ export interface TreeInstance {
   y: number;
   /** Surveyed, or the source's fallback; before `heightScale`. */
   heightM: number;
+  /** Surveyed, or `null`: the prototype's own proportions then. */
+  widthM: number | null;
   form: TreeForm;
   species: string;
 }
@@ -71,6 +74,7 @@ export function treeInstances(
       x,
       y,
       heightM: t.heightM ?? fallbackHeightM,
+      widthM: t.canopyWidthM,
       form: formOf(t.species),
       species: typeof t.species === "string" ? t.species : "",
     });
@@ -87,6 +91,7 @@ export interface PrototypePart {
 export interface Prototype {
   parts: PrototypePart[];
   baseHeightM: number;
+  baseWidthM: number;
 }
 
 /** A geometry's triangles as USD mesh data; glTF's `uv` becomes `st` with `v` flipped. */
@@ -205,10 +210,13 @@ export async function treesPackage(
   const scales: number[] = [];
   const indices: number[] = [];
   for (const t of trees) {
-    const s = (t.heightM * settings.heightScale) / prototypes.get(t.form)!.baseHeightM;
+    const proto = prototypes.get(t.form)!;
+    const s = crownScale({ heightM: proto.baseHeightM, widthM: proto.baseWidthM }, t, settings.heightScale);
     positions.push(t.x, t.y, 0);
     orientations.push(...yawQuat(rotationOf(t.id)));
-    scales.push(s, s, s);
+    // The prototype carries the Y-up → Z-up rotation, so the instancer's z is
+    // the tree's vertical.
+    scales.push(s.xz, s.xz, s.y);
     indices.push(protoIndex.get(t.form)!);
   }
   const targets = forms.map((f) => `<${INSTANCER}/Prototypes/${usda.identifier(f)}>`).join(", ");
@@ -252,6 +260,7 @@ export function proceduralPrototypes(forms: Iterable<TreeForm>): Map<TreeForm, P
         { geometry: g.canopy, material: canopy },
       ],
       baseHeightM: g.baseHeightM,
+      baseWidthM: g.baseWidthM,
     });
   }
   return out;

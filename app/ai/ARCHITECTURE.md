@@ -202,12 +202,13 @@ dependency rather than by topic:
 | `schema.ts` | `TreeSource`, `TREE_PROPS`, `treeOf` (the one reading of a tree), `treeTiles` | no (it pulls `lib/tiles`) |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
 | `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
+| `crown.ts` | `crownScale()` — a tree's vertical and horizontal scale; `radialWidthM()` — a shape's yaw-independent width | **no** (types only) |
 | `formGeometry.ts` | the eight procedural shapes, the two shared materials, and `canopyHullOf` | yes |
 | `models.ts` | `FORM_MODELS`, the glTF loader, `normalizeModel`, the LOD rule | yes |
 | `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam | yes |
 
-`forms.ts` and `placement.ts` are deliberately three.js-free. They are the
-layer's two pure modules and therefore the ones fully testable without a GL
+`forms.ts`, `placement.ts` and `crown.ts` are deliberately three.js-free at
+runtime. `forms.ts` and `placement.ts` are the layer's two pure modules and therefore the ones fully testable without a GL
 context, which is why the species table lives in one and the rotation hash in the
 other rather than inside the geometry they feed.
 
@@ -234,8 +235,8 @@ tested, one module for the GL:
 | `sunlightLayer.ts` | `ThreeSunlightLayer` — the light pass, overlay, probe, export | yes |
 
 It borrows the crown shape from the tree layer through `canopyHullOf(form)`
-(the convex hull of the procedural canopy), the per-tree yaw through
-`rotationOf`, and the tree tile source (`treeTiles`, over the `TreeSource`
+(the convex hull of the procedural canopy) and its size through
+`canopyHullBaseOf` and `crownScale`, the per-tree yaw through `rotationOf`, and the tree tile source (`treeTiles`, over the `TreeSource`
 its mount is given), all from the tree's `index.ts`. So the shadow and the drawn
 tree share a shape and a facing, and nothing else of the tree layer's internals
 is reached.

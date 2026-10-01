@@ -18,7 +18,10 @@ export { formOf, SPECIES_FORMS, type TreeForm } from "./forms";
 export { rotationOf } from "./placement";
 
 /** The shape each form casts a shadow with. See *The canopy hull*. */
-export { canopyHullOf, TREE_FORMS } from "./formGeometry";
+export { canopyHullBaseOf, canopyHullOf, TREE_FORMS } from "./formGeometry";
+
+/** How tall and wide a tree draws. See *Per-instance transform*. */
+export { crownScale, type CrownScale } from "./crown";
 
 export { MODELS_ATTRIBUTION, TREE_LAYER_ID, TREE_POINTS_LAYER_ID } from "./constants";
 

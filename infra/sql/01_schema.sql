@@ -39,6 +39,10 @@ CREATE TABLE trees (
   -- half here: 9,319 rows record a diameter of exactly 0, which is a blank field
   -- and not a measurement.
   diameter_cm real CHECK (diameter_cm > 0),
+  -- The crown's diameter seen from above. The city does not survey it, so it
+  -- is NULL on every street and park row; only a custom drop-in with the
+  -- optional CanopyWidth column carries one. Same NULL-not-zero rule as above.
+  canopy_width_m real CHECK (canopy_width_m > 0),
   survey_date date,
   geom        geometry(Point, 4326) NOT NULL
 );

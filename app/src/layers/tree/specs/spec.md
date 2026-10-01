@@ -10,6 +10,9 @@ Modules:
   normalisation that makes a downloaded model instanceable
 - `src/layers/tree/placement.ts` — per-tree variation derived from `tree_id`
   (owns the fact that no tree is identical to its neighbour)
+- `src/layers/tree/crown.ts` — `crownScale`, the one rule a tree's size is
+  drawn, shaded and exported by, and `radialWidthM`, how a shape's width is
+  measured
 - `src/layers/tree/usd.ts` — the meshes as a USD package (see *USD export*)
 
 ## Purpose
@@ -61,19 +64,23 @@ The schema, which any tree source must publish:
 | --- | --- |
 | geometry | Point |
 | feature id | integer `id` (MVT requires integers; `tree_id` is text) |
-| properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm` |
+| properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm`, `canopy_width_m` |
 
 `treeOf(properties, geometry)` in `schema.ts` is the one reading of a tree,
 shared by the meshes and the direct-sun layer. It returns `null` unless the
 geometry is a Point and `tree_id` is a string, and it reads `height_m` as a
-height only when it is a positive number (otherwise `null`).
+height, and `canopy_width_m` as a width, only when each is a positive number
+(otherwise `null`).
 
 `kind` is `"street"`, `"park"` or `"custom"`. The first two are the city's open
 data; `"custom"` is whatever a contributor dropped into `infra/data/custom/`,
 and the layer treats it as a third peer — same source, same tiles, same
 properties, no separate code path. `height_m` and `diameter_cm` are
 **nullable**: `NULL` means the survey value was missing or implausible, not
-zero. `species` is nullable too — 18 rows carry none. It is the key into
+zero. `canopy_width_m`, the crown's diameter seen from above in metres, is
+nullable on the same terms. The city does not survey it, so it is `NULL` on
+every `street` and `park` row; only a custom drop-in with the optional
+`CanopyWidth` column carries one (`infra/README.md`). `species` is nullable too — 18 rows carry none. It is the key into
 the form table below, so a `NULL` species means a `generic` shape, not a missing
 tree. `district` and `place` are
 **always `NULL` on `"custom"` rows**; the layer must not assume otherwise.
@@ -267,12 +274,33 @@ consequences:
 
 ### Per-instance transform
 
-Scale is uniform, `height_m / baseHeightM`, where the divisor belongs to the
-tree's **form** rather than to the layer (see *Base height is per form*). A tree
-with a `NULL` `height_m` uses the tree source's `fallbackHeightM` (**9.1** in
-this app — the measured median of the inventory) — and the layer MUST NOT
-substitute anything else: not
-zero, not a neighbouring tree's height, not a random value.
+Scale is `crownScale(base, tree, heightScale)` (`crown.ts`), where `base` is
+the form's measured `baseHeightM` and `baseWidthM` (see *Base height is per
+form* and *Base width is per form*). It is not uniform:
+
+- **vertical:** `height × heightScale / baseHeightM`;
+- **horizontal, a tree with a `canopy_width_m`:** `canopy_width_m / baseWidthM`,
+  so the crown draws exactly that wide;
+- **horizontal, a tree without one:** `height / baseHeightM`, so it keeps its
+  form's proportions **at its true height**.
+
+`heightScale` exaggerates the vertical only, for every tree, whether or not
+its width was measured. At 1, a tree without a width draws exactly as it did
+when the scale was uniform. A measured width is honoured whatever its ratio to
+the height, with no clamp: a 20 m width on a 3 m tree is a flat disc, because
+that is what the data says, and a correction belongs in the data.
+
+The same function scales the sunlight layer's shadow casters and the USD
+export's instances, so a tree's drawn crown, its shadow and its exported prim
+cannot disagree about its size.
+
+A tree with a `NULL` `height_m` uses the tree source's `fallbackHeightM` (**9.1**
+in this app — the measured median of the inventory) — and the layer MUST NOT
+substitute anything else: not zero, not a neighbouring tree's height, not a
+random value. A tree with a `NULL` `canopy_width_m` takes its form's proportions,
+and the width is never estimated: not from `diameter_cm`, the species, the form
+or a neighbour. Allometric DBH-to-crown formulas are per-species fits this
+project has no data for, and the diameter column is unreliable (below).
 
 Rotation is a **yaw only** — about the local frame's `y`, which is up — by an
 angle in `[0, 2π)` that belongs to the tree. Without it a street of 榕樹 is the
@@ -687,6 +715,24 @@ so it is the descriptor's `fallbackHeightM` (9.1 in `TREES`,
 missing height renders at 9.1 m in whatever form the species maps to, and
 nothing else is substituted anywhere.
 
+### Base width is per form
+
+Each form also carries `baseWidthM`, the width its geometry was modelled at:
+what a surveyed `canopy_width_m` scales from. It is `radialWidthM`, the diameter
+of the smallest vertical cylinder about the form's `y` axis that holds the
+shape. That is twice the greatest horizontal distance of any vertex from the
+axis.
+
+- **A radius, not a bounding box.** Every tree is yawed by its own
+  `rotationOf`, and a box's width changes with the yaw. Two trees of the same
+  surveyed width would draw at different sizes depending on which way they
+  face. The radius is the same at every yaw.
+- **Procedural:** measured from the **canopy** only. A trunk is never wider
+  than its crown except on a palm, and a palm's width is its fronds.
+- **Modelled:** measured from **every part** of level 0, since a glTF has no
+  bark/canopy split to rely on (see *Normalisation*).
+- **Measured, never declared**, for the reason `baseHeightM` is.
+
 ### The canopy hull
 
 `canopyHullOf(form)`, exported from `index.ts`, is the convex hull of the form's
@@ -695,7 +741,11 @@ normalised to a tree of height 1: the canopy's vertices divided by the form's
 `baseHeightM`.
 
 It is **measured from the built geometry, like `baseHeightM`**, and built once
-per form and cached; callers must not dispose it. The sunlight layer casts its
+per form and cached; callers must not dispose it. `canopyHullBaseOf(form)`
+gives the size it is modelled at, for `crownScale`: height 1, by the
+normalisation, and the hull's own `radialWidthM`. That equals the form's
+`baseWidthM / baseHeightM`, because the hull's outermost points are canopy
+vertices. The sunlight layer casts its
 shadows with it, placed with this layer's own `rotationOf`. So the shadow's
 outline and the drawn crown agree, down to which way the crown faces.
 
@@ -776,6 +826,8 @@ things before it is:
 3. **`baseHeightM` is the measured height of that box**, exactly as for a
    procedural form. *The model table* prints the number; the code never reads
    it.
+4. **`baseWidthM` is `radialWidthM` over every part**, measured after the move,
+   so it is taken about the axis the tree stands on.
 
 Steps 2 and 3 are why *Base height is per form* is written the way it is. The
 rule that a modelled height is measured and never declared was load-bearing
@@ -881,7 +933,9 @@ little, so a decimated level measured on its own would stand a fraction of a
 percent shorter than level 0, and every tree would twitch as it crossed a
 threshold. Every level above 0 is therefore **scaled to level 0's measured
 height** at load, and the whole ladder shares one `baseHeightM` — level 0's. A
-form's declared height is a property of the form, not of the rung.
+form's declared height is a property of the form, not of the rung. Width is
+shared on the same terms: every level takes level 0's `baseWidthM`, so a tree
+with a surveyed width draws that width at every level.
 
 Levels are re-evaluated on refresh, which runs on `idle`. Crossing the threshold
 during a gesture therefore cannot flicker: the swap happens once, after the
@@ -936,7 +990,8 @@ this layer's part is that the package reuses its own rules:
   which cover only the viewport;
 - the `kind` filter and the `fallbackHeightM` rule exactly as the meshes apply
   them, with one tree per `tree_id`;
-- `formOf`, `rotationOf`, and the scale `height × heightScale / baseHeightM`;
+- `formOf`, `rotationOf`, and `crownScale` over the prototype's `baseHeightM`
+  and `baseWidthM`;
 - the prototypes of the **active** mesh source: `buildForm` with the shared
   materials, or each form's glTF at level 0 through `normalizeModel`, its
   textures re-encoded as PNG.
@@ -976,7 +1031,9 @@ setting in the table that reaches exactly one of the two halves on purpose.
 
 `heightScale` **replaces** the old absolute `height` control. An absolute height
 is meaningless once every tree carries its own; the control now exaggerates, the
-way `BuildingSettings.heightScale` does, and 1 means true scale.
+way `BuildingSettings.heightScale` does, and 1 means true scale. Like the
+buildings', it exaggerates the **vertical only**. A tree does not widen as it
+is stretched (see *Per-instance transform*).
 
 `kind` narrows both halves together — the points and the meshes must never show
 different subsets of the same data — but it reaches them by **two different
@@ -1062,7 +1119,9 @@ procedural source would credit evolveduk for icosahedra.
    and that is the point.
 6. Instances are deduped by `tree_id`.
 7. The layer never invents data. A missing height renders at the source's
-   `fallbackHeightM`, and nothing else is substituted anywhere.
+   `fallbackHeightM`, and nothing else is substituted anywhere. A missing canopy
+   width renders at the form's own proportions. A width is never estimated
+   from diameter, species, form or a neighbouring tree.
 8. Points and meshes always show the same subset of the data.
 9. The `tree-points` record is never `visible: false` while `meshVisible` is
    true — that starves the mesh layer of its data.
@@ -1072,7 +1131,8 @@ procedural source would credit evolveduk for icosahedra.
     substring match, or a genus.
 12. The `MAX_INSTANCES` cull runs before form bucketing, never within a form.
 13. `meshSource` changes what a tree looks like and never which trees are drawn,
-    where they stand, how tall they are, or which way they face.
+    where they stand, how tall they are, how wide they are where a canopy width
+    is surveyed, or which way they face.
 14. Every material the layer draws with is in the material registry.
 15. A form whose model has not loaded, or has failed to load, draws
     procedurally. It never borrows another form's model and never vanishes.
@@ -1083,5 +1143,8 @@ procedural source would credit evolveduk for icosahedra.
 18. The layer never calls `Math.random`. Per-tree variation is hashed from
     `tree_id`; per-form variation is a fixed constant.
 19. A level-of-detail change alters a tree's triangle count and nothing else —
-    not where it stands, how tall it draws, or which way it faces. Every level
-    of a form shares one `baseHeightM`, measured from level 0.
+    not where it stands, how tall or wide it draws, or which way it faces. Every
+    level of a form shares one `baseHeightM` and one `baseWidthM`, measured from
+    level 0.
+20. A tree's scale is `crownScale`, in the meshes, the sunlight occluders and
+    the USD export alike. `heightScale` reaches the vertical only.

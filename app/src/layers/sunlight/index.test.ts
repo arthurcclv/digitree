@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_SUNLIGHT_SETTINGS, SUNLIGHT_NATIVE_LAYER_ID, sunlightRecord } from "./index";
 import * as THREE from "three";
-import { canopyHullOf, rotationOf } from "../tree";
+import { canopyHullBaseOf, canopyHullOf, crownScale, rotationOf } from "../tree";
 import { crownMatrix } from "./sunlightLayer";
 
 /** Any moment will do: the record does not read it. */
@@ -46,7 +46,7 @@ describe("crownMatrix", () => {
     // …then into this layer's east-north-up frame.
     const expected = new THREE.Matrix4().makeRotationX(Math.PI / 2).multiply(treeLayer);
     const pos = canopyHullOf("spreading").getAttribute("position");
-    const actual = crownMatrix(x, y, h, yaw);
+    const actual = crownMatrix(x, y, { xz: h, y: h }, yaw);
     for (let i = 0; i < pos.count; i++) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, i);
       const a = p.clone().applyMatrix4(actual);
@@ -56,9 +56,31 @@ describe("crownMatrix", () => {
   });
 
   test("stands the hull up: the tree layer's +Y is up here", () => {
-    const top = new THREE.Vector3(0, 1, 0).applyMatrix4(crownMatrix(10, 20, 8, 0.3));
+    const top = new THREE.Vector3(0, 1, 0).applyMatrix4(crownMatrix(10, 20, { xz: 8, y: 8 }, 0.3));
     expect(top.x).toBeCloseTo(10, 9);
     expect(top.y).toBeCloseTo(20, 9);
     expect(top.z).toBeCloseTo(8, 9);
+  });
+
+  test("scales the vertical and the horizontal apart", () => {
+    // A point one unit out along the hull's x and one unit up.
+    const m = crownMatrix(0, 0, { xz: 3, y: 8 }, 0);
+    const side = new THREE.Vector3(1, 0, 0).applyMatrix4(m);
+    const top = new THREE.Vector3(0, 1, 0).applyMatrix4(m);
+    expect(side.length()).toBeCloseTo(3, 9);
+    expect(top.z).toBeCloseTo(8, 9);
+  });
+
+  test("a surveyed canopy width sizes the shadow's crown to that width", () => {
+    // What placeCrowns does: crownScale over the hull's own base, at true scale.
+    const base = canopyHullBaseOf("spreading");
+    const m = crownMatrix(0, 0, crownScale(base, { heightM: 9, widthM: 20 }, 1), rotationOf("T1"));
+    const pos = canopyHullOf("spreading").getAttribute("position");
+    let r = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const p = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m);
+      r = Math.max(r, Math.hypot(p.x, p.y));
+    }
+    expect(2 * r).toBeCloseTo(20, 6);
   });
 });

@@ -25,9 +25,16 @@ describe("treeOf", () => {
       lng: 121.5,
       lat: 25,
       heightM: 8,
+      canopyWidthM: null,
       kind: "street",
       species: "榕樹",
     });
+  });
+
+  test("reads canopy_width_m as a positive number, and as null otherwise", () => {
+    const width = (w: unknown) => treeOf({ tree_id: "T1", canopy_width_m: w }, point(0, 0))!.canopyWidthM;
+    expect(width(8.5)).toBe(8.5);
+    for (const bad of [undefined, null, 0, -2, "8.5", Number.NaN]) expect(width(bad)).toBeNull();
   });
 
   test("rejects a non-Point and a missing or non-text tree_id", () => {

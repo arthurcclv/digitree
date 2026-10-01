@@ -35,6 +35,7 @@ export const TREE_PROPS = {
   kind: "kind",
   species: "species",
   height: "height_m",
+  canopyWidth: "canopy_width_m",
 } as const;
 
 /** One tree, read once for every layer that draws or casts it. */
@@ -44,6 +45,11 @@ export interface TreeFeature {
   lat: number;
   /** The surveyed height, or `null` where it is missing or not positive. */
   heightM: number | null;
+  /**
+   * The surveyed canopy width, or `null` where it is missing or not positive.
+   * Only custom drop-ins carry one today. See *Canopy width* in `specs/spec.md`.
+   */
+  canopyWidthM: number | null;
   kind: unknown;
   species: unknown;
 }
@@ -61,11 +67,13 @@ export function treeOf(
   if (typeof id !== "string" || geometry?.type !== "Point") return null;
   const [lng, lat] = geometry.coordinates as [number, number];
   const h = p[TREE_PROPS.height];
+  const w = p[TREE_PROPS.canopyWidth];
   return {
     id,
     lng,
     lat,
     heightM: typeof h === "number" && h > 0 ? h : null,
+    canopyWidthM: typeof w === "number" && w > 0 ? w : null,
     kind: p[TREE_PROPS.kind],
     species: p[TREE_PROPS.species],
   };

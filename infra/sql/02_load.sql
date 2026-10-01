@@ -47,9 +47,13 @@ COPY stg_park FROM :'park_csv' WITH (FORMAT csv, HEADER true);
 -- (case-sensitive) column name, so `tree_id` would reject a `TreeID` header.
 -- That strictness is the point: a file with LON and LAT the other way round is
 -- rejected instead of loading longitude into the latitude column.
+--
+-- Two headers are accepted: the six columns without CanopyWidth, and the seven
+-- with it, where it follows TreeHeight — the two measurements side by side. A
+-- six-column file leaves "CanopyWidth" NULL.
 CREATE UNLOGGED TABLE stg_custom (
   "TreeID" text, "TreeType" text, "Diameter" text, "TreeHeight" text,
-  "LAT" text, "LON" text,
+  "CanopyWidth" text, "LAT" text, "LON" text,
   src_file text   -- filled in after each COPY, so the reports can name the file
 );
 
@@ -60,10 +64,18 @@ SET LOCAL trees.custom_dir TO :'custom_dir';
 -- a dataset is dropping a file in, not editing a script.
 DO $$
 DECLARE
-  dir   text := current_setting('trees.custom_dir');
-  f     text;
-  n     bigint;
-  files int := 0;
+  dir         text := current_setting('trees.custom_dir');
+  f           text;
+  n           bigint;
+  files       int := 0;
+  -- The two accepted headers, from one list: CanopyWidth slots in after
+  -- TreeHeight. The COPY column list and the error's hint are both built from
+  -- these, so they cannot disagree.
+  narrow      text[] := ARRAY['TreeID','TreeType','Diameter','TreeHeight','LAT','LON'];
+  wide        text[] := narrow[1:4] || 'CanopyWidth'::text || narrow[5:6];
+  head_bytes  bytea;
+  header_line text;
+  claimed     text[];
 BEGIN
   -- missing_ok: no directory at all is the normal case, not an error.
   IF (pg_stat_file(dir, true)).isdir IS NOT TRUE THEN
@@ -73,15 +85,34 @@ BEGIN
 
   FOR f IN SELECT * FROM pg_ls_dir(dir) AS name ORDER BY 1 LOOP
     CONTINUE WHEN f !~* '\.csv$';
+    -- Which of the two headers this file claims decides the column list, and
+    -- HEADER MATCH then holds it to that list exactly. A header naming
+    -- CanopyWidth gets the seven-column list, so the column in any other place
+    -- is rejected; anything else is held to the six, so a misspelt width column
+    -- is rejected rather than silently dropped.
+    -- The detection matches the bare name only: header names are written
+    -- unquoted, and a quoted "CanopyWidth" is held to the six and rejected.
     BEGIN
+      -- Read as bytes and cut at the first newline: a fixed-length text read
+      -- could end mid-character in the data rows and fail to decode. The read
+      -- sits inside this block so that a header that is not UTF-8 still fails
+      -- with the file named.
+      head_bytes := pg_read_binary_file(dir || '/' || f, 0, 4096);
+      IF position('\x0a'::bytea IN head_bytes) > 0 THEN
+        head_bytes := substring(head_bytes FROM 1 FOR position('\x0a'::bytea IN head_bytes) - 1);
+      END IF;
+      header_line := rtrim(convert_from(head_bytes, 'UTF8'), E'\r');
+      claimed := CASE WHEN header_line ~ '(^|,)CanopyWidth(,|$)' THEN wide ELSE narrow END;
       EXECUTE format(
-        'COPY stg_custom ("TreeID","TreeType","Diameter","TreeHeight","LAT","LON")
-           FROM %L WITH (FORMAT csv, HEADER MATCH)', dir || '/' || f);
+        'COPY stg_custom (%s) FROM %L WITH (FORMAT csv, HEADER MATCH)',
+        (SELECT string_agg(quote_ident(c), ',') FROM unnest(claimed) AS c),
+        dir || '/' || f);
     EXCEPTION WHEN OTHERS THEN
       -- COPY's own error names the staging table, not the file, which is
       -- useless when several files are loaded in one pass.
       RAISE EXCEPTION 'custom: % could not be loaded: %', f, SQLERRM
-        USING HINT = 'The header must be exactly: TreeID,TreeType,Diameter,TreeHeight,LAT,LON';
+        USING HINT = format('The header must be exactly: %s or %s',
+                            array_to_string(narrow, ','), array_to_string(wide, ','));
     END;
     UPDATE stg_custom SET src_file = f WHERE src_file IS NULL;
     GET DIAGNOSTICS n = ROW_COUNT;
@@ -107,6 +138,8 @@ SELECT src_file,
             THEN "TreeHeight"::real END AS height_m,
        CASE WHEN "Diameter"   ~ '^\s*-?\d+(\.\d+)?\s*$'
             THEN "Diameter"::real   END AS diameter_cm,
+       CASE WHEN "CanopyWidth" ~ '^\s*-?\d+(\.\d+)?\s*$'
+            THEN "CanopyWidth"::real END AS canopy_width_m,
        CASE WHEN "LAT"        ~ '^\s*-?\d+(\.\d+)?\s*$'
             THEN "LAT"::double precision  END AS lat,
        CASE WHEN "LON"        ~ '^\s*-?\d+(\.\d+)?\s*$'
@@ -171,6 +204,15 @@ END $$;
 --             exactly 0, which is a surveyor leaving the field blank, not a
 --             tree of no width. Those stay NULL, because a consumer averaging
 --             or scaling on diameter would silently pull toward a literal zero.
+--   canopy    kept whenever it is positive, on the same terms again. Only custom
+--             rows can carry one — the city does not survey crown width — so
+--             street and park rows are NULL by construction, not by cleaning.
+--             A width is never estimated from diameter: that would be a value
+--             the survey did not record. No supplier file has shipped widths
+--             yet, so there are no observed values to cite; the rule is the
+--             one height and diameter earned, and test/fixtures/custom-ok/c.csv
+--             holds the shapes it must survive — an empty cell, a 0, a -2 and
+--             an N/A, all NULL.
 --
 -- A value that fails a rule becomes NULL rather than being clamped or zeroed:
 -- an unmeasured trunk must not render as a thin one. The same rules apply to
@@ -189,6 +231,7 @@ WITH raw AS (
          nullif(tree_type, '')           AS species,
          nullif(tree_height, '')::real   AS height_m,
          nullif(diameter, '')::real      AS diameter_cm,
+         NULL::real                      AS canopy_width_m,
          nullif(survey_date, '')::date   AS survey_date,
          twd97x::double precision        AS x,
          twd97y::double precision        AS y,
@@ -203,6 +246,7 @@ WITH raw AS (
          nullif(tree_type, ''),
          nullif(tree_height, '')::real,
          nullif(diameter, '')::real,
+         NULL,
          nullif(survey_date, '')::date,
          twd97x::double precision,
          twd97y::double precision,
@@ -219,6 +263,7 @@ WITH raw AS (
          species,
          height_m,
          diameter_cm,
+         canopy_width_m,
          NULL::date,
          lon,
          lat,
@@ -229,12 +274,13 @@ WITH raw AS (
 )
 INSERT INTO trees (
   id, tree_id, kind, district, place, place_note,
-  species, height_m, diameter_cm, survey_date, geom
+  species, height_m, diameter_cm, canopy_width_m, survey_date, geom
 )
 SELECT row_number() OVER (ORDER BY tree_id),
        tree_id, kind, district, place, place_note, species,
        CASE WHEN height_m    > 0                        THEN height_m    END,
        CASE WHEN diameter_cm > 0                        THEN diameter_cm END,
+       CASE WHEN canopy_width_m > 0                     THEN canopy_width_m END,
        survey_date,
        CASE WHEN srid = 4326 THEN ST_SetSRID(ST_MakePoint(x, y), 4326)
             ELSE ST_Transform(ST_SetSRID(ST_MakePoint(x, y), srid), 4326) END
@@ -266,6 +312,9 @@ SELECT kind,
        count(*)           AS trees,
        count(height_m)    AS with_height,
        count(diameter_cm) AS with_diameter,
+       -- A drop-in whose CanopyWidth column is misspelt fails the load; one whose
+       -- cells are all blank loads with zero here, and this is where you see it.
+       count(canopy_width_m) AS with_canopy_width,
        count(species)     AS with_species
 FROM trees GROUP BY kind ORDER BY kind;
 

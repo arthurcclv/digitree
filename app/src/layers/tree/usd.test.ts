@@ -13,6 +13,7 @@ const tree = (id: string, over: Partial<TreeFeature> = {}): TreeFeature => ({
   lng: 121.5654,
   lat: 25.033,
   heightM: 12,
+  canopyWidthM: null,
   kind: "street",
   species: "榕樹",
   ...over,
@@ -77,8 +78,11 @@ describe("the package", () => {
     expect(numbersOf(text, "int[] protoIndices")).toEqual(trees.map((t) => sorted.indexOf(t.form)));
     const scales = numbersOf(text, "float3[] scales");
     trees.forEach((t, i) => {
-      const s = (t.heightM * 2) / buildForm(t.form).baseHeightM;
-      expect(scales[i * 3]).toBeCloseTo(s, 5);
+      // Unmeasured: the form's proportions at true height, the vertical exaggerated.
+      const built = buildForm(t.form);
+      expect(scales[i * 3]).toBeCloseTo(t.heightM / built.baseHeightM, 5);
+      expect(scales[i * 3 + 1]).toBeCloseTo(t.heightM / built.baseHeightM, 5);
+      expect(scales[i * 3 + 2]).toBeCloseTo((t.heightM * 2) / built.baseHeightM, 5);
     });
     const q = numbersOf(text, "quath[] orientations");
     trees.forEach((t, i) => {
@@ -91,13 +95,26 @@ describe("the package", () => {
     expect(text).toContain('string[] attribution = ["© trees"]');
   });
 
+  test("scales a surveyed canopy width on x and y, and the height on z", async () => {
+    const trees = treeInstances([tree("w", { canopyWidthM: 20, heightM: 9 })], "all", FRAME, 9.1);
+    expect(trees[0].widthM).toBe(20);
+    const text = await rootText(
+      (await treesPackage(trees, proceduralPrototypes([trees[0].form]), { heightScale: 1.5 }, FRAME, [])).usdz,
+    );
+    const built = buildForm(trees[0].form);
+    const [x, y, z] = numbersOf(text, "float3[] scales");
+    expect(x).toBeCloseTo(20 / built.baseWidthM, 5);
+    expect(y).toBeCloseTo(20 / built.baseWidthM, 5);
+    expect(z).toBeCloseTo((9 * 1.5) / built.baseHeightM, 5);
+  });
+
   test("keeps a model's texture as PNG, its alpha mask and its double side", async () => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 0.25], 2));
     const map = new THREE.Texture({ width: 2, height: 2 });
     const material = new THREE.MeshStandardMaterial({ map, alphaTest: 0.4, side: THREE.DoubleSide });
-    const proto: Prototype = { parts: [{ geometry, material }], baseHeightM: 1 };
+    const proto: Prototype = { parts: [{ geometry, material }], baseHeightM: 1, baseWidthM: 1 };
     const trees = treeInstances([tree("a")], "all", FRAME, 9.1);
     const encoded: THREE.Texture[] = [];
     const pkg = await treesPackage(trees, new Map([[trees[0].form, proto]]), { heightScale: 1 }, FRAME, [], async (t) => {
@@ -133,6 +150,7 @@ describe("the prototypes", () => {
       const p = protos.get(form)!;
       const built = buildForm(form);
       expect(p.baseHeightM).toBe(built.baseHeightM);
+      expect(p.baseWidthM).toBe(built.baseWidthM);
       expect(p.parts.map((part) => part.material.name)).toEqual(["Bark", "Canopy"]);
       expect(p.parts[0].geometry.getAttribute("position").count).toBe(built.bark.getAttribute("position").count);
       expect(p.parts[1].geometry.getAttribute("position").count).toBe(built.canopy.getAttribute("position").count);

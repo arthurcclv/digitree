@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import * as THREE from "three";
-import { buildForm, buildMaterials, canopyHullOf, TREE_FORMS, type FormGeometry } from "./formGeometry";
+import {
+  buildForm,
+  buildMaterials,
+  canopyHullBaseOf,
+  canopyHullOf,
+  TREE_FORMS,
+  type FormGeometry,
+} from "./formGeometry";
+import { radialWidthM } from "./crown";
 import type { TreeForm } from "./forms";
 
 function box(geometry: THREE.BufferGeometry): THREE.Box3 {
@@ -91,6 +99,14 @@ describe("buildForm", () => {
     const top = Math.max(box(geometry.bark).max.y, box(geometry.canopy).max.y);
     expect(geometry.baseHeightM).toBeCloseTo(top, 6);
     expect(geometry.baseHeightM).toBeGreaterThan(0);
+  });
+
+  test.each(TREE_FORMS)("%s measures its own base width from the canopy", (form) => {
+    const geometry = get(form);
+    expect(geometry.baseWidthM).toBeCloseTo(radialWidthM([geometry.canopy]), 9);
+    expect(geometry.baseWidthM).toBeGreaterThan(0);
+    // A radius, not a box: at least as wide as the canopy's box on either axis.
+    expect(geometry.baseWidthM).toBeGreaterThanOrEqual(spread(geometry) - 1e-9);
   });
 
   test.each(TREE_FORMS)("%s is deterministic", (form) => {
@@ -208,6 +224,14 @@ describe("canopyHullOf", () => {
     const triangles = canopyHullOf(form).getAttribute("position").count / 3;
     expect(triangles).toBeGreaterThanOrEqual(20);
     expect(triangles).toBeLessThanOrEqual(76);
+  });
+
+  test.each(TREE_FORMS)("%s is modelled at height 1 and the form's own proportions", (form) => {
+    const { baseHeightM, baseWidthM } = buildForm(form);
+    const base = canopyHullBaseOf(form);
+    expect(base.heightM).toBe(1);
+    // The hull's outermost points are canopy vertices, so its width is the canopy's.
+    expect(base.widthM).toBeCloseTo(baseWidthM / baseHeightM, 6);
   });
 
   test("is built once per form", () => {

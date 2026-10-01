@@ -143,22 +143,26 @@ describe("matchHeight", () => {
   // rung stands a fraction shorter than level 0 — and every tree in the city
   // would twitch as it crossed a threshold.
   test("brings a rung to the height it is given", () => {
-    const matched = matchHeight(standing(9.8), 10);
+    const matched = matchHeight(standing(9.8), 10, 1);
     expect(matched.baseHeightM).toBeCloseTo(10);
     matched.parts[0].geometry.computeBoundingBox();
     const box = matched.parts[0].geometry.boundingBox!;
     expect(box.max.y - box.min.y).toBeCloseTo(10);
   });
 
+  test("gives a rung level 0's width, so a surveyed width draws the same at every level", () => {
+    expect(matchHeight(standing(9.8), 10, 1.37).baseWidthM).toBe(1.37);
+  });
+
   test("keeps the model standing on the origin", () => {
-    const matched = matchHeight(standing(4), 10);
+    const matched = matchHeight(standing(4), 10, 1);
     expect(matched.parts[0].geometry.boundingBox!.min.y).toBeCloseTo(0);
   });
 
   test("leaves a model that already matches untouched", () => {
     const model = standing(10);
     const before = model.parts[0].geometry.attributes.position.array.slice();
-    matchHeight(model, 10);
+    matchHeight(model, 10, model.baseWidthM);
     expect(model.parts[0].geometry.attributes.position.array).toEqual(before);
   });
 });
@@ -224,6 +228,11 @@ describe("normalizeModel", () => {
   test("measures the height rather than taking it on trust", () => {
     // 2..6 in the source, so 4 m tall however far off the origin it started.
     expect(normalizeModel(scene()).baseHeightM).toBeCloseTo(4);
+  });
+
+  test("measures the width about the vertical axis, over every part", () => {
+    // Two 1 m cubes centred on the axis once normalised: corners at (±0.5, ±0.5).
+    expect(normalizeModel(scene()).baseWidthM).toBeCloseTo(Math.SQRT2);
   });
 
   test("bakes parent transforms into the geometry", () => {
