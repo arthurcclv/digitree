@@ -107,8 +107,9 @@ CORS problem the proxy exists to avoid. A relative `tiles` entry keeps every
 request same-origin, and costs only the three fields the TileJSON would have
 supplied.
 
-The proxy is `/tiles` → `http://localhost:3000` in `vite.config.ts`, and is the
-app's only knowledge that `infra/` exists.
+The proxy is `/tiles` → `TILES_PROXY_TARGET` (default `http://localhost:3000`),
+on both the dev and the preview server (`src/lib/tiles/specs/proxy.md`). It is
+the app's only knowledge that `infra/` exists.
 
 ### When the server is down
 

@@ -15,6 +15,19 @@ curl -s localhost:3000/catalog | jq        # the published sources
 curl -s localhost:3000/trees | jq          # TileJSON
 ```
 
+Martin is published on `127.0.0.1:3000`. If that port is taken on the host,
+set `MARTIN_PORT` for both `./load.sh` and any later `docker compose` command,
+and point the app's proxy at it:
+
+```bash
+MARTIN_PORT=3001 ./load.sh
+# in app/: TILES_PROXY_TARGET=http://localhost:3001 npm run preview
+```
+
+Check what answers on the port first. Another web server on `:3000` makes the
+app fail with `Unimplemented type: 4`, because it gets back an HTML page where
+a tile should be.
+
 `docker compose down` stops it. `docker compose down -v` also drops the database
 volume — the right way to start over.
 

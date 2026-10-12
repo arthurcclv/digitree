@@ -6,6 +6,34 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-12 — The tile proxy's target is a setting, `TILES_PROXY_TARGET`
+
+**Decision.**
+- **The `/tiles` proxy forwards to `TILES_PROXY_TARGET`**, which defaults to
+  `http://localhost:3000`. It is read with `loadEnv`, so it can come from the
+  shell or `app/.env*`. Built by `tileProxy()` in `src/lib/tiles/proxy.ts`
+  (spec: `src/lib/tiles/specs/proxy.md`).
+- **There is no `VITE_` prefix.** The target is server-side only. The browser
+  still requests the relative `/tiles/trees/{z}/{x}/{y}`, and `TREES` is
+  unchanged.
+- **A malformed value stops Vite at startup.** A wrong upstream used to fail
+  far from its cause. On 192.168.81.32 an unrelated nginx held `:3000` and
+  answered every tile with its `index.html` and a `200`, and MapLibre reported
+  `Unimplemented type: 4`.
+- **`server.proxy` and `preview.proxy` are both set.** `vite preview` is how
+  the app is deployed.
+- **infra publishes Martin on `${MARTIN_PORT:-3000}`.** Only the host side
+  moves. Martin still listens on 3000 inside its container.
+
+**Rules out.** An absolute tile URL in the bundle, a production web server in
+front of `dist/`, and detecting a non-tile response at the proxy.
+
+**Revisit when** the app is served by something other than `vite preview`.
+That server then owns the `/tiles` route, or the source moves to a public
+origin with CORS.
+
+---
+
 ## 2026-09-30 — A tree's width is a surveyed column, and its scale is no longer uniform
 
 **Decision.**

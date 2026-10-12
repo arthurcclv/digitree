@@ -55,5 +55,8 @@ docker compose restart martin
 
 echo
 echo "done. verify with:"
-echo "  curl -s localhost:3000/catalog | jq"
-echo "  curl -s localhost:3000/trees | jq"
+echo "  curl -s localhost:${MARTIN_PORT:-3000}/catalog | jq"
+echo "  curl -s localhost:${MARTIN_PORT:-3000}/trees | jq"
+if [ "${MARTIN_PORT:-3000}" != "3000" ]; then
+  echo "and start the app with TILES_PROXY_TARGET=http://localhost:${MARTIN_PORT}"
+fi

@@ -38,8 +38,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # MARTIN_PORT moves the host side only, for a machine whose :3000 is
+    # taken; Martin itself always listens on 3000 (martin.yaml). The app's
+    # proxy must follow it: TILES_PROXY_TARGET, see app/src/lib/tiles/specs/proxy.md.
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${MARTIN_PORT:-3000}:3000"
     volumes:
       - ./martin.yaml:/config/martin.yaml:ro
     command: ["--config", "/config/martin.yaml"]

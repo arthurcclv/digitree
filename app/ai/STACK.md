@@ -85,23 +85,26 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | --- | --- | --- |
 | OpenFreeMap — `https://tiles.openfreemap.org/planet` | OSM vector tiles, OpenMapTiles schema, both basemap and `building` source layer | no |
 | OpenFreeMap styles — `/styles/{dark,fiord,liberty,positron}` | the four basemaps | no |
-| Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `localhost:3000` | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
+| Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `TILES_PROXY_TARGET` (default `http://localhost:3000`) | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
 
 Every endpoint above except the basemap styles is configured in one file,
 `src/sources.ts`. The layers take descriptors and name none of them.
 
 Martin is **local and optional**: it is not a deployed service but a container
 started with `infra/load.sh`, and the app runs without it — the tree layers
-simply render nothing. It is reached through a Vite dev proxy so tile requests
-stay same-origin; see `src/layers/tree/specs/spec.md` for why the layer uses
-`source.tiles` rather than Martin's own TileJSON.
+simply render nothing. It is reached through a Vite proxy, on the dev and the
+preview server alike, so tile requests stay same-origin; see
+`src/layers/tree/specs/spec.md` for why the layer uses `source.tiles` rather
+than Martin's own TileJSON. Where the proxy forwards is the one deploy-time
+setting, `TILES_PROXY_TARGET`, read from the environment or `app/.env*` and
+never shipped to the bundle (`src/lib/tiles/specs/proxy.md`).
 
 **No web fonts.** The interface uses the system stack (`-apple-system`,
 `BlinkMacSystemFont`, Segoe UI, Roboto, with PingFang TC / Microsoft JhengHei
 named explicitly for zh-TW), so tiles are the only third-party request the app
 makes.
 
-No API keys, no registration, no `.env`. **Three** attributions are required and
+No API keys, no registration, and no `.env` is required. **Three** attributions are required and
 all three are rendered by the status bar: `© OpenStreetMap contributors ·
 OpenMapTiles · OpenFreeMap` for the basemap and buildings, Taipei City's for the
 tree inventory, and `Tree models: evolveduk · CC BY 4.0` for the glTF models.
@@ -120,6 +123,10 @@ and `resolve.dedupe: ["maplibre-gl", "react", "react-dom"]` — paired with
 `maplibreConfig.WORKER_URL` at module scope in `useMapEngine.ts`. Without them
 the map renders as a black rectangle with no console error. Full reasoning in
 `DECISIONS.md`.
+
+It also builds the `/tiles` proxy from `src/lib/tiles/proxy.ts`, on `server`
+and `preview` both, which is why the config is the function form
+(`loadEnv` needs the `mode`).
 
 `tsconfig.json`: ES2022 target, `bundler` module resolution, `strict`,
 `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`,

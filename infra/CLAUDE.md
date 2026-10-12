@@ -10,7 +10,8 @@ Docker Compose. It serves the Taipei tree inventory — plus any custom trees
 dropped into `data/custom/` — to `app/` as Mapbox Vector Tiles. It is a
 **development fixture**: credentials are trivial, ports bind to `127.0.0.1`,
 and there is no deployment story. Do not add one without a decision
-entry.
+entry. The one concession is `MARTIN_PORT`, which moves Martin's host port off
+a taken `:3000` (DECISIONS 2026-10-12).
 
 `infra/` has no `DECISIONS.md` of its own. Its decisions — the drop-in schema,
 the cleaning rules, the published property names — are recorded in

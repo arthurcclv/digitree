@@ -12,6 +12,9 @@ Modules:
   once none is pending, every one ready or failed. It takes the store's
   `onChange`, so it is for a store of the caller's own (the USD export's and
   the export pass's).
+- `src/lib/tiles/proxy.ts`: the `/tiles` proxy in front of Martin, for
+  `vite.config.ts` only. Its target is `TILES_PROXY_TARGET`. It has its own
+  spec, `specs/proxy.md`.
 - `src/layers/tree/schema.ts` and `src/layers/buildings/schema.ts`: each
   dataset's **schema**, meaning how a feature is read. Every consumer shares it.
 

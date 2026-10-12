@@ -16,7 +16,8 @@ adding a new folder with a spec, not a new file in `src/lib`.
 
 ```
 index.html          Vite entry
-vite.config.ts      React plugin + the two MapLibre worker settings (see README)
+vite.config.ts      React plugin, the MapLibre worker settings (see README),
+                    and the /tiles proxy (TILES_PROXY_TARGET) on dev + preview
 tsconfig.json       TS project refs; `tsc -b` runs in `npm run build`
 src/
   layers/           one folder per GeoLibre layer / plugin / extension
@@ -104,7 +105,9 @@ src/
                       grid, TileStore (generic over its sources: fetch +
                       decode + cache), settle (wait for a store of your
                       own), building prisms, ground footprint; the
-                      data-sources specs/spec.md; *.test.ts beside them
+                      data-sources specs/spec.md; proxy.ts, the /tiles
+                      proxy for vite.config.ts, with specs/proxy.md;
+                      *.test.ts beside them
     usd/              the USD export's shared writer: .usda text, stored
                       zip + .usdz, ExportFrame, ground/raster packages, the
                       root layer; knows no layer; its own specs/spec.md.

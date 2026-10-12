@@ -31,6 +31,24 @@ change touching the worker settings or the tree layer: those fail at runtime, no
 at compile time, and dev and production fail for *different* reasons (see
 `DECISIONS.md`).
 
+## Deploying
+
+The app is deployed as `dist/` behind `vite preview`, which carries the same
+`/tiles` proxy as the dev server. If Martin is not on the same host at `:3000`,
+point the proxy at it:
+
+```bash
+npm run build
+TILES_PROXY_TARGET=http://localhost:3001 npm run preview -- --host
+curl -sI http://<host>:4173/tiles/trees/15/27448/14028 | grep -i content-type
+```
+
+The last line must say `application/x-protobuf`. `text/html` means something
+other than Martin answered, and the map shows `Unimplemented type: 4` (an HTML
+`<` parsed as a protobuf header). A malformed `TILES_PROXY_TARGET` stops
+`vite` from starting at all. On the infra side, `MARTIN_PORT` moves Martin's
+host port (`infra/README.md`).
+
 ## The loop for a behaviour change
 
 The spec is the gate, not the paperwork afterwards.
@@ -117,6 +135,9 @@ Whatever it is has to be re-established in `onStyleLoad`, not once at startup.
 **A layer sits at the wrong height in the stack.** `createLayerSync` appends to
 the top; order within the `sync([...])` array is the only other lever, plus
 `anchorUnderLabels` afterwards.
+
+**Some tiles did not load: `Unimplemented type: 4`.** The proxy reached a
+server that is not Martin and got an HTML page back. See *Deploying*.
 
 In dev the map is exposed as `window.__map` for console poking. It is gated on
 `import.meta.env.DEV`; do not depend on it in app code.
