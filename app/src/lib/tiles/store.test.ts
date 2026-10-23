@@ -148,4 +148,44 @@ describe("TileStore", () => {
     expect(store.featuresOf("points", inside)).toEqual(["p"]);
     expect(store.featuresOf("polys", inside)).toEqual(["b"]);
   });
+
+  test("dispose aborts what is in flight, and the store does nothing after", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    let changes = 0;
+    // Answers only when aborted, as a real fetch rejects.
+    const fn = ((_url: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return new Promise<Response>((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+      );
+    }) as typeof fetch;
+    const store = new TileStore({ points }, fn);
+    store.onChange = () => changes++;
+    store.want([inside]);
+    await settle();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+
+    store.dispose();
+    await settle();
+    expect(signals[0]?.aborted).toBe(true);
+    expect(changes).toBe(0);
+    expect(store.counts()).toEqual({ covered: 0, pending: 0, failed: 0 });
+
+    store.want([inside]);
+    await settle();
+    expect(signals).toHaveLength(1);
+  });
+
+  test("a fetch that settles after dispose changes nothing", async () => {
+    let answer: (r: Response) => void = () => {};
+    const fn = (() => new Promise<Response>((resolve) => (answer = resolve))) as typeof fetch;
+    const store = new TileStore({ points }, fn);
+    store.want([inside]);
+    await settle();
+    store.dispose();
+    answer(ok());
+    await settle();
+    expect(store.featuresOf("points", inside)).toEqual([]);
+  });
 });

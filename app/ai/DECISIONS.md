@@ -36,6 +36,28 @@ third user appears.
 
 ---
 
+## 2026-10-23 — `TileStore` has a `dispose()` that aborts its fetches
+
+**Decision.** `TileStore.dispose()` aborts every fetch in flight, through one
+`AbortController` whose signal every tile and TileJSON fetch carries. It also
+drops the queue and clears `onChange`. Once disposed, the store accepts no
+`want`, and a fetch that settles anyway writes nothing. The splat layer calls
+it from its own `dispose`, as its spec has always said it should.
+
+**Why.** Before this, an owner could only set `store.onChange = null`. That
+silenced the store but left up to `FETCH_CONCURRENCY` requests running
+against a layer that was gone. The splat layer is the first owner whose spec
+says to dispose the store.
+
+**Rules out.** Tearing a layer down by detaching it from its store alone, for
+any new owner.
+
+**Revisit / open.** Sunlight and AO still only set `onChange = null`. Moving
+them to `dispose()` changes their specs' teardown, so it is left for a change
+of its own.
+
+---
+
 ## 2026-10-12 — The tile proxy's target is a setting, `TILES_PROXY_TARGET`
 
 **Decision.**

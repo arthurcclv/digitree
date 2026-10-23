@@ -104,7 +104,8 @@ interface Held {
 /**
  * Fetches, decodes and caches its sources on one tile grid. `want()` is the
  * only way in: it names the tiles the layer needs now, and anything not yet
- * held is queued. `onChange` fires when a tile lands or fails.
+ * held is queued. `onChange` fires when a tile lands or fails. `dispose()`
+ * aborts what is in flight and ends the store.
  *
  * A store holds exactly the sources it is given; a tile counts as covered once
  * every one of them has it.
@@ -115,6 +116,8 @@ export class TileStore<S extends Record<string, TileSource<unknown>>> {
   private queue: { id: string; tile: TileId; start: () => void }[] = [];
   private inFlight = 0;
   private wanted: TileId[] = [];
+  /** Aborts every fetch in flight when the store is disposed. */
+  private readonly abort = new AbortController();
 
   onChange: (() => void) | null = null;
 
@@ -133,6 +136,7 @@ export class TileStore<S extends Record<string, TileSource<unknown>>> {
 
   /** Replace the wanted set; queue whatever is missing. Failed tiles are retried. */
   want(tiles: TileId[]): void {
+    if (this.abort.signal.aborted) return;
     this.wanted = tiles;
     const queued = new Set(this.queue.map((q) => q.id));
     for (const tile of tiles) {
@@ -179,6 +183,17 @@ export class TileStore<S extends Record<string, TileSource<unknown>>> {
     return (e?.state === "ready" ? e.features : []) as FeatureOf<S[K]>[];
   }
 
+  /**
+   * Abort every fetch in flight and drop the queue. The store is done: `want`
+   * does nothing after it, and a fetch that settles anyway fires nothing.
+   */
+  dispose(): void {
+    this.onChange = null;
+    this.queue = [];
+    this.wanted = [];
+    this.abort.abort();
+  }
+
   /** One tile's state in each held source. */
   private states(t: TileId): (Entry<unknown>["state"] | undefined)[] {
     const k = tileKey(t);
@@ -188,7 +203,7 @@ export class TileStore<S extends Record<string, TileSource<unknown>>> {
   private templateOf(src: Held): Promise<string | null> {
     const loc = src.source.location;
     if ("tiles" in loc) return Promise.resolve(loc.tiles);
-    src.template ??= this.fetchFn(loc.tileJson)
+    src.template ??= this.fetchFn(loc.tileJson, { signal: this.abort.signal })
       .then((r) => (r.ok ? r.json() : null))
       // `json()` is untyped; the cast only restates the typeof check before it.
       .then((j) => (j && Array.isArray(j.tiles) && typeof j.tiles[0] === "string" ? (j.tiles[0] as string) : null))
@@ -216,20 +231,21 @@ export class TileStore<S extends Record<string, TileSource<unknown>>> {
         .replace("{z}", String(tile.z))
         .replace("{x}", String(tile.x))
         .replace("{y}", String(tile.y));
-      const res = await this.fetchFn(url);
+      const res = await this.fetchFn(url, { signal: this.abort.signal });
       // Martin answers an empty tile with 204.
-      if (res.status === 204) {
-        src.cache.set(key, { state: "ready", features: [] });
-      } else if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      } else {
-        src.cache.set(key, { state: "ready", features: src.source.decode(await res.arrayBuffer(), tile) });
+      let features: unknown[] = [];
+      if (res.status !== 204) {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        features = src.source.decode(await res.arrayBuffer(), tile);
       }
+      // A fetch that ignored the abort still lands in a store that is done.
+      if (!this.abort.signal.aborted) src.cache.set(key, { state: "ready", features });
     } catch {
       // A failure is a state, not an error: the tile stays uncovered and is counted.
-      src.cache.set(key, { state: "failed" });
+      if (!this.abort.signal.aborted) src.cache.set(key, { state: "failed" });
     } finally {
       this.inFlight--;
+      // `onChange` is null and the queue empty once disposed.
       this.onChange?.();
       this.pump();
     }

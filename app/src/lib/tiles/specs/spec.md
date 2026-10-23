@@ -154,6 +154,7 @@ interface TileSource<T> {
 
 new TileStore(sources: Record<string, TileSource<unknown>>, fetchFn?)
 store.featuresOf(name, tile)         // typed by the source under `name`
+store.dispose()                      // aborts in-flight fetches; the store is done
 ```
 
 - A store holds exactly the sources it is given. There is no default set and
@@ -162,6 +163,10 @@ store.featuresOf(name, tile)         // typed by the source under `name`
   `{ buildings }`.
 - A `tileJson` location is resolved once, and retried after a failure, as the
   building TileJSON is today. A `tiles` location is used as it is.
+- `dispose()` aborts every fetch still in flight (each is passed an
+  `AbortSignal`), drops the queue and clears `onChange`. After it, `want` does
+  nothing, and a fetch that settles anyway changes no state and fires nothing.
+  The owner calls it from its own `dispose`.
 - Everything else is unchanged and specified in the sunlight spec, *Data*:
   the z14 grid, the LRU of `TILE_CACHE_SIZE` per source, `FETCH_CONCURRENCY`,
   204 as an empty tile, failures as a state, and retries.
