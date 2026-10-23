@@ -96,6 +96,38 @@ hints then say which port to use. A remote deploy becomes
 
 The rejected alternative was to leave infra alone and move the other nginx.
 
+## The `/files` proxy (approved 2026-10-20, implemented)
+
+Added with the splat layer (`src/layers/splat/specs/spec.md`, *The files*).
+Martin serves tiles only, so infra serves the splat captures from a static
+`files` service (nginx), and the app reaches it the same way it reaches
+Martin.
+
+1. **One more setting, `FILES_PROXY_TARGET`.** `/files/*` is forwarded to it,
+   with the `/files` prefix stripped: `/files/3dgs/KY0917A.spz` →
+   `/3dgs/KY0917A.spz`.
+2. **The default is `http://localhost:3080`**, infra's `FILES_PORT` default.
+3. **Everything else is the `/tiles` rules**: read with `loadEnv`, no `VITE_`
+   prefix, validated the same way with the same messages naming
+   `FILES_PROXY_TARGET`, a trailing `/` dropped, `changeOrigin: true`, and set
+   on both `server.proxy` and `preview.proxy`.
+4. **The two settings are independent.** Setting one never moves the other.
+5. **Byte ranges pass through** (added 2026-10-23, splat spec revision 5).
+   Spark reads a paged `.rad`'s header with a `Range` request (its chunks are
+   separate files, fetched whole), so a `Range` header reaches the target
+   unchanged and its `206` comes back. Vite's proxy does this by default; nothing is configured
+   for it.
+
+`proxy.ts` exports `fileProxy(env)` beside `tileProxy(env)`; both are built by
+one private `proxyTo(prefix, name, default, env)`. `proxy.test.ts` asserts the
+default, a valid value, the rejected values, the prefix rewrite (`/filesystem/x`
+is left alone), `changeOrigin`, and the independence of the two. It also
+runs a real Vite server with `fileProxy` in front of a stand-in target and
+checks that a `Range` request comes back `206` with its header intact.
+
+A remote deploy whose `:3080` is taken becomes `FILES_PORT=… ./load.sh` plus
+`FILES_PROXY_TARGET=http://localhost:…`.
+
 ## Out of scope
 
 - **Detecting a wrong upstream at runtime**, for example rejecting a

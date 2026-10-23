@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-import { tileProxy } from "./src/lib/tiles/proxy";
+import { fileProxy, tileProxy } from "./src/lib/tiles/proxy";
 
 export default defineConfig(({ mode }) => {
   // The tree layer's tiles come from the Martin server in infra/. Proxying
@@ -11,8 +11,11 @@ export default defineConfig(({ mode }) => {
   // TILES_PROXY_TARGET (default http://localhost:3000), read from the
   // environment or app/.env*; see src/lib/tiles/specs/proxy.md. The preview
   // server is how the app is deployed, so it gets the proxy explicitly.
+  // The splat captures come from infra's static file service the same way:
+  // `/files` → FILES_PROXY_TARGET (default http://localhost:3080).
   // The "" prefix loads every variable, not only VITE_*: none reach the bundle.
-  const proxy = { "/tiles": tileProxy(loadEnv(mode, process.cwd(), "")) };
+  const env = loadEnv(mode, process.cwd(), "");
+  const proxy = { "/tiles": tileProxy(env), "/files": fileProxy(env) };
 
   return {
     plugins: [react()],
