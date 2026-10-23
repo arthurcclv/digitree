@@ -119,6 +119,68 @@ export function mercatorFrame(origin: { x: number; y: number; z?: number }, metr
     .scale(new THREE.Vector3(metre, -metre, metre));
 }
 
+/** A perspective camera split into its two halves. See `decomposeCamera`. */
+export interface DecomposedCamera {
+  /** Perspective; its `w` row is exactly (0, 0, −1, 0). */
+  projection: THREE.Matrix4;
+  /** Rigid: a rotation (det +1) and a translation. */
+  view: THREE.Matrix4;
+}
+
+/** How far the depth row may stray from the view's z axis, relative to it. */
+const DEPTH_ROW_TOLERANCE = 1e-9;
+
+/**
+ * Split a clip-from-local matrix (`projection(args, model)`) back into a
+ * perspective projection and a rigid view, with `P · V` equal to the input
+ * times one positive scale. A renderer that needs view space (Spark's splat
+ * footprints and culling) gets it from here, so `mainMatrix` is still read in
+ * one place. Throws when the input is not a perspective camera of that form.
+ * See `specs/spec.md`, *`decomposeCamera`*.
+ */
+export function decomposeCamera(clipFromLocal: THREE.Matrix4): DecomposedCamera {
+  const e = clipFromLocal.elements;
+  if (!e.every(Number.isFinite)) throw new Error("decomposeCamera: the matrix is not finite");
+  // Rows of the column-major matrix.
+  const row = (i: number) => [e[i], e[i + 4], e[i + 8], e[i + 12]];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const wLen = Math.hypot(e[3], e[7], e[11]);
+  if (!(wLen > 0)) throw new Error("decomposeCamera: no perspective w row");
+  // A positive scale keeps w's sign, so what was in front stays in front.
+  const [r0, r1, r2, r3] = [0, 1, 2, 3].map((i) => row(i).map((v) => v / wLen));
+
+  // The camera looks down −z, so the view's z row is minus the w row.
+  const z = r3.map((v) => -v);
+  const cy = dot(r1, z);
+  const yRaw = [0, 1, 2].map((i) => r1[i] - cy * z[i]);
+  const fy = Math.hypot(...yRaw);
+  const y = yRaw.map((v) => v / fy);
+  const cx = dot(r0, z);
+  const skew = dot(r0, y);
+  const xRaw = [0, 1, 2].map((i) => r0[i] - cx * z[i] - skew * y[i]);
+  const fx = Math.hypot(...xRaw);
+  const x = xRaw.map((v) => v / fx);
+  if (!(fx > 0 && fy > 0)) throw new Error("decomposeCamera: degenerate projection");
+
+  const det = dot([x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]], z);
+  if (det < 0) throw new Error("decomposeCamera: the frame is a reflection (det V < 0)");
+
+  // Depth: (0, 0, A, B) in view space must reproduce the z row.
+  const a = dot(r2, z);
+  const off = Math.hypot(...[0, 1, 2].map((i) => r2[i] - a * z[i]));
+  if (off > DEPTH_ROW_TOLERANCE * Math.abs(a)) throw new Error("decomposeCamera: the depth row is not a perspective depth");
+
+  const tz = z[3];
+  const ty = (r1[3] - cy * tz) / fy;
+  const tx = (r0[3] - skew * ty - cx * tz) / fx;
+  const b = r2[3] - a * tz;
+
+  // `set` takes rows.
+  const projection = new THREE.Matrix4().set(fx, skew, cx, 0, 0, fy, cy, 0, 0, 0, a, b, 0, 0, -1, 0);
+  const view = new THREE.Matrix4().set(x[0], x[1], x[2], tx, y[0], y[1], y[2], ty, z[0], z[1], z[2], tz, 0, 0, 0, 1);
+  return { projection, view };
+}
+
 /**
  * A `ShaderMaterial` that emits premultiplied colour, composited over the
  * frame: MapLibre blends with `ONE, ONE_MINUS_SRC_ALPHA`.

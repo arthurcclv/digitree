@@ -4,9 +4,11 @@ Source of truth for how a three.js layer shares MapLibre's GL context.
 Behaviour changes here require this file to change first.
 
 Module: `src/lib/three/` — `index.ts` (`ThreeLayer`, `projection`,
-`mercatorFrame`, `PREMULTIPLIED_OVER`) and `threeLayer.test.ts`. The four
-custom-layer classes (`ThreeTreeLayer`, `ThreeSunlightLayer`,
-`ThreeTemperatureLayer`, `ThreeAoLayer`) extend `ThreeLayer`.
+`mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`),
+`threeLayer.test.ts`, `decomposeCamera.test.ts` and its fixtures
+`mainMatrix.fixtures.json`. The five custom-layer classes (`ThreeTreeLayer`,
+`ThreeSunlightLayer`, `ThreeTemperatureLayer`, `ThreeAoLayer`,
+`ThreeSplatLayer`) extend `ThreeLayer`.
 
 ## Purpose
 
@@ -116,6 +118,20 @@ in line with its spec.
   `y` north, `z` up) onto Mercator, whose `y` points south. Sunlight and
   temperature (from a domain's centre), AO (from its frame's origin) and tree
   (then rotated so its meshes' `y` is up) build on it.
+- **`decomposeCamera(clipFromLocal): { projection, view }`** splits
+  `projection(args, model)` back into a perspective `P` (its `w` row exactly
+  `(0, 0, −1, 0)`) and a rigid `V` (det +1), with `P · V` equal to the input
+  times one positive scale. It is for a renderer that needs view space: Spark
+  culls in view space and sizes each splat from `P[0][0]`, `P[1][1]` and a
+  perspective Jacobian, which a combined matrix breaks. Method: scale by
+  `1 / |w row's 3×3 part|`; the view's z row is minus the w row; Gram–Schmidt
+  on the y row, then the x row, gives the view's other rows and `P`'s focal
+  lengths, skew and principal point; the translation follows by
+  back-substitution, and `P`'s depth row `(0, 0, A, B)` from the z row, so
+  depth matches MapLibre's exactly. It throws on a non-finite input, a
+  missing w row (orthographic), a reflection (`det V < 0`), or a depth row off
+  the view's z axis (relative residual > 1e-9). The splat layer is its only
+  user (`src/layers/splat/specs/spec.md`, *The camera*).
 - **`PREMULTIPLIED_OVER`** holds the blend parameters for a `ShaderMaterial`
   that emits premultiplied colour composited *over* the frame:
   `CustomBlending`, `ONE, ONE_MINUS_SRC_ALPHA` for colour and alpha. The
@@ -146,13 +162,21 @@ overrides, so no WebGL is needed.
    `resetState`, or reads `mainMatrix`. `lib/tiles/structure.test.ts` reads
    the source files, and it also adds `lib/three` to the shared modules that
    must not import a layer.
-8. Each of the four classes is a `ThreeLayer` and declares `prerender`
-   exactly when it did before: sunlight, AO and temperature do, tree does
-   not.
+8. Each of the five classes is a `ThreeLayer` and declares `prerender`
+   exactly when it did before: sunlight, AO and temperature do; tree and
+   splat do not.
+9. `decomposeCamera` recovers a known perspective and view, keeps an
+   off-centre principal point in `P`, puts exactly `(0, 0, −1, 0)` in `P`'s
+   w row under any positive input scale, and throws on a reflection, a bad
+   depth row, a non-finite and an orthographic input.
+10. On the 18 `mainMatrix` captures in `mainMatrix.fixtures.json` (MapLibre
+   6.10.0; pitch 0°–85°, four bearings, with and without panel padding), each
+   times `mercatorFrame` at its view's centre, `decomposeCamera` round-trips
+   with relative error < 1e-12 and `det V = 1`.
 
 ## Out of scope
 
-- Sharing one renderer between the four layers. Each still owns its own,
+- Sharing one renderer between the five layers. Each still owns its own,
   because their render targets, state and lifetimes differ.
 - The layers' own passes, shaders and render targets.
 - Context-loss recovery beyond what `onAdd` already does on a new context.
