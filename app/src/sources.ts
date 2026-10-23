@@ -1,5 +1,6 @@
 import { OSM_ATTRIBUTION, OSM_TILEJSON } from "./layers/basemaps";
 import type { BuildingSource } from "./layers/buildings";
+import type { SplatSource } from "./layers/splat";
 import type { TreeSource } from "./layers/tree";
 
 /**
@@ -57,4 +58,22 @@ export const BUILDINGS: BuildingSource = {
   attribution: OSM_ATTRIBUTION,
   name: "OSM Buildings",
   sourceKind: "osm-openfreemap",
+};
+
+/**
+ * The Gaussian splat captures in infra: their placements from PostGIS through
+ * Martin, their files and the paged LoD trees the layer draws from infra's
+ * static `files` service. Both are reached through same-origin proxies
+ * (`/tiles` → TILES_PROXY_TARGET, `/files` → FILES_PROXY_TARGET; see
+ * `src/lib/tiles/specs/proxy.md`). The table, the source id and the layer name
+ * are set in `infra/martin.yaml`, the file paths in `infra/files.conf`. See
+ * `src/layers/splat/specs/spec.md`.
+ */
+export const SPLATS: SplatSource = {
+  tiles: "/tiles/splats/{z}/{x}/{y}",
+  sourceLayer: "splats",
+  files: "/files/3dgs/",
+  lodFiles: "/files/3dgs-lod/",
+  attribution: "3DGS captures",
+  name: "Gaussian splat captures",
 };

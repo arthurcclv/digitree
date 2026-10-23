@@ -49,6 +49,15 @@ other than Martin answered, and the map shows `Unimplemented type: 4` (an HTML
 `vite` from starting at all. On the infra side, `MARTIN_PORT` moves Martin's
 host port (`infra/README.md`).
 
+The splat files take the same route through `/files`. If infra's `files`
+service is not on `:3080`, add `FILES_PROXY_TARGET=http://localhost:<FILES_PORT>`,
+and check `curl -sI http://<host>:4173/files/3dgs-lod/<scan>-lod.rad` answers
+`200` with `application/octet-stream` and the file's length, and so does a
+chunk, `…/files/3dgs-lod/<scan>-lod-0.radc`. Spark reads the header by byte
+range, so also check that
+`curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-15' http://<host>:4173/files/3dgs-lod/<scan>-lod.rad`
+answers `206`.
+
 ## The loop for a behaviour change
 
 The spec is the gate, not the paperwork afterwards.
@@ -245,6 +254,39 @@ occlusion** and compare:
 The layer is reachable as
 `__map.getLayer("threejs-ambient-occlusion-native").implementation`. Its
 `state` and `buildings` fields say whether it is drawing.
+
+## Checking the Gaussian splats
+
+The captures are placed from control points in
+`infra/data/3dgs/control_points.csv` (`infra/README.md`). `./load.sh` prints
+each capture's fit (`rms_m`, `scale`, `heading_deg`) and rejects a bad one, so
+start there if a capture is missing. Then, at z15+ over a capture, turn on
+**Gaussian splats → Captures** and check:
+- **Placement.** The capture's buildings and kerbs sit on the OSM extrusions
+  and the basemap's roads. A capture off by a rotation or mirrored means wrong
+  control points, not a layer bug: the loader's fit should have refused it.
+- **Shape at every angle.** Splats keep their shape at high pitch and any
+  bearing, with the panel open (padding moves the principal point). Stretched
+  or exploding splats mean `decomposeCamera` was bypassed.
+- **Depth.** An extrusion in front of a capture hides it. Splats in front of an
+  extrusion draw over it.
+- **Idle.** With the camera still, the map stops drawing: sunlight and AO
+  still recompute after a pan. A map that never goes idle means something
+  besides `onDirty` is asking for repaints.
+- **Lazy.** With the layer off, the network panel shows no `/tiles/splats/`,
+  no `/files/` and no `spark.module` request.
+- **LoD.** A capture draws coarse at once and sharpens within a few seconds
+  as its pages arrive: the network panel shows its header read by range
+  (`206`), then `.radc` chunks fetched one by one (`200`), never the
+  `.spz`. A capture that never draws but is in
+  the `splats` table has no `.rad` (`infra/scripts/build-lod.sh`), which `./load.sh`
+  should have refused.
+- **Bounded.** Panning between captures for a minute or two, the tab's memory
+  stays flat: about 5 GB with both KZ0918 captures, against 1.85 GB with the
+  splats off (Apple M4, 2026-10-23). Pan more than 10 km away and settle, and
+  the panel's loaded count drops to 0.
+
+The layer is reachable as `__map.getLayer("threejs-splat-native").implementation`.
 
 ## Checking the USD export
 

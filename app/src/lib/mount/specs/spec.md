@@ -60,6 +60,11 @@ fixed for the mount's life. It returns a
 | `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)`, `exportLightUsd(frame)` |
 | `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)` |
 | `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; extrusion: ShadedExtrusion }` | `onStatus(AoState)` | — |
+| `mountSplat` | `{ splats }` | `SplatSettings` | `onStatus(SplatStatus)` | — |
+
+`mountSplat` takes a fifth argument, `deps`, which only its tests pass: they
+replace Spark, `fetch`, the footprint and the tile adapter
+(`src/layers/splat/specs/spec.md`, *The mount*). It adds no DAG node.
 
 `buildings` gets no mount. Its record builder already needs nothing else, and
 a mount around it would only pass settings through. Its USD export is a plain
@@ -113,7 +118,7 @@ already gone. Removing one mount from a live map is out of scope.
 
 ## The shared helper
 
-`nativeLayer(map, recordId, custom, bridge)` holds the part all four custom
+`nativeLayer(map, recordId, custom, bridge)` holds the part all five custom
 layers share. It returns `{ ensureAdded(), dispose() }`:
 
 - On creation, it registers `bridge` under `recordId`.
@@ -125,10 +130,14 @@ layers share. It returns `{ ensureAdded(), dispose() }`:
 ## What stays in the host (`useMapEngine.ts` in this app)
 
 - Creating the map, the worker configuration, `installMapTransformCompat`,
-  `createLayerSync`, and the one `Graph`.
+  `createLayerSync`, and the one `Graph`. The canvas is created **without
+  MSAA** (`antialias: false`): a context attribute shared by every layer, set
+  for the splats' sake (`src/layers/splat/specs/spec.md`, *Renderer*). A
+  structure test guards it.
 - The mount order and the sync order:
   `buildingsLayer(buildings, BUILDINGS)`, then ambient occlusion, sunlight, temperature,
-  and tree (points, mesh).
+  tree (points, mesh), and splat. The splats come last: translucent and
+  writing no depth, they draw over everything opaque and are tested against it.
 - On `style.load`: `hideBasemapBuildings`, `setLight`, then sync. Re-adding
   custom layers is no longer the host's job.
 - After any settings change: every mount's `update`, then one pass of

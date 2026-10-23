@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-23 — The splat loader owns the capture contract: `.spz` only, one line measure
+
+**Decision.**
+- **`04_splats.sql` accepts `File` only as `.spz`**, in lower case. It used
+  to accept `.spz .ply .splat .ksplat .sog`. Splat spec revision 7.
+- **`control-points.mjs` checks the line the loader's way**: the smallest
+  singular value of the three picked points' centred x, y, at least 2 m,
+  instead of point 3's distance from the line 1–2. control-points spec
+  revision 7. Picking does not change.
+
+**Why.** The two tools disagreed with the loader in ways that showed up at
+the wrong moment.
+- A `.ply` row passed the row check, but `build-lod.sh` reads only
+  `<scan>.spz`, so its LoD could never exist. The load then failed with
+  "its LoD … is not in …", which names the wrong cause.
+- (0,0), (100,0), (50,2.2) passed the generator (2.2 m off the line) but
+  failed the loader (1.80 m across). `test/control-points.sh` has this case,
+  and it fails on the old generator.
+
+**Rules out.** Accepting a capture format at load that the LoD build cannot
+read. A second measure of "too close to a line" anywhere in the pipeline.
+
+**Revisit / open.** If `build-lod.sh` learns to read another format, the
+loader's list grows with it, in the same change. The LoD name rule (`.spz` →
+`-lod.rad`) is still written once in SQL and once in `lodUrlOf`, with no test
+spanning the two. A test in `app/` that read `infra/` fixtures would bend the
+"app never imports from infra" rule.
+
+---
+
 ## 2026-10-23 — One `LocalFrame` in `lib/tiles`, with its conversions and the tile planner
 
 **Decision.** `src/lib/tiles/frame.ts` owns the local metre frame:
@@ -36,6 +66,58 @@ third user appears.
 
 ---
 
+## 2026-10-23 — The splat layer's frame and residency are pure modules
+
+**Decision.** Two parts of `ThreeSplatLayer` move into pure modules in
+`src/layers/splat/`, and the layer only carries out what they return:
+- `frame.ts`: `placeCapture(splat, anchor)` returns `{ matrix, origin, axes }`,
+  a capture's whole transform in the anchor's frame, already split into the
+  part Spark's mesh matrix carries and the part the stretch carries. It also
+  holds the anchor (`anchorAt`, `rebased`) and `similarity` / `axesOf`, which
+  were in `schema.ts`. The test-only `placement()` is gone. Its tests now
+  check `placeCapture`, matrix then stretch, against the same formula.
+- `residency.ts`: `Residency<T>` keeps the known, queued, loaded, loading and
+  failed captures, and applies the nearest-first, one-at-a-time,
+  `SPLAT_KEEP_M` and `SPLAT_MAX_CAPTURES` rules. It returns what to load,
+  evict and unload. The layer keeps only each capture's mesh and stretch, as `T`.
+
+Behaviour does not change. `mount.test.ts` passes with its assertions
+unchanged, reading the loaded meshes through `Residency` instead of a private
+map.
+
+**Why.** The math that shipped (`place()`) and the rules for what loads lived
+as private state inside the GL class. They could be tested only through fake
+Spark and casts to private fields, and the tested `placement()` was not the
+code that ran. Most of this branch's fixes were in these two places.
+
+**Rules out.** Frame or residency logic written inline in `splatLayer.ts`; a
+new rule goes into the pure module, with its test.
+
+**Revisit / open.** The `{origin, metre}` local frame recurs in tree, AO,
+sunlight and usd. Done in the entry above: `Anchor` is now `lib/tiles`'s
+`LocalFrame`.
+
+---
+
+## 2026-10-23 — The splat tools live in `infra/scripts/`
+
+**Decision.** `clean-splat.sh`, `build-lod.sh`, `control-points.mjs` and
+`splat-density-cut.mjs` move from `infra/` to `infra/scripts/`, and are run
+from `infra/` as `./scripts/<tool>`. `load.sh` stays at `infra/load.sh`: it
+is the stack's one entry point, and the root quickstart runs it there. The
+tools' behaviour does not change; the loader's missing-LoD message names the
+new path. Earlier entries keep the paths they were written with.
+
+**Why.** The four are offline steps run by hand, one capture at a time, and
+they had crowded `infra/`'s top level beside the stack's own files.
+
+**Rules out.** A new splat tool at `infra/`'s top level.
+
+**Revisit / open.** If `load.sh` gains siblings (a teardown, a reset), they
+could join it in `scripts/`; for now one entry point stays where it is.
+
+---
+
 ## 2026-10-23 — `TileStore` has a `dispose()` that aborts its fetches
 
 **Decision.** `TileStore.dispose()` aborts every fetch in flight, through one
@@ -55,6 +137,404 @@ any new owner.
 **Revisit / open.** Sunlight and AO still only set `onChange = null`. Moving
 them to `dispose()` changes their specs' teardown, so it is left for a change
 of its own.
+
+---
+
+## 2026-10-23 — Splat captures are fitted on WGS 84 and drawn with per-axis metres
+
+**Decision.**
+- **`04_splats.sql` fits on the WGS 84 ellipsoid**, equirectangular at the
+  points' centroid with its radii N and M, not on the map's sphere. `scale`
+  and `heading_deg` keep their meaning: true metres per file unit, and file +y
+  clockwise from true north.
+- **The layer draws each axis with the map's metres per true metre**,
+  `trueMetreAxes(lat)` = (R/N, R/M) in `lib/tiles/grid.ts`, at the capture's
+  own latitude: `placement = diag(east, north, 1) · similarity`.
+- **The per-axis part is a Spark world modifier** (`splat/stretch.ts`), about
+  the capture's origin. `mesh.matrix` keeps the similarity only.
+
+**Why.** The map draws latitude/longitude on a sphere, which stretches true
+metres unevenly: at Taipei a true metre is 0.99828 map metres east and 1.00381
+north. A uniform scale cannot match both. So the sphere fit (2026-10-22, *A
+scan's control points come from its PLY's georeference*, which called the
+residual "deliberate") left 0.13–0.22 m RMS on the KZ0918 scans. The error
+also grew away from the points, to 0.3–0.6 m at 150 m out. Fitting and drawing
+in true metres leaves millimetres: the scans now load at scale 1.0001 (UTM's
+1/k), heading 359.38° and RMS 0.000 m.
+
+**Rules out.**
+- Putting `diag(east, north, 1)` in `mesh.matrix`: Spark 2.3.1's default
+  path keeps only the mean of the three scales, which draws worse than the
+  sphere fit (0.15–0.31 m median).
+- `covSplats` mode, which would carry the full matrix: a paged mesh never
+  sets `extSplats`, so `SplatMesh({ covSplats: true, paged: true })` throws.
+  It also crashed Spark's worker with two load-time LoD trees.
+- Baking the stretch into the files: a file stays drawn as stored.
+
+**Costs.** The modifier adds a few vector operations per splat to Spark's
+generator. Its fps cost with both captures was not measured with this
+change. The Gaussians' shapes are not stretched (0.4%, not visible).
+
+**Revisit if** the modifier costs more than 10% fps (open question 1 of the
+draft: is 0.1–0.4 m worth it?), or a Spark release makes `covSplats` work with
+paged meshes.
+
+---
+
+## 2026-10-23 — Splat captures are drawn from paged LoD trees built in infra, and unloaded by distance and count
+
+**Decision.**
+- **infra builds each capture's LoD tree offline** with Spark's own
+  `build-lod --quality` at the app's pinned version (v2.3.1), in a
+  `rust:1.88-bookworm` container (`infra/build-lod.sh`), **chunked**
+  (`--rad-chunked`): a header `<stem>-lod.rad` and one `<stem>-lod-<n>.radc`
+  per 64 K-splat chunk, served at `/3dgs-lod/`. The splat load fails for a
+  capture without its header.
+- **The app draws it paged** (`SplatMesh({ url: lodUrlOf(…), paged: true })`):
+  Spark reads the header by byte range and fetches each chunk file whole
+  into a page pool of fixed size. Each chunk has its own ETag, so it is cached
+  and revalidated on its own. The pool and `lodCleanupTimeoutMs` are left at Spark's defaults
+  (256 pages on desktop; 3 s), and the draw budget is not capped.
+- **Captures are unloaded**: on a settled view past `SPLAT_KEEP_M` (10 km)
+  from the centre, and beyond `SPLAT_MAX_CAPTURES` (16), farthest first.
+- **The `.rad` URL is derived from `file`** (`<stem>-lod.rad`), not
+  published as a column. The rule lives once in `schema.ts` (`lodUrlOf`) and
+  once in `04_splats.sql`.
+
+**Why.** Memory grew with every capture ever reached. A non-paged mesh holds
+every splat, and with `Infinity` nothing was ever released. The two KZ0918
+captures (31.6 M splats) held **6.8–6.9 GB** in a Spark-only harness. Paged,
+the same two hold **2.4 GB, flat** over a 2-minute soak (2.0 GB with a
+128-page pool). In the app they add about 3.1 GB, flat, to its 1.85 GB.
+The fps is unchanged (39 against 37.6), and a capture draws at once instead of
+after a 25–35 s tree build. The `.rad` lands within 0.26 px of the `.spz`
+drawn without LoD, so the control points hold. The spike is recorded in
+`src/layers/splat/specs/spec.md`, *Level of detail*.
+
+**Rules out.** Building the tree in the browser; evicting non-paged
+captures (a capture that came back would cost a whole re-download and a
+rebuild); a 128-page pool (it refetched about 19 chunks a second while
+moving, against 11 at 256, for 0.35 GB less); capping the budget at the pool,
+which was decided first and dropped once the spike showed the pool is full at
+any budget; a `lod_file` column; a single-file `.rad` read by byte ranges,
+which is what the spike measured (the chunks hold the same data; chunked was
+chosen after, for per-chunk caching and a server that need not serve ranges
+for anything but the header).
+
+**Costs.** infra gains a build step of 2.5–4 minutes per capture, needing
+up to 5 GB of Docker's memory, and a `.rad` 1.5× the `.spz`. While the camera
+moves, pages are refetched continuously (about 12 MB/s at 256 pages), which
+is harmless against the local nginx and would matter over a network. The
+pool's 256 MB is allocated on the GPU, and again on the CPU, as soon as a
+capture loads.
+
+**Revisit if** the files are served over a real network (refetch rate, the
+pool size); a capture carries spherical harmonics (`--cluster-sh`, and
+`build-lod`'s `gpu` feature); Spark changes the `.rad` format or the pager;
+or `SPLAT_MAX_CAPTURES` is reached in practice.
+
+---
+
+## 2026-10-22 — A scan's control points come from its PLY's georeference
+
+**Decision.** `infra/control-points.mjs` writes a scan's control points from
+its RTK-fixed GNSS fixes (status 4) and the georeference in
+`original/<scan>/point_cloud.ply`'s header: X, Y, Z = UTM(fix) − `offsetx/y/z`
+in the zone `epsg` names, through a Krüger UTM in the script. `poses.csv` is
+not read. A capture without a georeference — not a PLY, no `epsg` or offset,
+a non-UTM EPSG, a shift or scale other than the identity — is refused. `H`
+stays blank. The loader and the app are unchanged. Specs:
+`infra/specs/control-points.md` revision 4, `src/layers/splat/specs/spec.md`
+revision 4.
+
+**Why.** The KZ0918 PLYs as now delivered are georeferenced (UTM 51N less the
+first GNSS fix: the header's offset is that fix to under 1 mm, and every RTK
+fix lies on the splats), and not in their poses' frame, which is turned 21.9°
+and 91.3° from them. The poses-based points made the loader solve the poses'
+heading and apply it to captures already facing north: they drew 18 m and
+166 m off (median), with good RMS (0.06, 0.24 m), since the points agreed with
+each other. Through the header they load at heading ≈ 359.4°, origin 15–17 cm
+from the first fix, RMS 0.13–0.22 m.
+
+**Rules out.** Points from `poses.csv`; reading the georeference in the
+loader or the app instead of going through control points (one path for
+every capture, with the fit's checks); guessing what a shift or scale means.
+
+**Costs.** The header is trusted, not checked against the vertices: a header
+that lies loads plausibly and wrong. The residual of 0.1–0.2 m is the map's
+sphere against UTM's ellipsoid (~0.3% more north–south), deliberate in
+`04_splats.sql`. *(Superseded 2026-10-23: the loader fits on WGS 84, and the
+layer draws per-axis metres. See* Splat captures are fitted on WGS 84 *.)* With `H` blank the antenna's height (~1.7 m) is put on the
+map's ground, so the captures sit that far low, as before.
+
+**Revisit if** a delivery carries a shift or scale, a non-UTM CRS, or a header
+that does not match its vertices; or when the captures' height is taken on.
+
+---
+
+## 2026-10-22 — One frame for a capture, its poses and its control points
+
+*Superseded in part by "A scan's control points come from its PLY's
+georeference" (above), 2026-10-22: the frame is the file's and the control
+points', not the poses'; the KZ0918 files are georeferenced PLYs, not y-down.*
+
+**Decision.** A capture's splat file, its scan's `poses.csv` and its rows of
+`control_points.csv` share one frame: the file's coordinates as stored, z-up,
+the ground on x/y, origin at the first pose. Nothing converts between them:
+`04_splats.sql` reads X, Y, Z as file coordinates (`file x = X`, …), and the
+splat layer draws the file as stored (`placement` = `rotateZ(−heading) ·
+scale`). Each scan's heading and origin come from its control points'
+latitude/longitude. Specs: `src/layers/splat/specs/spec.md` revision 3,
+`infra/specs/control-points.md` revision 3.
+
+**Rules out.** The y-up measuring frame (`file x = −X, file y = Z, file z = Y`)
+for hand-measured points: they are read in the file's stored coordinates. Any
+fixed or per-scan conversion of the poses — (y, −z, −x) held for
+KZ0918-090946 and not for KZ0918-075047, which is 67.3° further turned. A
+fixed `UPRIGHT` rotation in the layer for y-down files, and turning the poses
+to north from their GNSS (it assumes every splat is stored world-aligned):
+both drafted and dropped.
+
+**Costs.** The frame is a contract on the delivery, checked by nobody: a file
+stored another way renders on its side or turned, with a good fit. The KZ0918
+files as delivered are stored y-down and not in their poses' frame, so both
+render wrong until they are redelivered in it. Hand measuring in a y-up viewer
+needs its turn undone first.
+
+**Revisit if** splats keep arriving in a frame other than their poses' (then
+a conversion step, reading the splat, is worth building).
+
+---
+
+## 2026-10-22 — A scan's control points can come from its trajectory
+
+*Superseded by "A scan's control points come from its PLY's georeference"
+(above), 2026-10-22.*
+
+**Decision.** `infra/control-points.mjs` writes a scan's rows of
+`control_points.csv` from `original/<scan>/poses.csv` and `gnss.csv`: three
+poses — the farthest-apart pair and the one farthest from their line — each
+with the GNSS fix nearest in time, used only when that fix is RTK fixed
+(status 4) and within 0.1 s, written with their x, y, z unconverted (the entry
+above). `H` is blank. It replaces only those scans' rows; the hand-measured
+ones are kept. Spec: `infra/specs/control-points.md`.
+
+**Rules out.** RTK float or worse fixes (30% of KZ0918-075047's), a fix that
+is not the nearest, and the GNSS altitude as `H` — it is ~27 m above sea level,
+and would float the capture that far above the map's ground.
+
+**Costs.** The script never reads the splat, so it cannot tell a splat that is
+not in its poses' frame. `data/3dgs/control_points.csv` gains a writer besides
+the person measuring.
+
+**Revisit if** the scanner's lever arm shows on the map.
+
+---
+
+## 2026-10-22 — Splat originals are scan folders; the cleaner reads their one `point_cloud.<ext>`
+
+**Decision.** `infra/data/3dgs/original/` holds one folder per scan, as
+delivered, and `clean-splat.sh <scan>` reads the folder's one
+`point_cloud.<ext>` — `.ply`, `.compressed.ply`, `.sog`, `.spz`, `.splat` or
+`.ksplat` — and writes `source/<scan>.spz`. Nothing else in the folder is
+read. A folder with two (KZ0918-090946 had a `.ply` and a `.sog`) is refused,
+naming both. Spec: `infra/specs/clean-splat.md`, revision 5.
+
+**Rules out.** Copying a scan's splat out of its folder and renaming it by
+hand before cleaning. Reading only `point_cloud.sog` (revision 3, the same
+day): KZ0918-090946 arrived again as a `.ply`. Choosing among several by a
+fixed order of loss: two exports of one scan are the operator's choice, not a
+guess. A `point_cloud.mjs`: splat-transform would run it, and the folder is
+delivered data.
+
+**Costs.** The KZ0918 scans are 3× the KY0917 captures: 19.3M Gaussians peak
+at 3.5 GB and take ~2.5 min, and serve 257 MB. SOG stores scales in a codebook
+that pools rare values, so the cleaner's size-cut test uses 64 Gaussians at
+each size. The scans are y-up, not z-up; placing them is a separate change.
+
+Served scans stay SPZ v3 (`source/<scan>.spz`). Serving SOG was tried the
+same day and reverted: 143 MB against 183 MB for KZ0918-090946, same count,
+but a second lossy quantisation of scans delivered as SOG.
+
+**Revisit if** scans arrive in a multi-file format (`meta.json`, `.lcc`), or
+a scan needs two of its exports merged.
+
+---
+
+## 2026-10-22 — The splat frame is anchored, not recentred every frame
+
+**Decision.** `ThreeSplatLayer` builds its frame at an anchor set when it first
+plans tiles, and moves it to the view centre only on `viewSettled`, past
+`SPLAT_REBASE_M` (20 km). Each mesh's matrix is set when its capture loads and
+when the anchor moves, never per frame. `metre` is the anchor's; each capture is
+scaled by its own latitude's metre over it. Spec: `src/layers/splat/specs/spec.md`,
+*The frame*.
+
+**Why.** Spark caches each mesh's world transform when it updates, and that runs
+a tick after the draw (skipped while a sort is running), while the draw uses the
+live camera. Recentring every frame moved every mesh's world transform, so
+during a drag the captures slid against the buildings and snapped back once the
+map settled.
+
+**Rules out.**
+- Recentring at the map centre every frame (the first version).
+- Spark's `preUpdate: true` instead: the cache is still not rebuilt while a sort
+  runs and the LoD mapping has changed, which is most frames of a drag.
+
+**Costs.** When the anchor moves, at most one frame may draw Spark's old cache.
+Revisit if captures are viewed farther than 20 km from where the view settled
+without a settle in between, or if Spark comes to rebuild its cache in the frame
+it draws.
+
+---
+
+## 2026-10-21 — Splat captures are cleaned before they are served; `raw/` is now `source/`
+
+**Decision.** `infra/clean-splat.sh` turns a capture as delivered, in
+`infra/data/3dgs/original/`, into the file the `files` service serves, in
+`infra/data/3dgs/source/` (formerly `raw/`). Outliers are found from the
+capture's own distribution: it counts Gaussians in 2 m cubes, takes the cube
+the median Gaussian sits in as the typical density, and drops every cube
+holding under 1% of it. Then it drops Gaussians with any axis over 0.25 m,
+runs splat-transform's floater filter, and writes SPZ v3. `source/` is the one
+part of `infra/data/` a script writes; it can always be rebuilt from
+`original/`. Spec: `infra/specs/clean-splat.md`.
+
+With the defaults: A 2,835,204 → 2,685,252 (5.3%), B 6,454,811 → 6,216,275
+(3.7%), C 6,559,715 → 6,293,120 (4.1%). The density cut alone is 3.5 / 2.6 /
+1.9%. The floater filter alone removed 8 Gaussians from A: its 5 cm voxels are
+sized for objects, not a 300 m street capture.
+
+**Rules out.**
+- A fixed radius around the median, the first version: C is 300 m long with a
+  side arm, and 60 m cut 17.7% of it.
+- Rules on the capture's axes (Tukey fences, percentile boxes): C's middle half
+  is 10 m wide in y while its side arm reaches 84 m, so a y fence cuts it; a
+  diagonal street fits a box badly.
+- A density count on ground columns: it kept Gaussians at 90–128 m above every
+  capture, floaters over a dense street. Cubes leave 24–30 m, the buildings.
+- splat-transform's connectivity filter (`-C`): 6% of A in 1 m blocks,
+  possibly real parts that do not touch the main cluster.
+- Cleaning in place in the served directory, with a backup beside it (it mixes
+  cleaned and uncleaned files, and a second run cuts an already-cut file).
+- SPZ v4, splat-transform's default: not gzipped, and Spark 2.3.1
+  (`getSplatFileType`) recognises an SPZ only by gzip magic, so it does not
+  load.
+
+**Costs.** The density cut needs splat-transform's library API, not just its
+CLI (`infra/splat-density-cut.mjs`), so the script holds the version to 3.4.x
+and a whole capture in memory (~1 GB for 95 MB). splat-transform cannot write the v2
+the captures were delivered in, so a served capture is v3, which compresses
+worse: B is 96.6 MB served against 93.3 MB delivered, after a 3.7% cut. The clean is a manual step, not part of
+`load.sh`.
+
+**Revisit if** Spark reads ungzipped SPZ v4, splat-transform 3.5 changes the
+library API (the version check fails first), or a capture is so sparse
+overall that 1% of its typical cube is noise — then `--min-density` goes up
+for it, or the rule gains a floor.
+
+---
+
+## 2026-10-21 — The map's canvas has no MSAA
+
+**Decision.** `useMapEngine` creates the map with
+`canvasContextAttributes.antialias: false`. Before it was `true`, by default
+rather than by decision.
+
+Measured in the app, rotating over KY0917A with every layer on: 10 fps with
+4× MSAA, 34 fps without (DPR 2: 15 → 32). KY0917B alone in the test page:
+16 → 38 fps with LoD, 7 → 17 without. The frame time scaled with the LoD
+splat budget while the splat layer's CPU time stayed at 0.2 ms, so the cost was
+in the GPU, and Spark's own docs say WebGL anti-aliasing "doesn't improve
+Gaussian Splatting rendering and significantly reduces performance".
+
+**Rules out.** MSAA on the map. Recreating the GL context to switch MSAA off
+only while splats show (a context swap rebuilds every layer and drops the
+loaded captures). Buying the frame rate back with a lower LoD budget.
+
+**Costs.** Building and tree-mesh edges are slightly stair-stepped at DPR 1.
+They are not visible at DPR 2 (screenshots compared 2026-10-21). A structure
+test in `lib/mount/structure.test.ts` keeps it off.
+
+**Revisit if** MapLibre or three.js gets a post-process AA that can run after
+the splats (FXAA/SMAA on the composited frame), or DPR-1 screens matter more
+than splat frame rate.
+
+---
+
+## 2026-10-21 — Gaussian splats are drawn through Spark's LoD, built on load
+
+*Superseded by "Splat captures are drawn from paged LoD trees built in infra"
+(above), 2026-10-23: the tree is built offline and paged, and
+`lodCleanupTimeoutMs` is Spark's default.*
+
+**Decision.**
+- **Each capture's LoD tree is built from its `.spz` as it loads**
+  (`SplatMesh({ lod: true })`), and **`SparkRenderer({ enableLod: true })`**
+  draws a per-view budget of splats from every loaded capture's tree (Spark's
+  platform default: 2.5 M on desktop). `lodCleanupTimeoutMs: Infinity`, so a
+  tree lives as long as its capture stays loaded.
+- **`true`, not `"quality"`.** On KY0917B (6.45 M splats, M4): no LoD loads in
+  1.1 s and rotates at 7 fps; `true` loads in 17.8 s and rotates at 15 fps;
+  `"quality"` takes 76 s for 17 fps. The map still goes idle with both.
+
+**Rules out.** Drawing every loaded splat every frame (15.8 M for the three
+captures); a `"quality"` tree build at load.
+
+**Revisit if** the load time hurts: build the LoD offline in infra and serve
+Spark's paged LoD files instead, which is out of scope today
+(`src/layers/splat/specs/spec.md`, *Level of detail*).
+
+---
+
+## 2026-10-20 — Gaussian splats: Spark inside a `ThreeLayer`, placed from control points in PostGIS
+
+*Superseded in part by "Splat captures are drawn from paged LoD trees built
+in infra" (above), 2026-10-23: captures no longer stay loaded, and evicting
+them is no longer ruled out.*
+
+**Decision.**
+- **Spark (`@sparkjsdev/spark` 2.3.1, pinned) draws the captures, inside a
+  `ThreeLayer`** (`src/layers/splat/`), on the base's renderer, with no
+  `prerender`. Portability rule 7 is unchanged.
+- **`maplibre-gl-splat`, GeoLibre's own route, was rejected.** It is an
+  `IControl` with its own DOM panel. Its `@dvt3d/maplibre-three-plugin` makes
+  a second `WebGLRenderer` on the context (against rule 7), peers
+  `three ^0.178` (an `ERESOLVE` against 0.186), and calls `triggerRepaint` after
+  every frame, so the map never goes idle and sunlight and AO stop
+  recomputing. GeoLibre 3.0.0 lists `"gaussian-splat"` in `LAYER_TYPES` but
+  draws nothing for it in `@geolibre/map`.
+- **The camera is split, not combined.** Spark culls in view space and sizes
+  splats from a standard perspective, so `decomposeCamera` (`src/lib/three`)
+  turns `projection(args, mercatorFrame(centre, metre))` back into `P · V`. A
+  spike on MapLibre 6.10.0 found the split exact (round trip ≤ 3e-18, det
+  +1, no skew; padding moves only the principal point), and those 18 matrices
+  are now test fixtures.
+- **Placements are solved from control points, in infra.** Each capture is
+  placed from ≥ 3 points given in local `X, Y, Z` and `LAT, LON`
+  (`infra/data/3dgs/control_points.csv`). `X, Y, Z` are read in the y-up
+  frame the captures are measured in (a y-up viewer, which turns the file
+  180° about up on open, then a 90° rotation about x) and converted to the
+  file's own z-up frame (`x = −X, y = Z, z = Y`), which is what the app draws.
+  The fit cannot catch a 180° turn of the measuring frame; it was found by eye. `sql/04_splats.sql` fits a 2D
+  similarity and fails the splat load on a bad fit (RMS > 1 m, scale outside
+  [0.8, 1.25], points bunched or in a line). Martin publishes the result as
+  `splats`.
+- **Files come from a static `files` service** (nginx, `FILES_PORT`, default
+  3080), reached through a second same-origin proxy, `/files` →
+  `FILES_PROXY_TARGET`. Martin serves tiles only.
+- **Captures load lazily and stay loaded.** Nothing is fetched while the layer
+  is hidden or below z15. Spark is its own chunk, and captures load one at a time,
+  nearest first.
+
+**Rules out.** A second renderer or a repaint loop on the map's context;
+typing an origin and heading by hand; serving the captures from `public/`;
+evicting loaded captures (all three are ~250 MB of GPU memory together); per-capture
+visibility.
+
+**Revisit if** a capture needs LoD paging (Spark's `enableLod`), a capture
+is not z-up, Spark changes the shader assumptions `decomposeCamera` serves,
+or GPU memory becomes the limit.
 
 ---
 

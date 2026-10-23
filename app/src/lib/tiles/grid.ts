@@ -37,6 +37,30 @@ export function metreInMercator(lat: number): number {
   return 1 / (EARTH_CIRCUMFERENCE_M * Math.cos((lat * Math.PI) / 180));
 }
 
+/** WGS 84's semi-major axis, and its first eccentricity squared, e² = f·(2 − f). */
+const WGS84_A_M = 6_378_137;
+const WGS84_E2 = (1 / 298.257223563) * (2 - 1 / 298.257223563);
+
+/** The map's metres per true metre, east–west and north–south. */
+export interface MetreAxes {
+  east: number;
+  north: number;
+}
+
+/**
+ * The map's metres per true (WGS 84) metre at a latitude, on each axis:
+ * R / N(φ) east and R / M(φ) north, N the prime-vertical and M the meridian
+ * radius, R the map's sphere. The map draws latitude/longitude on that sphere,
+ * so a true metre is drawn shorter east–west and, at low latitudes, longer
+ * north–south. Not a Mercator unit: times `metreInMercator` for one.
+ */
+export function trueMetreAxes(lat: number): MetreAxes {
+  const w = 1 - WGS84_E2 * Math.sin((lat * Math.PI) / 180) ** 2;
+  const n = WGS84_A_M / Math.sqrt(w);
+  const m = (WGS84_A_M * (1 - WGS84_E2)) / w ** 1.5;
+  return { east: EARTH_RADIUS_M / n, north: EARTH_RADIUS_M / m };
+}
+
 /** The tile holding a Mercator point. */
 export function tileOfMercator(p: MercatorPoint, z = TILE_ZOOM): TileId {
   const n = 2 ** z;

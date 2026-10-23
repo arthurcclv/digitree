@@ -33,9 +33,18 @@ import {
   type PetProbe,
   type TemperatureSettings,
 } from "./layers/temperature";
+import {
+  DEFAULT_SPLAT_SETTINGS,
+  SPLAT_BUDGET_RANGE,
+  SPLAT_BUDGET_SCALE_RANGE,
+  SPLAT_FALLBACK_BUDGET,
+  SPLAT_KEEP_M,
+  type SplatSettings,
+  type SplatStatus,
+} from "./layers/splat";
 import { sceneExportReady, sceneParticipants, type SceneParticipant } from "./lib/sceneExport";
 import { useMapEngine } from "./lib/useMapEngine";
-import { TREES, TREES_SURVEYED } from "./sources";
+import { SPLATS, TREES, TREES_SURVEYED } from "./sources";
 import { fromLocal, localDate, localMinutes, noonToday, offsetLabel } from "./lib/place";
 import { PLACE } from "./place";
 import { cameraReadout } from "./ui/cameraReadout";
@@ -97,6 +106,25 @@ const USD_SIDE_KM = { min: 0.5, max: 10, step: 0.5, initial: 2 } as const;
 
 /** `scene-20260621T0400Z.zip`: the USD export, named for its sun time like the GeoTIFFs. */
 const sceneExportName = (sunTime: number): string => `scene-${utcStamp(sunTime)}.zip`;
+
+/** The splat layer's state in the panel's words. */
+const splatStateText = (s: SplatStatus | null, minZoom: number, zoom: number): string => {
+  if (zoom < minZoom) return `zoom in to z${minZoom}`;
+  if (!s || s.state === "idle") return "none in view";
+  if (s.state === "loading") return `loading ${s.loading} (${s.loaded}/${s.known})`;
+  return `${s.loaded}/${s.known} loaded` + (s.errors.length ? ` · ${s.errors.length} failed` : "");
+};
+
+/** A splat count as the panel shows it: `2.5 M`, `750 k`. */
+const splatCountText = (n: number): string =>
+  n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(2)} M` : `${Math.round(n / 1000)} k`;
+
+/** Spark's per-frame LoD budget: (count, or its platform default) × scale. */
+const splatBudgetText = (s: SplatSettings, platformBudget: number | null): string => {
+  const base = s.lodSplatCount ?? platformBudget;
+  const scale = `× ${s.lodSplatScale.toFixed(2)}`;
+  return base === null ? `auto ${scale}` : `${splatCountText(base)} ${scale} = ${splatCountText(base * s.lodSplatScale)}`;
+};
 
 /** Each scene participant in the panel's words. */
 const PARTICIPANT_TEXT: Record<SceneParticipant, string> = {
@@ -164,6 +192,7 @@ export default function App() {
   const [exporting, setExporting] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
+  const [splat, setSplat] = useState<SplatSettings>(DEFAULT_SPLAT_SETTINGS);
   const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
   const [exportingPet, setExportingPet] = useState(false);
   const [exportingUsd, setExportingUsd] = useState(false);
@@ -181,12 +210,13 @@ export default function App() {
     sunlightStatus,
     aoState,
     temperatureStatus,
+    splatStatus,
     exportSunlight,
     exportTemperature,
     exportScene,
     zoomBy,
     resetNorth,
-  } = useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
+  } = useMapEngine(basemap, settings, tree, sun, ao, temp, splat, setProbe, setPetProbe);
 
   const patchAo = (next: Partial<AmbientOcclusionSettings>) => setAo((prev) => ({ ...prev, ...next }));
 
@@ -253,6 +283,8 @@ export default function App() {
 
   const patch = (next: Partial<BuildingSettings>) =>
     setSettings((prev) => ({ ...prev, ...next }));
+
+  const patchSplat = (next: Partial<SplatSettings>) => setSplat((prev) => ({ ...prev, ...next }));
 
   const patchTree = (next: Partial<TreeSettings>) =>
     setTree((prev) => ({ ...prev, ...next }));
@@ -451,6 +483,66 @@ export default function App() {
             ) : null}
           </Panel>
 
+          <Panel title="Gaussian splats">
+            <CheckboxRow
+              label="Captures"
+              checked={splat.visible}
+              onChange={(visible) => patchSplat({ visible })}
+              title={`3D Gaussian splat captures served by infra, placed from their control points. Each streams in by level of detail as the view needs it, and is dropped once you are ${SPLAT_KEEP_M / 1000} km away.`}
+            />
+            <Slider
+              label="Opacity"
+              value={Math.round(splat.opacity * 100)}
+              min={10}
+              max={100}
+              step={2}
+              unit="%"
+              onChange={(v) => patchSplat({ opacity: v / 100 })}
+            />
+            <CheckboxRow
+              label="Platform budget"
+              checked={splat.lodSplatCount === null}
+              // Unchecking starts the slider from what was being drawn.
+              onChange={(auto) =>
+                patchSplat({ lodSplatCount: auto ? null : (splatStatus?.platformBudget ?? SPLAT_FALLBACK_BUDGET) })
+              }
+              title="Spark's own LoD splat budget for this device: 2.5 M on desktop, less on mobile and headsets."
+            />
+            {splat.lodSplatCount !== null ? (
+              <Slider
+                label="Budget"
+                value={splat.lodSplatCount / 1_000_000}
+                min={SPLAT_BUDGET_RANGE.min / 1_000_000}
+                max={SPLAT_BUDGET_RANGE.max / 1_000_000}
+                step={SPLAT_BUDGET_RANGE.step / 1_000_000}
+                decimals={2}
+                unit="M"
+                title="Spark's lodSplatCount: the most splats drawn per frame, across every loaded capture"
+                // Snapped to the slider's step: a typed value may fall between steps.
+                onChange={(m) => {
+                  const step = SPLAT_BUDGET_RANGE.step;
+                  patchSplat({ lodSplatCount: Math.round((m * 1_000_000) / step) * step });
+                }}
+              />
+            ) : null}
+            <Slider
+              label="Budget scale"
+              value={splat.lodSplatScale}
+              min={SPLAT_BUDGET_SCALE_RANGE.min}
+              max={SPLAT_BUDGET_SCALE_RANGE.max}
+              step={SPLAT_BUDGET_SCALE_RANGE.step}
+              decimals={2}
+              unit="×"
+              title="Spark's lodSplatScale: multiplies the budget. Lower is faster and blurrier."
+              onChange={(lodSplatScale) => patchSplat({ lodSplatScale })}
+            />
+            <StatLine k="Drawn per frame" v={splatBudgetText(splat, splatStatus?.platformBudget ?? null)} plain />
+            {splat.visible ? (
+              <StatLine k="State" v={splatStateText(splatStatus, splat.minZoom, camera.zoom)} plain />
+            ) : null}
+            <StatLine k="Captures from" v={`z${splat.minZoom}`} />
+          </Panel>
+
           <Panel title="Direct sun">
             <CheckboxRow
               label="Overlay"
@@ -644,6 +736,12 @@ export default function App() {
                     checked: tree.meshVisible,
                     onChange: (meshVisible) => patchTree({ meshVisible }),
                   },
+                  {
+                    id: "splats",
+                    label: "Gaussian splats",
+                    checked: splat.visible,
+                    onChange: (visible) => patchSplat({ visible }),
+                  },
                 ]}
               />
             </div>
@@ -659,6 +757,8 @@ export default function App() {
             {tree.meshVisible && tree.meshSource === "model" ? (
               <span>{MODELS_ATTRIBUTION}</span>
             ) : null}
+            {/* Conditional too: owed only while a capture is drawn. */}
+            {splat.visible && (splatStatus?.loaded ?? 0) > 0 ? <span>{SPLATS.attribution}</span> : null}
             <a href="https://github.com/opengeos/GeoLibre" target="_blank" rel="noreferrer">
               GeoLibre 3.0.0
             </a>

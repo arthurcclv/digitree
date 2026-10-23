@@ -6,8 +6,9 @@ root `CLAUDE.md`; this file covers what is specific to the app.
 ## What this is
 
 A single Vite + React app (`taipei-3d`) — one `package.json`, no workspaces. A 3D
-map of Taipei built on GeoLibre 3.0.0 over MapLibre, with four three.js custom
-layers (tree meshes, direct sun, felt temperature, ambient occlusion).
+map of Taipei built on GeoLibre 3.0.0 over MapLibre, with five three.js custom
+layers (tree meshes, direct sun, felt temperature, ambient occlusion, Gaussian
+splats).
 
 **Every GeoLibre layer, plugin, or extension gets its own folder under
 `src/layers/<name>/`, and every such folder carries a `specs/spec.md`.** That
@@ -17,7 +18,8 @@ adding a new folder with a spec, not a new file in `src/lib`.
 ```
 index.html          Vite entry
 vite.config.ts      React plugin, the MapLibre worker settings (see README),
-                    and the /tiles proxy (TILES_PROXY_TARGET) on dev + preview
+                    and the /tiles and /files proxies (TILES_PROXY_TARGET,
+                    FILES_PROXY_TARGET) on dev + preview
 tsconfig.json       TS project refs; `tsc -b` runs in `npm run build`
 src/
   layers/           one folder per GeoLibre layer / plugin / extension
@@ -72,7 +74,7 @@ src/
       aoLayer.ts      ThreeAoLayer — G-buffer, SSAO, blur, multiply composite
       kernel.ts, geometry.ts, state.ts
                       the pure parts: sample kernel + composite factor,
-                      tile planning + prism placement, state gate
+                      prism placement, state gate
       *.test.ts
       specs/spec.md
     temperature/
@@ -87,6 +89,25 @@ src/
                       classes, state
       *.test.ts
       specs/spec.md
+    splat/
+      index.ts        SplatSettings; the entry
+      records.ts      splatRecord() GeoLibre record
+      mount.ts        mountSplat()
+      splatLayer.ts   ThreeSplatLayer — Spark on the base's renderer, the
+                      camera through decomposeCamera; carries out what
+                      Residency decides
+      residency.ts    Residency — which captures load, wait, unload by
+                      distance and count, and failed; pure, no mesh
+      schema.ts       SplatSource; splatOf() — the one reading of a capture;
+                      lodUrlOf, splatTiles, splatsIn
+      frame.ts        the anchor (a LocalFrame; rebased) and placeCapture() —
+                      a capture's whole transform in the anchor's frame, as
+                      the mesh matrix + the stretch's origin and axes
+      stretch.ts      makeStretch() — the per-axis part of placement, as a
+                      Spark world modifier about the capture's origin
+      state.ts, constants.ts
+      *.test.ts
+      specs/spec.md
   lib/              shared engine + config, not layers
     useMapEngine.ts   the host: map lifecycle, the mounts, GeoLibre layer
                       sync, camera; owns Camera, starts at PLACE.home
@@ -97,16 +118,19 @@ src/
                       own specs/spec.md
     three/            ThreeLayer — the base of every three.js custom layer:
                       renderer lifecycle, resetState around each pass,
-                      mainMatrix projection; its own specs/spec.md
+                      mainMatrix projection, decomposeCamera (view +
+                      projection, for Spark); its own specs/spec.md
     dag/              the derived-layer DAG: one layer's output feeding
                       another's (sunlight.lpi → temperature.pet); pure, with
                       its own specs/spec.md
-    tiles/            shared by the self-fetching layers (sunlight, AO): z14
-                      grid, TileStore (generic over its sources: fetch +
-                      decode + cache), settle (wait for a store of your
-                      own), building prisms, ground footprint; the
-                      data-sources specs/spec.md; proxy.ts, the /tiles
-                      proxy for vite.config.ts, with specs/proxy.md;
+    tiles/            shared by the self-fetching layers (sunlight, AO, splat): z14
+                      grid, LocalFrame (the local metre frame + its
+                      conversions) and planTiles, TileStore (generic over
+                      its sources: fetch + decode + cache), settle (wait for
+                      a store of your own), building prisms, ground
+                      footprint; the
+                      data-sources specs/spec.md; proxy.ts, the /tiles and
+                      /files proxies for vite.config.ts, with specs/proxy.md;
                       *.test.ts beside them
     usd/              the USD export's shared writer: .usda text, stored
                       zip + .usdz, ExportFrame, ground/raster packages, the
@@ -122,7 +146,7 @@ src/
     Compass.tsx     bearing rose
     cameraReadout.ts  the status bar's lat/lon/zoom formatting (pure, tested)
   App.tsx           the interface: control state, panel, status bar, telemetry
-  sources.ts        the app's datasets (TREES, BUILDINGS) — the only place
+  sources.ts        the app's datasets (TREES, BUILDINGS, SPLATS) — the only place
                     an endpoint lives; layers take them as descriptors
   place.ts          the app's PLACE (Taipei, UTC+8, the Xinyi home view) —
                     with sources.ts, the only place the city is named

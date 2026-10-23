@@ -32,10 +32,11 @@ import {
   type AoState,
   type ShadedExtrusion,
 } from "../layers/ambient-occlusion";
+import { mountSplat, type SplatMount, type SplatSettings, type SplatStatus } from "../layers/splat";
 import { createGraph } from "./dag";
 import { exportFrame, rootLayer, sceneZip, type UsdPackage } from "./usd";
 import { sceneParticipants, type SceneParticipant } from "./sceneExport";
-import { BUILDINGS, TREES } from "../sources";
+import { BUILDINGS, SPLATS, TREES } from "../sources";
 import { PLACE } from "../place";
 import type { Viewpoint } from "./place";
 
@@ -61,6 +62,7 @@ interface Mounts {
   sunlight: SunlightMount;
   temperature: TemperatureMount;
   tree: TreeMount;
+  splat: SplatMount;
 }
 
 export interface Camera {
@@ -78,6 +80,7 @@ export function useMapEngine(
   sunlightSettings: SunlightSettings,
   aoSettings: AmbientOcclusionSettings,
   temperatureSettings: TemperatureSettings,
+  splatSettings: SplatSettings,
   onProbe: (result: ProbeResult) => void,
   onTemperatureProbe: (result: PetProbe) => void,
 ) {
@@ -106,7 +109,7 @@ export function useMapEngine(
   sunTimeRef.current = sunlightSettings.sunTime;
   // The first mount's settings; every later change reaches the mounts through
   // `update`, in the effect below.
-  const initialRef = useRef({ treeSettings, sunlightSettings, aoSettings, temperatureSettings });
+  const initialRef = useRef({ treeSettings, sunlightSettings, aoSettings, temperatureSettings, splatSettings });
   // `map.isStyleLoaded()` is false until every source settles, which is long
   // after the style itself is usable; track the style.load event instead.
   const styleReadyRef = useRef(false);
@@ -133,6 +136,7 @@ export function useMapEngine(
   const [sunlightStatus, setSunlightStatus] = useState<SunlightStatus | null>(null);
   const [aoState, setAoState] = useState<AoState>("off");
   const [temperatureStatus, setTemperatureStatus] = useState<TemperatureStatus | null>(null);
+  const [splatStatus, setSplatStatus] = useState<SplatStatus | null>(null);
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
@@ -144,13 +148,15 @@ export function useMapEngine(
     // over the extrusions and the ground right after they are drawn, so
     // nothing above it — overlays, circles, meshes — is darkened. The PET
     // overlay sits right above the direct-sun one, and the tree circles and
-    // meshes above both.
+    // meshes above both. The splats come last: translucent and writing no
+    // depth, they are drawn over everything opaque and tested against it.
     const records = [
       buildingsLayer(settingsRef.current, BUILDINGS),
       ...mounts.ao.prepareSync(),
       ...mounts.sunlight.prepareSync(),
       ...mounts.temperature.prepareSync(),
       ...mounts.tree.prepareSync(),
+      ...mounts.splat.prepareSync(),
     ];
     const key = JSON.stringify(records);
     if (key === syncedRef.current) return;
@@ -176,7 +182,11 @@ export function useMapEngine(
       pitch: PLACE.home.pitch,
       bearing: PLACE.home.bearing,
       maxPitch: 85,
-      canvasContextAttributes: { antialias: true, powerPreference: "high-performance" },
+      // No MSAA: it is one switch for the whole canvas, and 4× multisampling
+      // costs the Gaussian splats more than half their frame rate (10 → 34 fps
+      // rotating KY0917A) for slightly smoother edges at DPR 1. DECISIONS
+      // 2026-10-21; guarded in lib/mount/structure.test.ts.
+      canvasContextAttributes: { antialias: false, powerPreference: "high-performance" },
       attributionControl: false, // the custom status bar carries attribution
     });
     mapRef.current = map;
@@ -198,6 +208,7 @@ export function useMapEngine(
       }),
       temperature: mountTemperature(ctx, initial.temperatureSettings, { onStatus: setTemperatureStatus }),
       tree: mountTree(ctx, { trees: TREES }, initial.treeSettings, { onModelStatus: setModelStatus }),
+      splat: mountSplat(ctx, { splats: SPLATS }, initial.splatSettings, { onStatus: setSplatStatus }),
     };
     mountsRef.current = mounts;
     if (import.meta.env.DEV) {
@@ -258,6 +269,7 @@ export function useMapEngine(
       syncRef.current = null;
       // Reverse mount order: downstream first, so nothing samples the
       // sunlight targets as they go.
+      mounts.splat.dispose();
       mounts.tree.dispose();
       mounts.temperature.dispose();
       mounts.sunlight.dispose();
@@ -291,9 +303,10 @@ export function useMapEngine(
       mounts.sunlight.update(sunlightSettings);
       mounts.temperature.update(temperatureSettings);
       mounts.tree.update(treeSettings);
+      mounts.splat.update(splatSettings);
     }
     applyLayers();
-  }, [applyLayers, settings, treeSettings, sunlightSettings, aoSettings, temperatureSettings]);
+  }, [applyLayers, settings, treeSettings, sunlightSettings, aoSettings, temperatureSettings, splatSettings]);
 
   const exportSunlight = useCallback(
     (): Promise<Blob | null> => mountsRef.current?.sunlight.exportGeoTiff() ?? Promise.resolve(null),
@@ -380,6 +393,7 @@ export function useMapEngine(
     sunlightStatus,
     aoState,
     temperatureStatus,
+    splatStatus,
     exportSunlight,
     exportTemperature,
     exportScene,

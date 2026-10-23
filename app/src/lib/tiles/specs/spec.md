@@ -69,6 +69,16 @@ interface BuildingSource {
   name: string;           // the extrusion record's display name
   sourceKind: string;     // its metadata.sourceKind, a free label
 }
+
+// layers/splat — georeferenced Gaussian splat captures
+interface SplatSource {
+  tiles: string;          // the splats table's tile template; may be relative
+  sourceLayer: string;
+  files: string;          // where the files are; a capture's file is files + its `file`
+  lodFiles: string;       // where its paged LoD tree is: lodFiles + <stem>-lod.rad (lodUrlOf)
+  attribution: string;    // in the map's credit line while a capture is drawn
+  name: string;
+}
 ```
 
 Who takes which:
@@ -81,6 +91,7 @@ Who takes which:
 | `mountSunlight(ctx, { trees, buildings }, settings, hooks)` | both, for its own `TileStore`; `fallbackHeightM` for a tree with no height |
 | `mountAmbientOcclusion(ctx, { buildings }, settings, hooks)` | buildings, for its own `TileStore` |
 | `mountTemperature(ctx, settings, hooks)` | nothing: all its input arrives through the DAG |
+| `mountSplat(ctx, { splats }, settings, hooks)` | splats: `tiles` and `sourceLayer` for its own `TileStore`, `lodFiles` for each capture's LoD tree (`lodUrlOf`). It reads no `files`: that is where infra keeps the cleaned captures, and the layer never fetches one |
 
 So a mount factory is `mount<Name>(ctx, sources, settings, hooks?)` when the
 layer reads a dataset, and `mount<Name>(ctx, settings, hooks?)` when it does
@@ -88,7 +99,7 @@ not. Descriptors are fixed for a mount's life. Changing one means a new map,
 as a new graph does.
 
 **The self-fetching layers need z14.** `TileStore` fetches every source on
-one z14 grid (`TILE_ZOOM`). A descriptor for sunlight or AO must therefore
+one z14 grid (`TILE_ZOOM`). A descriptor for sunlight, AO or splat must therefore
 serve z14. The store does not check this. A source that doesn't serve z14
 shows up as failed tiles.
 
@@ -183,6 +194,7 @@ store.dispose()                      // aborts in-flight fetches; the store is d
 | `TREES: TreeSource` | `tiles: "/tiles/trees/{z}/{x}/{y}"` (relative, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"`, `name: "Taipei Trees"`, `sourceKind: "postgis-martin"`, `fallbackHeightM: 9.1` (the inventory's measured median height) |
 | `TREES_SURVEYED` | `162_930`, the panel's "Surveyed trees", formerly `TREES_TOTAL` |
 | `BUILDINGS: BuildingSource` | `tileJson: OSM_TILEJSON`, `sourceLayer: "building"`, `attribution: OSM_ATTRIBUTION`, `name: "OSM Buildings"`, `sourceKind: "osm-openfreemap"` |
+| `SPLATS: SplatSource` | `tiles: "/tiles/splats/{z}/{x}/{y}"`, `sourceLayer: "splats"`, `files: "/files/3dgs/"`, `lodFiles: "/files/3dgs-lod/"` (both through the `/files` proxy, `specs/proxy.md`), `attribution: "3DGS captures"` (a placeholder until the captures' credit is known), `name: "Gaussian splat captures"` |
 
 - `BUILDINGS` is built from `basemaps`' `OSM_TILEJSON` and `OSM_ATTRIBUTION`,
   so the basemap and the buildings still share one OSM snapshot (DECISIONS
@@ -206,10 +218,12 @@ All asserted by vitest.
    composing the layers is its job. A test reads the source files to check
    this.
 2. No non-test file under `layers/tree`, `layers/buildings`, `layers/sunlight`,
-   `layers/ambient-occlusion` or `layers/temperature` contains a URL-shaped
-   tile endpoint: a quoted string literal starting with `/tiles/`, or containing
-   `{z}` or `openfreemap.org`. `basemaps` owns the style
-   catalogue and is exempt.
+   `layers/ambient-occlusion`, `layers/temperature` or `layers/splat` contains
+   a URL-shaped endpoint: a quoted string literal starting with `/tiles/` or
+   `/files/`, or containing `{z}` or `openfreemap.org`. `basemaps` owns the
+   style catalogue and is exempt. Outside `src/sources.ts` and
+   `lib/tiles/proxy.ts`, no non-test file under `src/layers`, `src/lib` or
+   `App.tsx` quotes a `/files/` path.
 3. `treePointsLayer` and `buildingsLayer` take every source field from the
    descriptor they are given. A fixture descriptor with a foreign URL and
    bounds appears unchanged in the record.

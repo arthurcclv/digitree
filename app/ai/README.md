@@ -24,6 +24,7 @@ These explain the product, the structure, and the process around the specs.
 | `sunlight` | [`src/layers/sunlight/specs/spec.md`](../src/layers/sunlight/specs/spec.md) |
 | `ambient-occlusion` | [`src/layers/ambient-occlusion/specs/spec.md`](../src/layers/ambient-occlusion/specs/spec.md) |
 | `temperature` | [`src/layers/temperature/specs/spec.md`](../src/layers/temperature/specs/spec.md) |
+| `splat` | [`src/layers/splat/specs/spec.md`](../src/layers/splat/specs/spec.md) |
 | the derived-layer DAG (`src/lib/dag`, not a layer) | [`src/lib/dag/specs/spec.md`](../src/lib/dag/specs/spec.md) |
 | the layer mount (`src/lib/mount`, not a layer) | [`src/lib/mount/specs/spec.md`](../src/lib/mount/specs/spec.md) |
 | the three.js layer host (`src/lib/three`, not a layer) | [`src/lib/three/specs/spec.md`](../src/lib/three/specs/spec.md) |

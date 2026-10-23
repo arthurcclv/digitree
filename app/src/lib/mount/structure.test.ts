@@ -71,6 +71,12 @@ describe("the host", () => {
     expect(disallowed).toEqual([]);
   });
 
+  // DECISIONS 2026-10-21: MSAA on the shared canvas more than halves the
+  // splats' frame rate. It is a context attribute, so only the host sets it.
+  test("creates the map without canvas antialiasing", () => {
+    expect(code(HOST)).toMatch(/canvasContextAttributes:\s*\{[^}]*\bantialias:\s*false\b/);
+  });
+
   test("constructs, wires and names nothing of a layer", () => {
     const src = code(HOST);
     const found = [

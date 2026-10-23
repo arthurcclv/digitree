@@ -32,13 +32,22 @@ describe("the data-source seam", () => {
   });
 
   test("no layer but basemaps names a tile endpoint", () => {
-    const layers = ["tree", "buildings", "sunlight", "ambient-occlusion", "temperature"];
+    const layers = ["tree", "buildings", "sunlight", "ambient-occlusion", "temperature", "splat"];
     const offenders = layers
       .flatMap((l) => filesUnder(join(SRC, "layers", l)))
       .filter((path) => !isTest(path))
       // A URL-shaped string literal: a same-origin tile path, a template, or the
       // OSM host. Quoted only: backticks here are doc comments naming paths.
-      .filter((path) => /["'](\/tiles\/|[^"'\n]*\{z\}|[^"'\n]*openfreemap\.org)/.test(readFileSync(path, "utf8")));
+      .filter((path) => /["'](\/tiles\/|\/files\/|[^"'\n]*\{z\}|[^"'\n]*openfreemap\.org)/.test(readFileSync(path, "utf8")));
+    expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
+  });
+
+  // The splat files' path is a descriptor field, like the tile templates: only
+  // `src/sources.ts` names it, and the proxy that serves it.
+  test("only the sources and the proxy name the /files path", () => {
+    const offenders = [...filesUnder(join(SRC, "layers")), ...filesUnder(join(SRC, "lib")), join(SRC, "App.tsx")]
+      .filter((path) => !isTest(path) && !path.endsWith(join("lib", "tiles", "proxy.ts")))
+      .filter((path) => /["']\/files\//.test(readFileSync(path, "utf8")));
     expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
   });
 });

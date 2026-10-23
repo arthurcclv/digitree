@@ -75,7 +75,7 @@ Three places:
 
 1. **`lib/useMapEngine.ts`**, the host. It constructs the map, owns the
    style-load lifecycle, drives the camera, and holds the `LayerSync`, the
-   derived-layer `Graph`, and the four mounts.
+   derived-layer `Graph`, and the five mounts.
 2. **Each layer's `mount.ts`**, which uses the map for exactly two things:
    `getLayer` and `addLayer` for its own custom layer (through
    `nativeLayer` in `src/lib/mount`). It also registers the layer's paint
@@ -84,8 +84,8 @@ Three places:
    `anchorUnderLabels`. These are style surgery, not layer description, and they
    are called *by* `useMapEngine`.
 
-The four custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer`,
-`ThreeTemperatureLayer` and `ThreeAoLayer`, all extend `ThreeLayer`
+The five custom-layer classes, `ThreeTreeLayer`, `ThreeSunlightLayer`,
+`ThreeTemperatureLayer`, `ThreeAoLayer` and `ThreeSplatLayer`, all extend `ThreeLayer`
 (`src/lib/three`). MapLibre hands them the map in `onAdd`, and they use it
 only for what a custom layer needs: the camera, repaints, and, for the
 self-fetching layers and the tree, the settled view (`viewSettled`, the base's
@@ -152,7 +152,9 @@ cannot be sampled and it must redraw the buildings itself.
 
 **`src/lib/tiles` is shared, not a layer, and knows no dataset.** It holds
 what both self-fetching layers need: the z14 grid and Mercator formulas
-(`grid.ts`); the `TileStore` (`store.ts`), which is generic over the sources
+(`grid.ts`); the local metre frame every self-placing layer converts
+through (`LocalFrame`, with `toLocal` / `localToMercator`) and the shared tile
+planner `planTiles` (`frame.ts`); the `TileStore` (`store.ts`), which is generic over the sources
 it is given and handles fetch, TileJSON resolution, the LRU cache and
 `decodeMvt` over `@mapbox/vector-tile`; per-tile building triangulation and
 placement (`prisms.ts`); and the viewport's ground footprint (`footprint.ts`).
@@ -264,7 +266,7 @@ coefficient table as `petOf`, so the GPU and CPU forms cannot drift.
 | `mount.ts` | `mountAmbientOcclusion` — takes `{ ao, extrusion }` | yes, via `aoLayer.ts` |
 | `state.ts` | `AoState`, `AO_MIN_ZOOM`, `aoState()` | **no** |
 | `kernel.ts` | the hemisphere kernel, the 4 × 4 rotation tile, `compositeFactor` | **no** |
-| `geometry.ts` | tile planning, prism placement with exaggeration and the min-height filter (`meetsMinHeight`, from the buildings schema) | **no** |
+| `geometry.ts` | prism placement with exaggeration and the min-height filter (`meetsMinHeight`, from the buildings schema) | **no** |
 | `aoLayer.ts` | `ThreeAoLayer` — G-buffer, AO, blur, composite | yes |
 
 Its interface names what it shades in its own terms: a `ShadedExtrusion`
@@ -318,13 +320,15 @@ GL context is unchanged, `onRemove` drops only the map reference, and
 ## The three.js seam
 
 **One host for the GL rules.** `ThreeLayer` (`src/lib/three`, its own spec)
-holds everything the four layers share with MapLibre's context:
+holds everything the five layers share with MapLibre's context:
 - the renderer, made once per context with `autoClear = false`;
 - `renderingMode: "3d"`;
 - `pass(fn)`, which resets state before and after every block of three.js
   drawing;
 - `projection(args, model)`, the one place `mainMatrix` is read;
 - `mercatorFrame`, the local-metres-to-Mercator matrix;
+- `decomposeCamera`, which splits `projection(args, model)` back into a
+  perspective and a rigid view, for a renderer that needs view space (Spark);
 - `PREMULTIPLIED_OVER`.
 
 Each layer writes only its own `render`, and a `prerender` only if it has
@@ -365,6 +369,24 @@ The ambient-occlusion layer is a third member, with its own paint bridge
 radius and the buildings' exaggeration and filter reach it through
 `setParams`, pushed by its mount's `update`.
 
+The splat layer is a fifth member, with its own paint bridge (`SPLAT_LAYER_ID`,
+opacity and visibility). It draws Gaussian splat captures with Spark
+(`@sparkjsdev/spark`), imported dynamically on first need, on the base's
+renderer: `SparkRenderer` takes it, and all of Spark's GPU work runs from
+`onBeforeRender` inside `pass`, so it has no `prerender`. Spark needs view
+space, so the camera is `decomposeCamera(projection(args, frame))`. It
+repaints only on Spark's `onDirty`, so the map still goes idle. It fetches its
+own z14 tiles of the `splats` table and draws each capture's paged LoD tree
+(a chunked `.rad`, built in infra) from infra's `files` service, streamed
+chunk file by chunk file into Spark's fixed page pool; captures past 10 km, or beyond 16, are
+unloaded. Those rules are `Residency` (`residency.ts`), a pure module the
+layer asks what to load and unload. A capture is fitted in true (WGS 84) metres and drawn with the map's
+metres per true metre on each axis (`trueMetreAxes`): Spark keeps only one
+scale of a mesh's matrix, so the per-axis part is a world modifier
+(`stretch.ts`). The whole transform is computed in one pure function,
+`placeCapture` (`frame.ts`), which the layer only applies. It is stacked last. Full contract:
+`src/layers/splat/specs/spec.md`.
+
 ## Module inventory
 
 | Module | Owns |
@@ -373,15 +395,15 @@ radius and the buildings' exaggeration and filter reach it through
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
 | `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs, `exportScene` (the USD export: frame, packages, root, zip); exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
-| `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `PREMULTIPLIED_OVER`; its own spec |
+| `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
-| `src/lib/tiles/` | the self-fetching layers' shared tile grid, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; the *Data sources* spec |
+| `src/lib/tiles/` | the self-fetching layers' (sunlight, AO, splat) shared tile grid, `LocalFrame` and `planTiles`, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; the *Data sources* spec |
 | `src/lib/usd/` | the USD export's shared writer: `.usda` text, stored zip and `.usdz`, the `ExportFrame`, ground and raster packages, the root layer and the outer zip; knows no layer; its own spec |
 | `src/lib/sceneExport.ts` | the host's scene-export rules, pure: `sceneParticipants` (who is written, in stack order) and `sceneExportReady`; shared by `useMapEngine` and `App.tsx` |
 | `src/lib/colour.ts` | `hexRgb`, `srgbToLinear`, `interpolateStops`: the one colour reading behind the direct-sun and PET ramps, the buildings' palette colour and `lib/usd`'s linear colours |
 | `src/layers/sunlight/occluders.ts` | one set of placed occluders and the scenes a light pass draws; the display holds one, each USD export pass builds and disposes its own |
 | `src/layers/<name>/usd.ts` | that layer's USD package (buildings, tree, sunlight, temperature, basemaps), exposed as a mount's `exportUsd(frame)` or, for the two mount-less folders, as `exportBuildingsUsd` / `exportBasemapUsd` |
-| `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`. The only place an endpoint lives |
+| `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`, `SPLATS`. The only place an endpoint lives |
 | `src/lib/place/` | `Place`, `Viewpoint`, local time at a fixed offset; its own spec |
 | `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Xinyi home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |

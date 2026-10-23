@@ -33,6 +33,7 @@ The app answers all three by being a working thing, not a README.
 | The three.js tree | that a foreign renderer can ride in the same `sync()` call |
 | The direct-sun overlay | that the scene is data, not decoration: the same trees and buildings, analysed live |
 | The PET overlay | that one analysis can build on another: felt temperature derived from the direct-sun result, recomputed whenever it changes |
+| Gaussian splat captures | that a second foreign renderer (Spark) can share the base's three.js renderer, and that real scanned captures land in place among the OSM buildings, streamed by level of detail |
 | Status bar readout | that the camera is real: its live coordinates and zoom |
 
 ## Product principles

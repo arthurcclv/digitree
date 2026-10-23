@@ -15,12 +15,18 @@ removing one means editing this file in the same change (and usually
 | `react` / `react-dom` | `^19.2.0` | the chrome |
 | `@mapbox/vector-tile` | `^3.0.0` | decodes the MVT tiles the sunlight layer fetches for itself; the same decoder MapLibre uses internally, which does not export it |
 | `pbf` | `^5.1.2` | the protobuf reader `@mapbox/vector-tile` reads through |
+| `@sparkjsdev/spark` | `2.3.1` (pinned) | draws the Gaussian splat captures (`SparkRenderer`, `SplatMesh`); peer `three >= 0.180`, deduped onto the app's one copy. Imported dynamically, so it is its own ~2.6 MB chunk, fetched only when a capture is due to load |
 
 The two GeoLibre packages are **pinned exactly**. They are the subject of the
 app, their external-native path is the seam the tree depends on, and
 `BUILDINGS_STYLE_LAYER_IDS` encodes their layer-id naming
 (`layer-<id>-vector-extrusion`). A minor bump is a deliberate migration, not a
 `^` away.
+
+Spark is **pinned exactly** too. The splat layer reads its shader's
+assumptions (view space, focal length from `P[0][0]`/`P[1][1]`, a `w` row of
+`(0, 0, −1, 0)`) through `decomposeCamera`; a new Spark is re-checked in the
+browser against `src/layers/splat/specs/spec.md` before it lands.
 
 `maplibre-gl` is a major-version-sensitive dependency for a different reason:
 v6 changed the custom-layer render signature to `render(gl, options)`. See the
@@ -86,6 +92,8 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | OpenFreeMap — `https://tiles.openfreemap.org/planet` | OSM vector tiles, OpenMapTiles schema, both basemap and `building` source layer | no |
 | OpenFreeMap styles — `/styles/{dark,fiord,liberty,positron}` | the four basemaps | no |
 | Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `TILES_PROXY_TARGET` (default `http://localhost:3000`) | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
+| Martin — `/tiles/splats/{z}/{x}/{y}`, same proxy | the splat captures' placements, solved from control points in `infra/` | no |
+| infra `files` (nginx) — `/files/3dgs-lod/<scan>-lod.rad`, proxied to `FILES_PROXY_TARGET` (default `http://localhost:3080`) | the splat captures' paged LoD trees: a `.rad` header (read by byte range) and its `<scan>-lod-<n>.radc` chunk files; the `.spz` themselves are at `/files/3dgs/` | no |
 
 Every endpoint above except the basemap styles is configured in one file,
 `src/sources.ts`. The layers take descriptors and name none of them.
@@ -104,8 +112,13 @@ never shipped to the bundle (`src/lib/tiles/specs/proxy.md`).
 named explicitly for zh-TW), so tiles are the only third-party request the app
 makes.
 
-No API keys, no registration, and no `.env` is required. **Three** attributions are required and
-all three are rendered by the status bar: `© OpenStreetMap contributors ·
+The `files` service is local and optional in the same way, and has its own
+setting, `FILES_PROXY_TARGET` (`src/lib/tiles/specs/proxy.md`).
+
+No API keys, no registration, and no `.env` is required. **Three** attributions are always or
+conditionally required, plus the splat captures' credit while one is drawn
+(`SPLATS.attribution`, a placeholder until the credit is known), and
+all are rendered by the status bar: `© OpenStreetMap contributors ·
 OpenMapTiles · OpenFreeMap` for the basemap and buildings, Taipei City's for the
 tree inventory, and `Tree models: evolveduk · CC BY 4.0` for the glTF models.
 
