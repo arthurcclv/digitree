@@ -1,0 +1,18 @@
+ply
+format binary_little_endian 1.0
+element vertex 0
+comment offsetx 352796.8287235790048726
+comment offsety 2770099.7470906949602067
+comment offsetz 26.9006000000000007
+comment shiftx 0.0000000000000000
+comment shifty 0.0000000000000000
+comment shiftz 0.0000000000000000
+comment scalex 1.0000000000000000
+comment scaley 1.0000000000000000
+comment scalez 1.0000000000000000
+comment source K2
+comment epsg 32651
+property float x
+property float y
+property float z
+end_header

@@ -50,3 +50,36 @@ CREATE TABLE trees (
 -- Mandatory: without it Martin sequentially scans 163k rows for every tile.
 CREATE INDEX trees_geom_idx ON trees USING GIST (geom);
 CREATE INDEX trees_kind_idx ON trees (kind);
+
+-- Gaussian splat captures (3DGS): one row per capture file in data/3dgs/source/,
+-- placed on the map by the control points in data/3dgs/control_points.csv.
+-- Loaded by 04_splats.sql, which solves each placement; nothing here is typed
+-- in by hand. The app's spec for these columns is
+-- app/src/layers/splat/specs/spec.md, *Control points CSV → `splats` table*.
+DROP TABLE IF EXISTS splats;
+
+CREATE TABLE splats (
+  -- The MVT feature id, which must be an integer (see trees.id); splat_id is
+  -- the real key.
+  id          integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  splat_id    text NOT NULL UNIQUE,
+  -- A bare file name inside data/3dgs/source/, which the files service serves at
+  -- /3dgs/<file>. One capture per file.
+  file        text NOT NULL UNIQUE CHECK (file !~ '/'),
+  -- From pg_stat_file at load, so the app can show how much a capture costs
+  -- before fetching it.
+  bytes       bigint NOT NULL CHECK (bytes > 0),
+  -- Vertical offset of local z = 0 above the map's ground plane, in metres.
+  altitude_m  real NOT NULL,
+  -- The capture's local +y axis, degrees clockwise from north.
+  heading_deg real NOT NULL CHECK (heading_deg >= 0 AND heading_deg < 360),
+  -- Local units -> metres. The fit rejects anything outside [0.8, 1.25].
+  scale       real NOT NULL CHECK (scale > 0),
+  -- The fit's horizontal RMS residual over the control points, in metres.
+  rms_m       real NOT NULL CHECK (rms_m >= 0),
+  points      integer NOT NULL CHECK (points >= 3),
+  -- Where local (0, 0) lands.
+  geom        geometry(Point, 4326) NOT NULL
+);
+
+CREATE INDEX splats_geom_idx ON splats USING GIST (geom);

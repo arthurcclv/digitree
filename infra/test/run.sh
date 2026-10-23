@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The loader's test suite.
 #
-# Runs sql/01_schema.sql, sql/02_load.sql and sql/03_checks.sql — the real
-# files, not copies — against the fixtures in test/fixtures/, in a scratch
-# database. The loader takes its three inputs as psql variables for exactly
-# this reason, so a test is a directory of CSVs rather than a second loader
+# Runs sql/01_schema.sql, sql/02_load.sql, sql/03_checks.sql and
+# sql/04_splats.sql — the real files, not copies — against the fixtures in
+# test/fixtures/, in a scratch database. The loaders take their inputs as psql
+# variables for exactly this reason, so a test is a directory of CSVs rather than a second loader
 # that drifts from the first.
 #
 # The development database (`taipei`) is never touched, and neither is data/.
@@ -241,7 +241,148 @@ docker compose exec -T db psql -q -U taipei -d "$DB" -c "UPDATE trees SET canopy
 if out=$(checks); then bad "fails on a city tree with a canopy width" "the checks passed"; else ok "fails on a city tree with a canopy width"; fi
 expect_contains "says so" "$out" "city trees carry a canopy_width_m"
 
+# --- the splat captures (sql/04_splats.sql) ---------------------------------
+#
+# The fixtures in test/fixtures/splats/ were generated from known placements:
+# each control point's LAT/LON is where a capture with that origin, heading and
+# scale puts its file x/y, on the WGS 84 ellipsoid, as the loader projects
+# (equirectangular at the points' centroid, with its radii N and M there). X/Y/Z are file coordinates, z-up, as the CSV takes them (the
+# capture's own frame, as stored). The loader must recover the placement, and reject every
+# file that would place a capture somewhere plausible and wrong. source/ and
+# lod/ hold small stand-ins: the loader checks that a capture file and its
+# <stem>-lod.rad exist, and never reads either.
+
+SPL=$FIX/splats
+load_splats() {
+  docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
+    -v splats_csv="$SPL/$1" -v splats_dir="$SPL/source" -v splats_lod_dir="$SPL/lod" \
+    -f /sql/04_splats.sql 2>&1
+}
+
+case_ "control points from known placements"
+schema
+out=$(load_splats ok.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
+expect_query "loads both captures"              "SELECT count(*) FROM splats" 2
+expect_query "ids follow splat_id"              "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
+expect_query "recovers the origin within 1 mm" \
+  "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.5608, 25.0345), 4326)::geography) < 0.001 FROM splats WHERE splat_id='SYN'" t
+expect_query "recovers heading 30° within 0.01°" "SELECT abs(heading_deg - 30) < 0.01 FROM splats WHERE splat_id='SYN'" t
+expect_query "recovers scale 1"                  "SELECT abs(scale - 1) < 1e-5 FROM splats WHERE splat_id='SYN'" t
+expect_query "sets the ground through H − Z"     "SELECT abs(altitude_m - 2) < 1e-3 FROM splats WHERE splat_id='SYN'" t
+expect_query "an exact fit has no residual"      "SELECT rms_m < 1e-3 FROM splats WHERE splat_id='SYN'" t
+expect_query "takes four points"                 "SELECT points FROM splats WHERE splat_id='FOUR'" 4
+expect_query "  heading 200°, past 180"          "SELECT abs(heading_deg - 200) < 0.01 FROM splats WHERE splat_id='FOUR'" t
+expect_query "  scale 1.05"                      "SELECT abs(scale - 1.05) < 1e-5 FROM splats WHERE splat_id='FOUR'" t
+# FOUR's H is blank on every row, so each point is on the ground: the offset is
+# −scale × mean(Z) = −1.05 × 0.425.
+expect_query "  blank H is a point on the ground" "SELECT abs(altitude_m + 1.05 * 0.425) < 1e-3 FROM splats WHERE splat_id='FOUR'" t
+expect_query "  trims stray spaces"              "SELECT file FROM splats WHERE splat_id='FOUR'" four.spz
+expect_query "records the file's size"           "SELECT bytes FROM splats WHERE splat_id='SYN'" 36
+expect_contains "reports each point's residual" "$out" "control point residuals"
+
+case_ "re-running the splat loader"
+out=$(load_splats ok.csv) || { echo "$out"; echo "second splat load failed" >&2; exit 1; }
+expect_query "reloads, not appends, with the same ids" "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
+
+# SYN's points turned 180° about up. A rotation is exactly what the fit solves
+# for, so it fits perfectly and lands the capture turned around: this case
+# documents that no check can catch a reading in a turned frame, and why the
+# CSV's frame has to be right by construction.
+case_ "points turned 180° about up"
+out=$(load_splats old-frame.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
+expect_query "fits, with no residual to flag it" "SELECT rms_m < 1e-3 FROM splats WHERE splat_id='OLD'" t
+expect_query "  but lands turned 180° (210°, not 30°)" "SELECT abs(heading_deg - 210) < 0.01 FROM splats WHERE splat_id='OLD'" t
+
+case_ "no control points at all"
+out=$(load_splats nothing-here.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
+expect_contains "says so"        "$out" "no captures loaded"
+expect_query   "loads nothing"   "SELECT count(*) FROM splats" 0
+
+# Each must fail, name the capture or the line and the rule, and leave the
+# table as the previous load left it: the load is one transaction.
+splat_rejects() {
+  local label=$1 file=$2 needle=$3
+  load_splats ok.csv > /dev/null
+  if out=$(load_splats "$file"); then bad "$label" "the load succeeded"; return; fi
+  expect_contains "$label" "$out" "$needle"
+  expect_query "  keeps the previous load" "SELECT count(*) FROM splats" 2
+}
+
+case_ "rejected control points"
+splat_rejects "a misspelt header"               bad-header.csv     "could not be loaded"
+splat_rejects "LAT and LON the other way round" swapped.csv        "could not be loaded"
+splat_rejects "two points"                      two-points.csv     "TWO: 2 control point(s); at least 3 are needed"
+splat_rejects "points in a line"                collinear.csv      "LINE: the points are too close to a line"
+splat_rejects "two points 0.7 m apart"          coincident.csv     "NEAR: Points 1 and 2 are 0.707 m apart"
+splat_rejects "a mirrored capture"              mirrored.csv       "MIRROR: the control points fit with an RMS of"
+# Generated with a scale of 1.5 on the map's sphere, before the loader fitted
+# on the ellipsoid; kept as it was, since it only has to stay out of range.
+splat_rejects "a scale of 1.5"                  scaled.csv         "SCALED: the fit's scale is 1.4961"
+splat_rejects "rows naming different files"     file-differs.csv   "SPLIT: its rows name 2 files"
+splat_rejects "a file that is not there"        missing-file.csv   "File 'absent.spz' is not in"
+splat_rejects "a directory, not a file"         directory.csv      "File 'folder.spz' is not in"
+splat_rejects "a path in File"                  path.csv           "must be a bare file name"
+splat_rejects "an unsupported extension"        extension.csv      "File 'syn.txt' is not .spz"
+# A format Spark could parse, but build-lod.sh reads only <scan>.spz, so its
+# LoD could never be built: refused as the format, not as a missing LoD.
+splat_rejects "a .ply capture"                  ply.csv            "File 'syn.ply' is not .spz"
+splat_rejects "an upper-case .SPZ"              upper-ext.csv      "File 'syn.SPZ' is not .spz"
+splat_rejects "a Point given twice"             dup-point.csv      "DUP: Point 1 appears 2 times (lines 2, 3)"
+splat_rejects "one file, two captures"          shared-file.csv    "shared.spz is used by 2 captures"
+splat_rejects "a coordinate that is not a number" not-a-number.csv "line 2 (NAN): X 'N/A' is not a number"
+splat_rejects "a capture with no LoD built"      missing-lod.csv    "NOLOD: its LoD nolod-lod.rad is not in /test/fixtures/splats/lod (run ./scripts/build-lod.sh nolod)"
+# The same kind of points read y-up, as a viewer shows them (X = −x, Y = z,
+# Z = y): turned a quarter-turn on their side, they cannot be fitted by a
+# rotation of the ground.
+splat_rejects "points read y-up, not in the file's own frame" unconverted.csv "UNCONV: the control points fit with an RMS of"
+
+# control-points.mjs's output, through the real loader. T1's header is
+# KZ0918-075047's and its fixes are 30–50 m apart in UTM 51N, so the loader
+# must put the file's origin on T1's first fix, facing grid north: 360° less
+# the grid convergence there, γ = atan(tan(λ − 123°)·sin φ) = −0.6177°, at a
+# scale of 1/k, where k = 0.999868 is UTM's point scale there: a file unit is
+# a grid metre, 1/k true metres. The loader fits on the same ellipsoid as UTM,
+# so only the projections' curvature is left over: millimetres
+# (specs/control-points.md).
+# The CSV and a stand-in T1.spz go into the container's /tmp: /test is
+# read-only, and the loader only checks that the file exists.
+case_ "control points generated from a scan's georeference"
+cp_work=$(mktemp -d)
+SPLATS_ORIGINAL_DIR=test/fixtures/control-points SPLATS_CONTROL_POINTS=$cp_work/cp.csv \
+  node scripts/control-points.mjs T1 > /dev/null
+docker compose exec -T db sh -c 'mkdir -p /tmp/cp-source /tmp/cp-lod && echo stand-in > /tmp/cp-source/T1.spz &&
+  echo stand-in > /tmp/cp-lod/T1-lod.rad && cat > /tmp/cp.csv' < "$cp_work/cp.csv"
+rm -rf "$cp_work"
+out=$(docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
+  -v splats_csv=/tmp/cp.csv -v splats_dir=/tmp/cp-source -v splats_lod_dir=/tmp/cp-lod -f /sql/04_splats.sql 2>&1) \
+  || { echo "$out"; echo "splat load of generated points failed" >&2; exit 1; }
+expect_query "loads the scan"                    "SELECT splat_id||' '||points FROM splats" "T1 3"
+expect_query "puts the origin on the first fix, within 5 mm" \
+  "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.540875478, 25.039362564), 4326)::geography) < 0.005 FROM splats" t
+expect_query "faces grid north (359.3823°) within 0.01°" "SELECT abs(heading_deg - 359.3823) < 0.01 FROM splats" t
+expect_query "  at scale 1/k (1.000132) within 1e-4" "SELECT abs(scale - 1.000132) < 1e-4 FROM splats" t
+expect_query "  with RMS under 5 mm"             "SELECT rms_m < 0.005 FROM splats" t
+
 docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" > /dev/null
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+
+# --- the splat cleaner (clean-splat.sh) -------------------------------------
+#
+# Its own suite, with its own count: it needs splat-transform rather than the
+# database, and runs on its own as ./test/clean-splat.sh.
+printf '\n== clean-splat.sh ==\n'
+cleaner_ok=1
+./test/clean-splat.sh || cleaner_ok=0
+
+# --- the control-point generator (control-points.mjs) ------------------------
+printf '\n== control-points.mjs ==\n'
+generator_ok=1
+./test/control-points.sh || generator_ok=0
+
+# --- the LoD builder (build-lod.sh) -------------------------------------------
+printf '\n== build-lod.sh ==\n'
+lod_ok=1
+./test/build-lod.sh || lod_ok=0
+
+[ "$fail" -eq 0 ] && [ "$cleaner_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$lod_ok" = 1 ]

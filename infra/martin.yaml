@@ -1,5 +1,6 @@
-# Martin publishes one source: the `trees` table, as MVT layer `trees`.
-# The source id below is both the tile path (/trees/{z}/{x}/{y}) and the
+# Martin publishes two sources: the `trees` table, as MVT layer `trees`, and
+# the `splats` table, as MVT layer `splats` (see the end of this file).
+# Each source id below is both the tile path (/trees/{z}/{x}/{y}) and the
 # `source-layer` name the app's GeoLibre record must ask for.
 listen_addresses: "0.0.0.0:3000"
 
@@ -45,3 +46,31 @@ postgres:
         height_m: real
         diameter_cm: real
         canopy_width_m: real
+    # The Gaussian splat captures, as MVT layer `splats`: one point per capture,
+    # at the origin 04_splats.sql solved from its control points. The app's
+    # splat layer fetches these on the z14 grid to learn which captures are in
+    # view, then fetches the files themselves from the `files` service. Both
+    # names, and the property names below, are read by
+    # app/src/layers/splat/schema.ts.
+    splats:
+      schema: public
+      table: splats
+      srid: 4326
+      geometry_column: geom
+      # Integer, as for trees; splat_id is text.
+      id_column: id
+      geometry_type: POINT
+      # The app only ever asks for z14 (its tile grid), and a capture is not
+      # worth loading from further out. 14-20 matches `trees`.
+      minzoom: 14
+      maxzoom: 20
+      extent: 4096
+      buffer: 64
+      clip_geom: true
+      properties:
+        splat_id: text
+        file: text
+        bytes: int8
+        altitude_m: real
+        heading_deg: real
+        scale: real

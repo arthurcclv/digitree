@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bring up Postgres, create the schema, load the extracts and any custom
-# drop-ins, check the result, then start Martin.
+# drop-ins, check the result, load the splat captures, then start Martin and
+# the files service.
 # Idempotent: re-running reloads the table from the CSVs.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -46,6 +47,14 @@ psql_run /sql/02_load.sql
 echo "==> checks"
 psql_run /sql/03_checks.sql
 
+# The splat captures load after the trees are committed and checked, in their
+# own transaction: a control point typed wrong fails this step and leaves the
+# trees, and the rest of the bring-up, alone. The report prints each capture's
+# fit (rms_m, scale, heading_deg) and every point's residual.
+echo "==> splat captures"
+splats_ok=1
+psql_run /sql/04_splats.sql || splats_ok=0
+
 # Martin reads each table's columns and types once, at startup, so it must be
 # restarted after a load — otherwise a schema change leaves it serving HTTP 500
 # from a stale plan while /catalog still looks healthy.
@@ -53,10 +62,25 @@ echo "==> starting martin"
 docker compose up -d martin
 docker compose restart martin
 
+echo "==> starting the files service (splat captures)"
+docker compose up -d files
+
 echo
 echo "done. verify with:"
 echo "  curl -s localhost:${MARTIN_PORT:-3000}/catalog | jq"
 echo "  curl -s localhost:${MARTIN_PORT:-3000}/trees | jq"
+echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs/<file>.spz"
+echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs-lod/<scan>-lod.rad"
 if [ "${MARTIN_PORT:-3000}" != "3000" ]; then
   echo "and start the app with TILES_PROXY_TARGET=http://localhost:${MARTIN_PORT}"
+fi
+if [ "${FILES_PORT:-3080}" != "3080" ]; then
+  echo "and start the app with FILES_PROXY_TARGET=http://localhost:${FILES_PORT}"
+fi
+
+if [ "$splats_ok" = 0 ]; then
+  echo
+  echo "error: the splat captures did not load (see above); the trees did." >&2
+  echo "Fix data/3dgs/control_points.csv and re-run ./load.sh." >&2
+  exit 1
 fi

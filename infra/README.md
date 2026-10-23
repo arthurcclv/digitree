@@ -1,11 +1,13 @@
 # infra — local data stack
 
 Postgres + PostGIS behind a [Martin](https://github.com/maplibre/martin) tile
-server, serving Taipei's tree inventory to `app/` as vector tiles.
+server, serving Taipei's tree inventory to `app/` as vector tiles — plus the
+Gaussian splat captures: where each one sits as vector tiles from Martin, and
+the capture files themselves from a static `files` service.
 
 ```bash
 cd infra
-./load.sh                    # bring up, create schema, load, start Martin
+./load.sh                    # bring up, create schema, load, start Martin and files
 ```
 
 Then:
@@ -13,6 +15,7 @@ Then:
 ```bash
 curl -s localhost:3000/catalog | jq        # the published sources
 curl -s localhost:3000/trees | jq          # TileJSON
+curl -sI localhost:3080/3dgs/KY0917A.spz   # a splat capture file
 ```
 
 Martin is published on `127.0.0.1:3000`. If that port is taken on the host,
@@ -23,6 +26,10 @@ and point the app's proxy at it:
 MARTIN_PORT=3001 ./load.sh
 # in app/: TILES_PROXY_TARGET=http://localhost:3001 npm run preview
 ```
+
+The `files` service is published on `127.0.0.1:3080` the same way, and
+`FILES_PORT` moves it: `FILES_PORT=3081 ./load.sh`, then
+`FILES_PROXY_TARGET=http://localhost:3081` for the app.
 
 Check what answers on the port first. Another web server on `:3000` makes the
 app fail with `Unimplemented type: 4`, because it gets back an HTML page where
@@ -37,11 +44,20 @@ volume — the right way to start over.
 ./test/run.sh
 ```
 
-Runs `sql/01_schema.sql`, `sql/02_load.sql` and `sql/03_checks.sql` — the real
+Runs `sql/01_schema.sql`, `sql/02_load.sql`, `sql/03_checks.sql` and
+`sql/04_splats.sql` — the real
 files — against the fixture CSVs in `test/fixtures/`, in a scratch database. It
 covers the transform, the cleaning rules, the drop-in contract and the three
 ways a drop-in is rejected, in a second or two and without touching `data/` or
 the development database.
+
+It then runs `./test/clean-splat.sh`, the splat cleaner's own suite, which runs
+the real `clean-splat.sh` on captures it generates in a scratch directory. It
+needs `splat-transform` and `node`, not the database, and runs on its own too.
+Then `./test/control-points.sh` tests the control-point generator the same
+way, with only `node`; `run.sh` also loads that script's output through the
+real `04_splats.sql`. Last, `./test/build-lod.sh` runs the real `build-lod.sh`
+on a capture it generates; it needs Docker, `node` and `splat-transform`.
 
 `sql/03_checks.sql` also runs as the last step of `./load.sh`, so a load that
 produces a structurally wrong table fails there rather than on the map.
@@ -144,6 +160,162 @@ above the old 40 m cut. It is 22 rows out of 162,930 (p99 is 18.9 / 20.8 m), and
 a visible spike a reader can recognise as bad data beats a silently missing
 height. Note that the app's mesh half keeps the **tallest** trees when it
 exceeds its instance budget, so those rows are never the ones culled.
+
+### Gaussian splat captures
+
+`data/3dgs/original/` holds the scans as delivered, one folder per scan with
+the splat in one `point_cloud.<ext>` (beside `gnss.csv` and `poses.csv`), and
+is never
+written. `data/3dgs/source/` holds them cleaned, one `<scan>.spz` each —
+by `./scripts/clean-splat.sh` (below) — `data/3dgs/lod/` holds the paged LoD tree the
+app draws for each, a header `<scan>-lod.rad` and its chunks
+`<scan>-lod-<n>.radc`, built by `./scripts/build-lod.sh` (below), and
+`data/3dgs/control_points.csv` says where each one sits. All four are
+**gitignored**. None is required: with no CSV the `splats` table is empty and
+the map shows no splats.
+
+The splat tools live in `scripts/` and, like everything here, run from
+`infra/`. To add a capture:
+
+1. copy its scan folder into `data/3dgs/original/`;
+2. clean it into `source/` with `./scripts/clean-splat.sh <scan>`;
+3. build its LoD tree with `./scripts/build-lod.sh <scan>`;
+4. give it control points — `node scripts/control-points.mjs <scan>` writes
+   them for a scan with `gnss.csv` and a georeferenced `point_cloud.ply`;
+   otherwise measure them and add the rows by hand (`File` is `<scan>.spz`);
+5. run `./load.sh`.
+
+A capture without its `lod/<scan>-lod.rad` fails the splat load. The
+load prints each capture's fit (`rms_m`, `scale`, `heading_deg`) and every
+point's residual.
+
+**Cleaning.** A capture straight from training carries Gaussians that only get
+in the way on the map: sparse strays around and above the scene, oversized
+blobs, and floaters. `clean-splat.sh` drops them and writes the result as SPZ
+v3 (Spark 2.3.1 does not load splat-transform's default v4):
+
+```bash
+./scripts/clean-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
+./scripts/clean-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+```
+
+It reads the scan's one `point_cloud.<ext>` — `.ply`, `.compressed.ply`,
+`.sog`, `.spz`, `.splat` or `.ksplat` — and nothing else in the folder, and
+writes `source/<scan>.spz`. A folder with none, or with more than one (say a
+`.ply` and a `.sog` of the same scan), is refused: keep the one to serve. A
+`point_cloud.mjs` is never run — a generator is code, and the folder is data.
+Cleaning needs ~1 GB of free disk per 13M Gaussians for its intermediate file.
+
+The outlier rule follows the capture's own distribution, not a distance. It
+counts the Gaussians in 2 m cubes (`--cell`), takes the count of the cube the
+median Gaussian sits in as the capture's typical density, and drops every
+cube holding less than 1% of that (`--min-density`). Then it drops the
+Gaussians with any axis over `--max-scale` and runs splat-transform's floater
+filter (`--floaters`, its defaults). So a long or L-shaped street is kept
+whole, and a sky floater above a dense street goes. It always reads
+`original/`, so re-running with other settings never compounds the cuts, and
+it only removes Gaussians — the control points stay valid.
+
+With the defaults the KY0917 captures lost 3.7–5.3%. It needs
+`splat-transform` 3.4.x installed globally with npm (the density step uses its
+library) and `node`. It holds a scan in memory: KZ0918-075047 (19.3M
+Gaussians, a 222 MB `.sog`) peaks at 3.5 GB, takes ~2.5 min and serves
+269 MB. Its spec is `specs/clean-splat.md`, and
+`./test/run.sh` tests it.
+
+**The LoD tree.** The app draws a capture through Spark's paged LoD: a tree
+built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a
+fixed-size page pool, so it holds only what the view needs. `build-lod.sh` builds it from the cleaned file
+with Spark's own `build-lod`, at the version the app pins (v2.3.1), in a Rust
+container, so it needs only Docker, plus the `node` that `clean-splat.sh`
+already needs (to read the header it wrote):
+
+```bash
+./scripts/build-lod.sh KZ0918-075047                            # source/KZ0918-075047.spz → lod/KZ0918-075047-lod.rad + -lod-<n>.radc
+```
+
+The first run compiles the tool (about a minute, cached in a Docker volume).
+A tree takes 2.5–4 minutes and up to 5 GB of Docker's memory for 13–19M
+Gaussians, and is about 1.5× the `.spz` in all, in a few hundred chunk files.
+Re-run it after re-cleaning a capture: it replaces the header and its chunks,
+and removes chunks the new tree no longer has. Spec: `specs/build-lod.md`.
+
+**Control points.** A capture file has no georeference of its own. It is
+placed from **control points**: at least three features you can find both in
+the capture and on a map — a building corner, a kerb corner, a post base —
+each given in the capture's own coordinates (as stored, below) and in
+latitude/longitude. The loader fits a rotation, a scale and a shift from
+them. One row per point:
+
+```
+SplatID,File,Point,X,Y,Z,LAT,LON,H,Note
+KY0917A,KY0917A.spz,1,12.40,-3.85,0.02,25.034512,121.560841,,NE corner of the low wall
+```
+
+| column | what to enter |
+| --- | --- |
+| `SplatID` | the capture's id; every row of one capture shares it |
+| `File` | the file name in `data/3dgs/source/`, the same on every row of the capture |
+| `Point` | a label for the point, unique within the capture (`1`, `2`, `3`, …) |
+| `X`, `Y`, `Z` | the point in the capture's own coordinates **as stored** (metres): z-up, the ground is X/Y — the frame of its scan's `poses.csv` |
+| `LAT`, `LON` | the same point in WGS84 decimal degrees |
+| `H` | the point's height above the ground in metres; blank for a point on the ground |
+| `Note` | what the point is, for whoever checks it later; quote it if it has a comma |
+
+**From the scan's georeference.** A scan folder that carries the scanner's
+`gnss.csv` and a georeferenced `point_cloud.ply` needs no measuring:
+
+```bash
+node scripts/control-points.mjs                  # every scan in original/
+node scripts/control-points.mjs KZ0918-075047
+```
+
+The PLY's header names a UTM zone and an offset (`comment epsg 32651`,
+`comment offsetx/y/z`): the file stores a point at UTM (E, N, h) as
+(E − offsetx, N − offsety, h − offsetz). For each scan the script takes the
+RTK-fixed fixes (status 4), puts each into the file's coordinates through
+that, picks the farthest-apart pair and the fix farthest from their line, and
+writes those three with their latitude/longitude, `H` blank. The loader then
+solves where the scan sits and which way it faces (for KZ0918: heading
+≈ 359.38°, the grid's turn from true north, scale ≈ 1.0001, UTM's point
+scale; RMS a few millimetres, since the loader fits on the same ellipsoid). It replaces only those scans' rows and keeps
+the rest of the file as it is. `poses.csv` is not read: it is in a frame of
+its own. The header is read, the vertices are not, so a header that does not
+describe its file fits just as well and lands wrong; check a new capture by
+eye. A capture without a georeference (`.sog`, `.spz`) is refused. Spec:
+`specs/control-points.md`.
+
+**Measuring by hand.** Choose points **spread across the capture and not in a
+line**, on features that are sharp in both. A fourth or fifth point makes the
+fit sturdier.
+
+Read each point in the capture's own coordinates as stored —
+z-up, the same frame as its scan's `poses.csv` — and the loader fits on them
+as they are. A viewer that turns or tilts the file on open (the PlayCanvas /
+SuperSplat family turns it 180° about up and shows it y-up) has to have that
+undone first.
+
+Points read mirrored, or tilted (y-up, ground on X/Z), cannot be fitted, and
+the load rejects them. A reading **turned 180° about
+up** cannot be caught: it fits just as well, and the capture lands turned
+around its control points. If a capture renders backwards, that is the cause.
+Check it by eye after every new capture or viewer.
+
+**When the load fails.** The splat load fails — the trees still load — and
+names the capture and the rule when:
+
+- the header is not exactly the one above (so swapped `LAT`/`LON` columns are
+  rejected rather than loaded);
+- a row has a missing or non-numeric value, a `File` with a `/`, a `File`
+  that is not a `.spz` (the only format `build-lod.sh` reads), or a file that
+  is not in `data/3dgs/source/`;
+- a capture's rows name different files, two captures share a file, or a
+  `Point` label repeats;
+- a capture has fewer than 3 points, two points closer than 2 m, or points
+  spread less than 2 m across the line through them;
+- the fit's RMS residual is over 1 m (a typo, two points swapped, or points
+  read in the wrong frame), or its scale is outside 0.8–1.25 (the captures are metric, so that
+  means wrong points).
 
 ## Attribution
 

@@ -8,3 +8,5 @@ dist
 infra/data/*.csv
 # Custom drop-in datasets: someone else's data, on the same terms
 infra/data/custom/
+# Gaussian splat captures (large binaries) and their control points: loaded by infra/load.sh
+infra/data/3dgs/
