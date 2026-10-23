@@ -1,10 +1,11 @@
 // Tile fetching and building geometry shared by the self-fetching layers
-// (sunlight, ambient occlusion). Not a layer: it has no record. The store is
+// (sunlight, ambient occlusion, splat). Not a layer: it has no record. The store is
 // generic over its sources; see `specs/spec.md`.
 export * from "./grid";
 export { groundFootprint } from "./footprint";
 export { settle } from "./settle";
-export { addPrism, placeTile, TILE_UNITS, triangulateTile, type LocalFrame, type TilePrisms } from "./prisms";
+export { frameAt, localToMercator, mercatorToLocal, planTiles, toLocal, type LocalFrame } from "./frame";
+export { addPrism, placeTile, TILE_UNITS, triangulateTile, type TilePrisms } from "./prisms";
 export {
   decodeMvt,
   FETCH_CONCURRENCY,

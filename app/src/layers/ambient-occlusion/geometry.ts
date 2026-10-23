@@ -4,9 +4,7 @@
  */
 import { meetsMinHeight } from "../buildings";
 import {
-  lngLatToMercator,
   placeTile,
-  TILE_ZOOM,
   type LocalFrame,
   type TileId,
   type TilePrisms,
@@ -18,26 +16,6 @@ import {
  * pixels per building and draws without occlusion.
  */
 export const AO_FETCH_HALF_M = 4096;
-
-/**
- * Every z14 tile meeting the footprint's bounding box — clipped to
- * `halfM` around the centre — plus one ring of neighbours.
- */
-export function planAoTiles(frame: LocalFrame, footprint: [number, number][], halfM = AO_FETCH_HALF_M): TileId[] {
-  if (footprint.length < 3) return [];
-  const pts = footprint.map(([lng, lat]) => lngLatToMercator(lng, lat));
-  const lim = halfM * frame.metre;
-  const clampX = (v: number) => Math.max(frame.origin.x - lim, Math.min(frame.origin.x + lim, v));
-  const clampY = (v: number) => Math.max(frame.origin.y - lim, Math.min(frame.origin.y + lim, v));
-  const n = 2 ** TILE_ZOOM;
-  const x0 = Math.floor(clampX(Math.min(...pts.map((p) => p.x))) * n) - 1;
-  const x1 = Math.floor(clampX(Math.max(...pts.map((p) => p.x))) * n) + 1;
-  const y0 = Math.floor(clampY(Math.min(...pts.map((p) => p.y))) * n) - 1;
-  const y1 = Math.floor(clampY(Math.max(...pts.map((p) => p.y))) * n) + 1;
-  const tiles: TileId[] = [];
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) tiles.push({ x, y, z: TILE_ZOOM });
-  return tiles;
-}
 
 /**
  * The prisms of every building at least `minHeight` real metres tall, with

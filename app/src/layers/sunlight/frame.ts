@@ -1,4 +1,4 @@
-import { lngLatToMercator, metreInMercator, type MercatorPoint } from "../../lib/tiles";
+import { frameAt, lngLatToMercator, localToMercator, metreInMercator, toLocal, type MercatorPoint } from "../../lib/tiles";
 import { MIN_SUN_ELEVATION_DEG } from "./sun";
 
 /**
@@ -107,7 +107,8 @@ export function applyRowMajor(m: number[], x: number, y: number, z: number): Vec
 // Web Mercator. The formulas shared with the other self-fetching layers live in
 // `src/lib/tiles`; this file adds the inverse and the export's own sphere.
 
-export { lngLatToMercator, metreInMercator, type MercatorPoint };
+// lng/lat → a domain's local frame is the shared `LocalFrame` conversion.
+export { lngLatToMercator, metreInMercator, toLocal, type MercatorPoint };
 
 /** EPSG:3857's sphere, which is not MapLibre's — used only for export. */
 const WEB_MERCATOR_EXTENT_M = 2 * Math.PI * 6_378_137;
@@ -133,26 +134,14 @@ export interface Domain {
 }
 
 export function makeDomain(lng: number, lat: number, size = GRID_SIZE, domainM = DOMAIN_M): Domain {
-  return {
-    centre: [lng, lat],
-    origin: lngLatToMercator(lng, lat),
-    metre: metreInMercator(lat),
-    domainM,
-    size,
-  };
+  return { centre: [lng, lat], ...frameAt(lng, lat), domainM, size };
 }
 
 export const cellM = (d: Domain) => d.domainM / d.size;
 
-/** lng/lat → the local frame. */
-export function toLocal(d: Domain, lng: number, lat: number): Vec2 {
-  const p = lngLatToMercator(lng, lat);
-  return [(p.x - d.origin.x) / d.metre, -(p.y - d.origin.y) / d.metre];
-}
-
 /** The local frame → lng/lat. */
 export function fromLocal(d: Domain, x: number, y: number): [number, number] {
-  return mercatorToLngLat({ x: d.origin.x + x * d.metre, y: d.origin.y - y * d.metre });
+  return mercatorToLngLat(localToMercator(d, x, y));
 }
 
 /**

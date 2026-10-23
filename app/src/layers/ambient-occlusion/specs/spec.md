@@ -8,11 +8,12 @@ Modules: `src/layers/ambient-occlusion/`:
 - `aoLayer.ts` is the custom layer, with its G-buffer, AO, blur and composite
   passes.
 - `kernel.ts`, `geometry.ts` and `state.ts` are the pure parts: the sample
-  kernel and composite factor, tile planning and prism placement, and the
-  state gate.
+  kernel and composite factor, prism placement, and the state gate.
 
-Tile fetching, the z14 grid, per-tile triangulation and the ground footprint
-come from `src/lib/tiles/`, shared with the sunlight layer.
+Tile fetching, the z14 grid, tile planning (`planTiles`, with
+`AO_FETCH_HALF_M`), the local frame (`LocalFrame`), per-tile triangulation
+and the ground footprint come from `src/lib/tiles/`, shared with the sunlight
+and splat layers.
 
 ## Purpose
 

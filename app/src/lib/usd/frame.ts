@@ -1,4 +1,4 @@
-import { lngLatToMercator, metreInMercator, TILE_ZOOM, type TileId } from "../tiles";
+import { lngLatToMercator, metreInMercator, frameAt, TILE_ZOOM, toLocal, type TileId } from "../tiles";
 
 /**
  * The one frame every exported file shares: `x` east, `y` north, `z` up, in
@@ -26,15 +26,10 @@ export interface FrameProjection {
 }
 
 export function projection(frame: ExportFrame): FrameProjection {
-  const o = lngLatToMercator(frame.centre.lng, frame.centre.lat);
-  const metre = metreInMercator(frame.centre.lat);
+  const local = frameAt(frame.centre.lng, frame.centre.lat);
   const half = frame.sizeM / 2;
   return {
-    toLocal(lng, lat) {
-      const p = lngLatToMercator(lng, lat);
-      // Mercator y runs south; local y north.
-      return [(p.x - o.x) / metre, -(p.y - o.y) / metre];
-    },
+    toLocal: (lng, lat) => toLocal(local, lng, lat),
     inside: (x, y) => Math.abs(x) <= half && Math.abs(y) <= half,
   };
 }

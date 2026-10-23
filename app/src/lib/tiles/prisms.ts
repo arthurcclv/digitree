@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { MercatorPoint, TileId } from "./grid";
+import { mercatorToLocal, type LocalFrame } from "./frame";
+import type { TileId } from "./grid";
 import type { BuildingFeature } from "./store";
 
 /**
@@ -12,16 +13,6 @@ type Vec2 = [number, number];
 
 /** Tile units across a tile: x east, y south as in Mercator. */
 export const TILE_UNITS = 4096;
-
-/**
- * A local metre frame: x east, y north, z up, origin at `origin`. The sunlight
- * layer's `Domain` is one.
- */
-export interface LocalFrame {
-  origin: MercatorPoint;
-  /** Mercator units per metre, fixed at the origin's latitude. */
-  metre: number;
-}
 
 /**
  * One tile's buildings, triangulated in tile units with z in metres.
@@ -82,8 +73,7 @@ export function placeTile(
 ): number {
   const n = 2 ** tile.z;
   const scale = 1 / (n * TILE_UNITS * f.metre);
-  const ox = (tile.x / n - f.origin.x) / f.metre;
-  const oy = -(tile.y / n - f.origin.y) / f.metre;
+  const [ox, oy] = mercatorToLocal(f, { x: tile.x / n, y: tile.y / n });
   for (let i = start; i < end; i += 3) {
     const o = at + i - start;
     out[o] = ox + src[i] * scale;

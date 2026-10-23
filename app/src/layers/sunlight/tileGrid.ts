@@ -2,8 +2,8 @@
  * The z14 tile grid the layer fetches on, and the tile-based coverage test.
  * Pure — no fetch, no GL. See *Data* and *Coverage* in `specs/spec.md`.
  */
-import { TILE_ZOOM, tileKey, tileOfMercator, type TileId } from "../../lib/tiles";
-import { makeDomain, MIN_SUN_ELEVATION_REACH_M, type Domain, type MercatorPoint, type Vec2 } from "./frame";
+import { localToMercator, mercatorToLocal, TILE_ZOOM, tileKey, tileOfMercator, type TileId } from "../../lib/tiles";
+import { makeDomain, MIN_SUN_ELEVATION_REACH_M, type Domain, type Vec2 } from "./frame";
 
 // The grid itself is shared with the ambient-occlusion layer.
 export { TILE_ZOOM, tileIntersects, tileKey, tileOfLngLat, tileOfMercator, type TileId } from "../../lib/tiles";
@@ -14,17 +14,9 @@ export const FETCH_MARGIN_M = MIN_SUN_ELEVATION_REACH_M;
 /** A tile's square in a domain's local frame: `[west, south, east, north]` in metres. */
 export function tileSquareLocal(d: Domain, t: TileId): [number, number, number, number] {
   const n = 2 ** t.z;
-  const west = (t.x / n - d.origin.x) / d.metre;
-  const east = ((t.x + 1) / n - d.origin.x) / d.metre;
-  // Mercator y grows southwards; the local frame's y grows north.
-  const north = -(t.y / n - d.origin.y) / d.metre;
-  const south = -((t.y + 1) / n - d.origin.y) / d.metre;
+  const [west, north] = mercatorToLocal(d, { x: t.x / n, y: t.y / n });
+  const [east, south] = mercatorToLocal(d, { x: (t.x + 1) / n, y: (t.y + 1) / n });
   return [west, south, east, north];
-}
-
-/** A local point → Mercator, for a domain. */
-function localToMercator(d: Domain, x: number, y: number): MercatorPoint {
-  return { x: d.origin.x + x * d.metre, y: d.origin.y - y * d.metre };
 }
 
 /**

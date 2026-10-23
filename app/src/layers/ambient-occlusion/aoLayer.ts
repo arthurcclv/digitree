@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import type { CustomRenderMethodInput } from "maplibre-gl";
 import {
+  frameAt,
   groundFootprint,
-  lngLatToMercator,
-  metreInMercator,
+  planTiles,
   TileStore,
   triangulateTile,
   type BuildingFeature,
@@ -14,7 +14,7 @@ import {
 } from "../../lib/tiles";
 import { buildingTiles, type BuildingSource } from "../buildings";
 import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
-import { AO_FETCH_HALF_M, placeAoPrisms, planAoTiles } from "./geometry";
+import { AO_FETCH_HALF_M, placeAoPrisms } from "./geometry";
 import { AO_NOISE_SIZE, AO_SAMPLES, aoKernel, aoNoise } from "./kernel";
 import { AO_MIN_ZOOM, aoState, type AoState } from "./state";
 
@@ -420,8 +420,8 @@ export class ThreeAoLayer extends ThreeLayer {
     const map = this.map!;
     const c = map.getCenter();
     this.plannedView = this.viewKey();
-    this.frame = { centre: [c.lng, c.lat], origin: lngLatToMercator(c.lng, c.lat), metre: metreInMercator(c.lat) };
-    this.store.want(planAoTiles(this.frame, groundFootprint(map)));
+    this.frame = { centre: [c.lng, c.lat], ...frameAt(c.lng, c.lat) };
+    this.store.want(planTiles(this.frame, groundFootprint(map), AO_FETCH_HALF_M));
     const h = AO_FETCH_HALF_M;
     this.groundGeometry.setAttribute(
       "position",

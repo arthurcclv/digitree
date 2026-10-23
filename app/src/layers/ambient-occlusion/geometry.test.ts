@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { lngLatToMercator, metreInMercator, tileKey, tileOfLngLat, triangulateTile, type TileId } from "../../lib/tiles";
-import { AO_FETCH_HALF_M, placeAoPrisms, planAoTiles } from "./geometry";
+import { lngLatToMercator, metreInMercator, tileOfLngLat, triangulateTile, type TileId } from "../../lib/tiles";
+import { placeAoPrisms } from "./geometry";
 
 const centre: [number, number] = [121.5608, 25.0345];
 const frame = { origin: lngLatToMercator(...centre), metre: metreInMercator(centre[1]) };
@@ -11,41 +11,6 @@ const offset = (dx: number, dy: number): [number, number] => {
   const lat = centre[1] + dy / 110_574;
   return [lng, lat];
 };
-
-describe("planAoTiles", () => {
-  test("covers the footprint's tiles plus one ring", () => {
-    const footprint = [offset(-300, -300), offset(300, -300), offset(300, 300), offset(-300, 300)];
-    const tiles = planAoTiles(frame, footprint);
-    const keys = new Set(tiles.map(tileKey));
-    const inner = footprint.map(([lng, lat]) => tileOfLngLat(lng, lat));
-    for (const t of inner) {
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) expect(keys.has(tileKey({ ...t, x: t.x + dx, y: t.y + dy }))).toBe(true);
-      }
-    }
-    const xs = inner.map((t) => t.x);
-    const ys = inner.map((t) => t.y);
-    const w = Math.max(...xs) - Math.min(...xs) + 3;
-    const h = Math.max(...ys) - Math.min(...ys) + 3;
-    expect(tiles).toHaveLength(w * h);
-  });
-
-  test("clips a far corner to the fetch half-width", () => {
-    const far = [offset(-200, -200), offset(200, -200), offset(40_000, 60_000), offset(-40_000, 60_000)];
-    const tiles = planAoTiles(frame, far);
-    const limit = tileOfLngLat(...offset(AO_FETCH_HALF_M, AO_FETCH_HALF_M));
-    const low = tileOfLngLat(...offset(-AO_FETCH_HALF_M, AO_FETCH_HALF_M));
-    for (const t of tiles) {
-      expect(t.x).toBeLessThanOrEqual(limit.x + 1);
-      expect(t.x).toBeGreaterThanOrEqual(low.x - 1);
-      expect(t.y).toBeGreaterThanOrEqual(limit.y - 1);
-    }
-  });
-
-  test("no ground in view plans nothing", () => {
-    expect(planAoTiles(frame, [offset(0, 0), offset(10, 0)])).toEqual([]);
-  });
-});
 
 describe("placeAoPrisms", () => {
   const tile: TileId = tileOfLngLat(...centre);

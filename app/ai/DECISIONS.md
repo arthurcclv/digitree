@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-23 — One `LocalFrame` in `lib/tiles`, with its conversions and the tile planner
+
+**Decision.** `src/lib/tiles/frame.ts` owns the local metre frame:
+`LocalFrame` (moved from `prisms.ts`), `frameAt`, `toLocal`,
+`mercatorToLocal` and `localToMercator`. Every layer that placed things in such
+a frame now converts through these: sunlight's `Domain` (`toLocal`,
+`fromLocal`, `tileSquareLocal`, the coverage test), AO's frame, the tree
+layer's instance offsets, the splat layer's anchor (`Anchor = LocalFrame`),
+`placeTile` and the USD export's `projection`. `planAoTiles` and
+`planSplatTiles` were the same algorithm. Both are replaced by `planTiles(frame,
+footprint, halfM)`, and their tests moved to `lib/tiles/frame.test.ts`.
+
+Nothing is drawn differently. Each conversion does the same floating-point
+operations as the code it replaces (`-(a − b)` and `(b − a)` round the same),
+and the tree layer still reads its points through MapLibre's
+`MercatorCoordinate`.
+
+**Why.** Six modules wrote `(p − origin) / metre` with the y flip by hand,
+and only sunlight's copy was tested. A sign slip in one would have shown only
+in the browser.
+
+**Rules out.** A layer converting between Mercator and local metres by hand,
+or a third copy of the clipped tile planner.
+
+**Revisit / open.** `mercatorToLngLat` is still in `sunlight/frame.ts`, and
+`lib/usd/frame.ts` has an inline copy of it. It could join `grid.ts` when a
+third user appears.
+
+---
+
 ## 2026-10-12 — The tile proxy's target is a setting, `TILES_PROXY_TARGET`
 
 **Decision.**

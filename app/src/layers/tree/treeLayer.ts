@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
 import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
+import { mercatorToLocal } from "../../lib/tiles";
 import { TREE_POINTS_LAYER_ID } from "./constants";
 import { crownScale } from "./crown";
 import { formOf, type TreeForm } from "./forms";
@@ -384,10 +385,11 @@ export class ThreeTreeLayer extends ThreeLayer {
 
     // Unproject once, here, rather than again inside the per-bucket loop: the
     // level of detail is chosen from this position, so it has to exist first.
+    const frame = { origin, metre };
     const placed = instances.map((tree) => {
-      const point = MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0);
-      // Mercator deltas back into the local metre frame: east, up, south.
-      return { tree, x: (point.x - origin.x) / metre, z: (point.y - origin.y) / metre };
+      const [x, north] = mercatorToLocal(frame, MercatorCoordinate.fromLngLat([tree.lng, tree.lat], 0));
+      // The meshes' frame is y-up: east, up, south.
+      return { tree, x, z: -north };
     });
 
     const camera = this.cameraMetres(metre);

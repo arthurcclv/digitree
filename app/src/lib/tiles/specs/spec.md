@@ -12,6 +12,14 @@ Modules:
   once none is pending, every one ready or failed. It takes the store's
   `onChange`, so it is for a store of the caller's own (the USD export's and
   the export pass's).
+- `src/lib/tiles/frame.ts`: `LocalFrame`, the local metre frame (x east,
+  y north, z up, in metres, at a Mercator origin) that every self-placing
+  layer builds: `frameAt(lng, lat)`, `toLocal`, `mercatorToLocal`,
+  `localToMercator`. Mercator's y runs south, so the sign flip lives here
+  only. Also `planTiles(frame, footprint, halfM)`: the z14 tiles meeting the
+  footprint's bounding box, clipped to `halfM` metres around the frame's
+  origin, plus one ring, and none for a footprint of fewer than three points.
+  The AO and splat layers plan their tiles with it.
 - `src/lib/tiles/proxy.ts`: the `/tiles` proxy in front of Martin, for
   `vite.config.ts` only. Its target is `TILES_PROXY_TARGET`. It has its own
   spec, `specs/proxy.md`.
