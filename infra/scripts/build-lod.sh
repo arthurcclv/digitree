@@ -33,7 +33,7 @@ case $scan in
   */*|.|..|""|-*) die "'$scan' must be a bare scan name in $source_dir" ;;
 esac
 in=$source_dir/$scan.spz
-[ -f "$in" ] || die "'$scan' has no $scan.spz in $source_dir (run ./scripts/clean-splat.sh $scan first)"
+[ -f "$in" ] || die "'$scan' has no $scan.spz in $source_dir (run ./scripts/process-splat.sh $scan first)"
 for tool in docker node; do
   command -v "$tool" > /dev/null || die "$tool is not on PATH"
 done

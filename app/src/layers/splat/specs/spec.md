@@ -265,9 +265,9 @@ is each one's LoD tree, `infra/data/3dgs/lod/<scan>-lod.rad` and its chunks
 `<scan>-lod-<n>.radc`, built from it by
 `infra/scripts/build-lod.sh` (*Level of detail*). The scans as
 delivered sit in `infra/data/3dgs/original/<scan>/point_cloud.<ext>` and are
-never modified (`infra/CLAUDE.md`); `infra/scripts/clean-splat.sh` derives each served
+never modified (`infra/CLAUDE.md`); `infra/scripts/process-splat.sh` derives each served
 file from its original by removing outlying, oversized and floating
-Gaussians, and writes it as SPZ v3 (`infra/specs/clean-splat.md`). Removing
+Gaussians, and writes it as SPZ v3 (`infra/specs/process-splat.md`). Removing
 Gaussians never moves the others, so the frame, and the control points, are
 the original's.
 
@@ -772,7 +772,7 @@ swap; after a pan the map goes idle and sunlight/AO recompute.
   layer draws only the LoD tree, and `build-lod.sh` reads only
   `source/<scan>.spz`. So any other row passed the row check and then always
   failed with "its LoD … is not in …", which names the wrong cause. The
-  error is now "File '…' is not .spz". `clean-splat.sh` already writes
+  error is now "File '…' is not .spz". `process-splat.sh` already writes
   `.spz`, so no capture in use changes.
 - `control-points.mjs` checks the three points it picks with the loader's
   measure of a line, the smallest singular value (`infra/specs/control-points.md`,
@@ -849,7 +849,7 @@ are under *Level of detail*.
 ## Out of scope
 
 - Splats as occluders for sunlight or AO, in the probe, or in the USD export.
-- Cropping floaters in the layer (infra's `clean-splat.sh` does it).
+- Cropping floaters in the layer (infra's `process-splat.sh` does it).
 - A user setting for the page pool, the keep radius or the capture count.
 - Spherical harmonics in the LoD.
 - Per-capture visibility or opacity.

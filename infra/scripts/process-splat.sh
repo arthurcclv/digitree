@@ -3,13 +3,13 @@
 # capture's own distribution, the oversized ones and the floaters, and write it
 # as SPZ v3.
 #
-#   ./scripts/clean-splat.sh KZ0918-075047                        # 2 m voxels, 1%, 0.25 m
-#   ./scripts/clean-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+#   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, 0.25 m
+#   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 #
 # Reads the one data/3dgs/original/<scan>/point_cloud.<ext>, which it never
 # writes, and writes data/3dgs/source/<scan>.spz, which the files service
 # serves. Nothing else in the scan folder is read. It always starts from the original, so
-# re-running never compounds the cuts. The spec is specs/clean-splat.md.
+# re-running never compounds the cuts. The spec is specs/process-splat.md.
 set -euo pipefail
 
 infra=$(cd "$(dirname "$0")/.." && pwd)
@@ -68,7 +68,7 @@ done
 version=$(splat-transform --version 2>&1)
 case $version in
   "splat-transform v3.4."*) ;;
-  *) die "clean-splat.sh needs splat-transform 3.4.x, found '$version'" ;;
+  *) die "process-splat.sh needs splat-transform 3.4.x, found '$version'" ;;
 esac
 lib=$(npm root -g)/@playcanvas/splat-transform/dist/index.mjs
 [ -f "$lib" ] || die "splat-transform's library is not at $lib; install it globally with npm"
@@ -78,7 +78,7 @@ out=$source_dir/$scan.spz
 # Both temporaries sit in source/, so the final rename is atomic. The .spz one
 # must end in .spz: splat-transform picks the format from the extension.
 mkdir -p "$source_dir"
-work=$(mktemp -d "$source_dir/.clean-XXXXXX")
+work=$(mktemp -d "$source_dir/.process-XXXXXX")
 tmp=$source_dir/.$scan.tmp.spz
 trap 'rm -rf "$work" "$tmp"' EXIT
 

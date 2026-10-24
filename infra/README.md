@@ -51,8 +51,8 @@ covers the transform, the cleaning rules, the drop-in contract and the three
 ways a drop-in is rejected, in a second or two and without touching `data/` or
 the development database.
 
-It then runs `./test/clean-splat.sh`, the splat cleaner's own suite, which runs
-the real `clean-splat.sh` on captures it generates in a scratch directory. It
+It then runs `./test/process-splat.sh`, the splat processor's own suite, which runs
+the real `process-splat.sh` on captures it generates in a scratch directory. It
 needs `splat-transform` and `node`, not the database, and runs on its own too.
 Then `./test/control-points.sh` tests the control-point generator the same
 way, with only `node`; `run.sh` also loads that script's output through the
@@ -167,7 +167,7 @@ exceeds its instance budget, so those rows are never the ones culled.
 the splat in one `point_cloud.<ext>` (beside `gnss.csv` and `poses.csv`), and
 is never
 written. `data/3dgs/source/` holds them cleaned, one `<scan>.spz` each —
-by `./scripts/clean-splat.sh` (below) — `data/3dgs/lod/` holds the paged LoD tree the
+by `./scripts/process-splat.sh` (below) — `data/3dgs/lod/` holds the paged LoD tree the
 app draws for each, a header `<scan>-lod.rad` and its chunks
 `<scan>-lod-<n>.radc`, built by `./scripts/build-lod.sh` (below), and
 `data/3dgs/control_points.csv` says where each one sits. All four are
@@ -178,7 +178,7 @@ The splat tools live in `scripts/` and, like everything here, run from
 `infra/`. To add a capture:
 
 1. copy its scan folder into `data/3dgs/original/`;
-2. clean it into `source/` with `./scripts/clean-splat.sh <scan>`;
+2. clean it into `source/` with `./scripts/process-splat.sh <scan>`;
 3. build its LoD tree with `./scripts/build-lod.sh <scan>`;
 4. give it control points — `node scripts/control-points.mjs <scan>` writes
    them for a scan with `gnss.csv` and a georeferenced `point_cloud.ply`;
@@ -191,12 +191,12 @@ point's residual.
 
 **Cleaning.** A capture straight from training carries Gaussians that only get
 in the way on the map: sparse strays around and above the scene, oversized
-blobs, and floaters. `clean-splat.sh` drops them and writes the result as SPZ
+blobs, and floaters. `process-splat.sh` drops them and writes the result as SPZ
 v3 (Spark 2.3.1 does not load splat-transform's default v4):
 
 ```bash
-./scripts/clean-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
-./scripts/clean-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+./scripts/process-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
+./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 ```
 
 It reads the scan's one `point_cloud.<ext>` — `.ply`, `.compressed.ply`,
@@ -220,14 +220,14 @@ With the defaults the KY0917 captures lost 3.7–5.3%. It needs
 `splat-transform` 3.4.x installed globally with npm (the density step uses its
 library) and `node`. It holds a scan in memory: KZ0918-075047 (19.3M
 Gaussians, a 222 MB `.sog`) peaks at 3.5 GB, takes ~2.5 min and serves
-269 MB. Its spec is `specs/clean-splat.md`, and
+269 MB. Its spec is `specs/process-splat.md`, and
 `./test/run.sh` tests it.
 
 **The LoD tree.** The app draws a capture through Spark's paged LoD: a tree
 built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a
 fixed-size page pool, so it holds only what the view needs. `build-lod.sh` builds it from the cleaned file
 with Spark's own `build-lod`, at the version the app pins (v2.3.1), in a Rust
-container, so it needs only Docker, plus the `node` that `clean-splat.sh`
+container, so it needs only Docker, plus the `node` that `process-splat.sh`
 already needs (to read the header it wrote):
 
 ```bash

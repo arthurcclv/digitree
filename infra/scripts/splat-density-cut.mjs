@@ -1,4 +1,4 @@
-// The density cut of clean-splat.sh: drop the Gaussians whose voxel is far
+// The density cut of process-splat.sh: drop the Gaussians whose voxel is far
 // emptier than the capture's typical one, and write the rest as a .ply.
 //
 //   node scripts/splat-density-cut.mjs -- <lib> <in> <out.ply> <cell m> <min-density>
@@ -6,7 +6,7 @@
 // <lib> is splat-transform's library entry (dist/index.mjs of the global
 // install). Prints one JSON line — before, typical, kept — and exits 3 when
 // nothing would be kept, without writing <out.ply>. The rule and its numbers
-// are in specs/clean-splat.md.
+// are in specs/process-splat.md.
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';

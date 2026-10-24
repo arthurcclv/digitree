@@ -37,7 +37,7 @@ splat file is not in it — see *Changes from revision 3*.
 | `SPLATS_CONTROL_POINTS` | `data/3dgs/control_points.csv` | env: the file written |
 
 The two paths are variables so the test runs the real script in a scratch
-directory, as `clean-splat.sh`'s are.
+directory, as `process-splat.sh`'s are.
 
 **`point_cloud.ply`'s header** carries the georeference as `comment` lines:
 
@@ -64,7 +64,7 @@ This was checked on both KZ0918 scans, not taken from a format document:
 `offsetx/y/z` is the scan's first `gnss.csv` fix in UTM 51N to under 1 mm, and
 every status-4 fix, put through the formula, lies on the capture's splats
 (median distance to the nearest splat 0 m at a 0.5 m grid, none over 5 m).
-`source/<scan>.spz` keeps these coordinates: `clean-splat.sh` converts nothing
+`source/<scan>.spz` keeps these coordinates: `process-splat.sh` converts nothing
 (checked by decoding the SPZ positions).
 
 **`gnss.csv`**: `#timestamp,status,latitude,longitude,altitude,…`. A fix
@@ -75,7 +75,7 @@ status 4); only status-4 fixes need numbers.
 
 1. **Georeference.** Read the PLY header. Refuse the scan, naming it and the
    problem, when: the capture is not a `.ply`, or there is more than one
-   `point_cloud.*` (as `clean-splat.sh` refuses it); `epsg` or any of
+   `point_cloud.*` (as `process-splat.sh` refuses it); `epsg` or any of
    `offsetx/y/z` is missing or not a number; `epsg` is not WGS 84 / UTM
    (32601–32660 north, 32701–32760 south); a `shift*` is present and not 0, or
    a `scale*` is present and not 1 (their meaning is unverified, so they are
@@ -211,7 +211,7 @@ committed fixture `T1` becomes a `gnss.csv` and a header-only `point_cloud.ply`
 
 ## Out of scope
 
-- Running it from `load.sh`; it stays an explicit step, like `clean-splat.sh`.
+- Running it from `load.sh`; it stays an explicit step, like `process-splat.sh`.
 - More than three points.
 - Reading the georeference in `04_splats.sql` or the app instead of going
   through control points: the loader's fit and checks stay the one path every

@@ -21,7 +21,7 @@ whole `.spz` on every load, and kept every splat.
 ## Where files live
 
 ```
-data/3dgs/source/<scan>.spz          the cleaned capture (clean-splat.sh) — read, never written
+data/3dgs/source/<scan>.spz          the cleaned capture (process-splat.sh) — read, never written
 data/3dgs/lod/<scan>-lod.rad         its LoD tree's header: the chunks' names, offsets and sizes
 data/3dgs/lod/<scan>-lod-<n>.radc    one file per 64 K-splat chunk, n = 0, 1, …
                                      — all written only by build-lod.sh
@@ -55,7 +55,7 @@ same tree from one command.
 1. **Refuses** a missing argument, a scan that is not a bare name (`/`, `.`,
    `..`, or a leading `-`), a scan with no `source/<scan>.spz`, and a host
    without `docker` or `node` (step 4 reads the `.rad` header with `node`,
-   which `clean-splat.sh`, the step before, already needs).
+   which `process-splat.sh`, the step before, already needs).
 2. **Builds** with Spark's own `build-lod` (`rust/build-lod` in the Spark
    repo) at **tag `v2.3.1`**, the version `app/package.json` pins. The `.rad`
    format is read by the app's Spark, so the writer is held to it. It runs
@@ -138,7 +138,7 @@ has a stand-in `.rad` in `test/fixtures/splats/lod/`.
 
 ## Out of scope
 
-- Running it from `load.sh`. Like `clean-splat.sh`, it is an explicit step.
+- Running it from `load.sh`. Like `process-splat.sh`, it is an explicit step.
 - Building from anything but the cleaned `.spz`.
 - Spherical harmonics (`--cluster-sh`), which the captures do not have.
 

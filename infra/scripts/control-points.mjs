@@ -18,7 +18,7 @@ const HEADER = 'SplatID,File,Point,X,Y,Z,LAT,LON,H,Note';
 const GNSS_HEADER = '#timestamp,status,latitude,longitude,altitude,';
 const RTK_FIXED = '4';
 const MIN_SPREAD_M = 2; // the loader's own minimums, caught here instead of at load
-// clean-splat.sh's single-file formats: a scan has exactly one of them.
+// process-splat.sh's single-file formats: a scan has exactly one of them.
 const CAPTURES = ['ply', 'compressed.ply', 'sog', 'spz', 'splat', 'ksplat'].map((e) => `point_cloud.${e}`);
 const PLY = 'point_cloud.ply';
 

@@ -367,13 +367,13 @@ docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXIST
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-# --- the splat cleaner (clean-splat.sh) -------------------------------------
+# --- the splat processor (process-splat.sh) -----------------------------------
 #
 # Its own suite, with its own count: it needs splat-transform rather than the
-# database, and runs on its own as ./test/clean-splat.sh.
-printf '\n== clean-splat.sh ==\n'
-cleaner_ok=1
-./test/clean-splat.sh || cleaner_ok=0
+# database, and runs on its own as ./test/process-splat.sh.
+printf '\n== process-splat.sh ==\n'
+processor_ok=1
+./test/process-splat.sh || processor_ok=0
 
 # --- the control-point generator (control-points.mjs) ------------------------
 printf '\n== control-points.mjs ==\n'
@@ -385,4 +385,4 @@ printf '\n== build-lod.sh ==\n'
 lod_ok=1
 ./test/build-lod.sh || lod_ok=0
 
-[ "$fail" -eq 0 ] && [ "$cleaner_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$lod_ok" = 1 ]
+[ "$fail" -eq 0 ] && [ "$processor_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$lod_ok" = 1 ]

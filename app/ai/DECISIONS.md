@@ -6,6 +6,26 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-24 — `clean-splat.sh` is renamed `process-splat.sh`
+
+**Decision.** `infra/scripts/clean-splat.sh` becomes
+`infra/scripts/process-splat.sh`, with its test (`infra/test/process-splat.sh`)
+and spec (`infra/specs/process-splat.md`, revision 7). What it does does not
+change. Earlier entries keep the name they were written with.
+
+**Why.** The script is the one step from a capture as delivered to the file
+served, and it is about to do more than clean.
+
+**Rules out.** A second script for the steps to come: they join
+`process-splat.sh`, behind their own spec revision. Calling the script "the
+cleaner" in docs or tests; it is "the splat processor".
+
+**Revisit / open.** The name is ahead of the work: no step other than
+cleaning is specified yet. If none is, `clean-splat.sh` is the honest name
+again, and this entry is superseded.
+
+---
+
 ## 2026-10-23 — The splat loader owns the capture contract: `.spz` only, one line measure
 
 **Decision.**

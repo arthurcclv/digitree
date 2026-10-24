@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# The splat cleaner's test suite.
+# process-splat.sh's test suite.
 #
-# Runs the real clean-splat.sh against scans generated here — written with
+# Runs the real process-splat.sh against scans generated here — written with
 # splat-transform's .mjs generator input and saved as <scan>/point_cloud.<ext> —
 # in a scratch directory, so no binary fixture is checked in and data/ is never
 # touched. Needs splat-transform (with its library, installed globally) and
 # node, as the script does; no database.
 #
-#   ./test/clean-splat.sh   # from infra/; test/run.sh also runs it
+#   ./test/process-splat.sh   # from infra/; test/run.sh also runs it
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -43,7 +43,7 @@ mkdir -p "$SPLATS_ORIGINAL_DIR" "$work/gen"
 count() { splat-transform -q --no-tty "$1" --info json null | node -e '
   let s = ""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).numGaussians));'; }
 sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
-clean() { ./scripts/clean-splat.sh "$@" 2>&1; }
+process() { ./scripts/process-splat.sh "$@" 2>&1; }
 
 # The scene, in file coordinates. Every clump is a dense grid — 1 cm apart,
 # 2 cm across, under 10 cm in all — that starts 0.5 m past an even metre on
@@ -116,7 +116,7 @@ out=$SPLATS_SOURCE_DIR/scene.spz
 
 case_ "the density, size and floater cuts"
 expect "the original has every clump" "$(count "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog")" 1475
-log=$(clean scene) || { echo "$log"; echo "clean-splat.sh failed unexpectedly" >&2; exit 1; }
+log=$(process scene) || { echo "$log"; echo "process-splat.sh failed unexpectedly" >&2; exit 1; }
 expect_contains "names the file it read" "$log" "==> scene (point_cloud.sog)"
 expect_contains "the typical voxel is main's, and both 8s go" "$log" "1475 gaussians; typical voxel holds 1000; 1459 kept by density"
 expect "writes source/<scan>.spz with main, c27, far and sizes less 64" "$(count "$out")" 1395
@@ -124,7 +124,7 @@ expect_contains "reports the size cut on its own" "$log" "1395 kept by size"
 expect_contains "reports what it removed" "$log" "1395 kept after floaters; 80 removed in all (5.4%)"
 
 case_ "every coordinate negative"
-if log=$(clean mirror); then
+if log=$(process mirror); then
   expect "keeps the same clumps" "$(count "$SPLATS_SOURCE_DIR/mirror.spz")" 1395
 else
   bad "cleans a mirrored scan" "$log"
@@ -133,7 +133,7 @@ rm -f "$SPLATS_SOURCE_DIR/mirror.spz"
 
 case_ "every format splat-transform can write"
 for ext in "${formats[@]}"; do
-  if log=$(clean "as-$ext"); then
+  if log=$(process "as-$ext"); then
     expect "point_cloud.$ext gives the same counts" "$(count "$SPLATS_SOURCE_DIR/as-$ext.spz")" 1395
   else
     bad "cleans a point_cloud.$ext" "$log"
@@ -142,46 +142,57 @@ for ext in "${formats[@]}"; do
 done
 
 case_ "each cut alone"
-clean scene --max-scale 1 > /dev/null
+process scene --max-scale 1 > /dev/null
 expect "without the size cut the 0.5 m Gaussians stay" "$(count "$out")" 1459
-clean scene --min-density 0.03 > /dev/null
+process scene --min-density 0.03 > /dev/null
 expect "at 0.03 a voxel needs 30, so c27 goes too" "$(count "$out")" 1368
-log=$(clean scene --cell 100)
+log=$(process scene --cell 100)
 # 100 m voxels put main, the sky clump and every clump near them in one voxel,
 # and far's 216 still clears 1% of it: the cell is what tells a sky floater
 # from the street below it.
 expect_contains "in 100 m voxels the sky clump shares main's, and nothing goes" "$log" "1475 kept by density"
 
 case_ "the output"
-clean scene > /dev/null
+process scene > /dev/null
 expect "is gzipped" "$(od -An -tx1 -N2 "$out" | tr -d ' ')" 1f8b
 expect "is SPZ v3"  "$(node -e '
   const h = require("zlib").gunzipSync(require("fs").readFileSync(process.argv[1]));
   console.log(h.toString("latin1", 0, 4), h.readUInt32LE(4));' -- "$out")" "NGSP 3"
 expect "leaves the original as it was" "$(sum "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog")" "$before"
-clean scene > /dev/null
+process scene > /dev/null
 expect "a re-run starts from the original" "$(count "$out")" 1395
+# The working directory is gone by exit, so a shim in front of splat-transform
+# lists source/ while the script runs.
+mkdir -p "$work/shim"
+cat > "$work/shim/splat-transform" <<EOF
+#!/usr/bin/env bash
+ls -A "\$SPLATS_SOURCE_DIR" >> "$work/seen"
+exec $(command -v splat-transform) "\$@"
+EOF
+chmod +x "$work/shim/splat-transform"
+PATH=$work/shim:$PATH ./scripts/process-splat.sh scene > /dev/null 2>&1
+if grep -q '^\.process-' "$work/seen"; then ok "works in source/.process-*"; else bad "works in source/.process-*" "saw: $(sort -u "$work/seen" | tr '\n' ' ')"; fi
 
 case_ "refusals"
 kept=$(sum "$out")
-if log=$(clean scene --min-density 2); then bad "fails when nothing is left" "it succeeded"; else ok "fails when nothing is left"; fi
+if log=$(process scene --min-density 2); then bad "fails when nothing is left" "it succeeded"; else ok "fails when nothing is left"; fi
 expect_contains "  says so"                     "$log" "remove every Gaussian"
 expect "  leaves the previous output"           "$(sum "$out")" "$kept"
 expect "  leaves no temporary file"             "$(ls -A "$SPLATS_SOURCE_DIR")" scene.spz
-if log=$(clean absent); then bad "refuses a missing scan" "it succeeded"; else expect_contains "refuses a missing scan" "$log" "'absent' is not a scan folder in"; fi
-if log=$(clean empty); then bad "refuses a scan with no splat" "it succeeded"; else expect_contains "refuses a scan with no splat" "$log" "'empty' has no point_cloud.<ext>"; fi
-if log=$(clean both); then bad "refuses two splats" "it succeeded"; else expect_contains "refuses two splats, naming both" "$log" "more than one splat: point_cloud.ply point_cloud.sog"; fi
-if log=$(clean code); then bad "refuses a point_cloud.mjs" "it succeeded"; else expect_contains "refuses a point_cloud.mjs, never running it" "$log" "'code' has no point_cloud.<ext>"; fi
-if log=$(clean ../original/scene); then bad "refuses a path" "it succeeded"; else expect_contains "refuses a path" "$log" "must be a bare scan folder name"; fi
-if log=$(clean scene --cell 0); then bad "refuses a zero cell" "it succeeded"; else expect_contains "refuses a zero cell" "$log" "--cell must be a positive number"; fi
-if log=$(clean scene --min-density -1); then bad "refuses a negative density" "it succeeded"; else expect_contains "refuses a negative density" "$log" "--min-density must be a positive fraction"; fi
-if log=$(clean scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
+if log=$(process absent); then bad "refuses a missing scan" "it succeeded"; else expect_contains "refuses a missing scan" "$log" "'absent' is not a scan folder in"; fi
+if log=$(process empty); then bad "refuses a scan with no splat" "it succeeded"; else expect_contains "refuses a scan with no splat" "$log" "'empty' has no point_cloud.<ext>"; fi
+if log=$(process both); then bad "refuses two splats" "it succeeded"; else expect_contains "refuses two splats, naming both" "$log" "more than one splat: point_cloud.ply point_cloud.sog"; fi
+if log=$(process code); then bad "refuses a point_cloud.mjs" "it succeeded"; else expect_contains "refuses a point_cloud.mjs, never running it" "$log" "'code' has no point_cloud.<ext>"; fi
+if log=$(process ../original/scene); then bad "refuses a path" "it succeeded"; else expect_contains "refuses a path" "$log" "must be a bare scan folder name"; fi
+if log=$(process scene --cell 0); then bad "refuses a zero cell" "it succeeded"; else expect_contains "refuses a zero cell" "$log" "--cell must be a positive number"; fi
+if log=$(process scene --min-density -1); then bad "refuses a negative density" "it succeeded"; else expect_contains "refuses a negative density" "$log" "--min-density must be a positive fraction"; fi
+if log=$(process scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
 
 case_ "run from outside infra/"
 # Without the overrides, the default folders are found from the script's own
 # location, not the working directory. A missing scan is refused before
 # anything is written, so data/ is only read.
-if log=$(here=$PWD; cd "$work" && env -u SPLATS_ORIGINAL_DIR -u SPLATS_SOURCE_DIR "$here/scripts/clean-splat.sh" no-such-scan 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "not a scan folder in $PWD/data/3dgs/original"; fi
+if log=$(here=$PWD; cd "$work" && env -u SPLATS_ORIGINAL_DIR -u SPLATS_SOURCE_DIR "$here/scripts/process-splat.sh" no-such-scan 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "not a scan folder in $PWD/data/3dgs/original"; fi
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

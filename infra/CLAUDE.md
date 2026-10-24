@@ -32,20 +32,21 @@ sql/03_checks.sql    assertions over the loaded table; fails the load
 sql/04_splats.sql    control points -> validate -> fit -> splats
 load.sh              the whole bring-up in one command
 scripts/             the splat tools, each an explicit step load.sh never runs:
-  clean-splat.sh     original/<scan>/point_cloud.<ext> -> density, size and
+  process-splat.sh   original/<scan>/point_cloud.<ext> -> density, size and
                      floater cuts -> source/<scan>.spz
   splat-density-cut.mjs
-                     clean-splat.sh's density cut, on splat-transform's library
+                     process-splat.sh's density cut, on splat-transform's library
   control-points.mjs original/<scan>/gnss.csv + point_cloud.ply's header ->
                      the scan's rows of control_points.csv
   build-lod.sh       source/<scan>.spz -> Spark's build-lod (v2.3.1, in
                      Docker) -> lod/<scan>-lod.rad + <scan>-lod-<n>.radc,
                      the chunked tree the app draws
-specs/               specs for the scripts (clean-splat.md, control-points.md,
+specs/               specs for the scripts (process-splat.md, control-points.md,
                      build-lod.md)
 test/                fixture CSVs and run.sh, the loader's test suite;
-                     clean-splat.sh, the cleaner's; control-points.sh, the
-                     control-point generator's; build-lod.sh, the LoD builder's
+                     process-splat.sh, the splat processor's; control-points.sh,
+                     the control-point generator's; build-lod.sh, the LoD
+                     builder's
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 data/3dgs/           splat captures and control_points.csv (gitignored):
@@ -55,7 +56,7 @@ data/3dgs/           splat captures and control_points.csv (gitignored):
 
 Commands (run from `infra/`): `./load.sh` does everything, `./test/run.sh` runs
 the loader against fixtures in a scratch database. The splat tools run from
-here too — `./scripts/clean-splat.sh <scan>`, `./scripts/build-lod.sh <scan>`,
+here too — `./scripts/process-splat.sh <scan>`, `./scripts/build-lod.sh <scan>`,
 `node scripts/control-points.mjs [<scan>…]`. The two `.sh` tools find
 `data/` from their own location; `control-points.mjs` takes its default paths
 relative to the working directory, so it must run from here. `docker compose down` stops
@@ -96,7 +97,7 @@ right way to start over.
   correction belongs in `02_load.sql` so it is reproducible and reviewable. The
   one thing a contributor *adds* there is a drop-in CSV under `data/custom/` —
   and the loader still never writes to it, in either direction. The one
-  exception is `data/3dgs/source/`, which `clean-splat.sh` owns: it is derived
+  exception is `data/3dgs/source/`, which `process-splat.sh` owns: it is derived
   from `data/3dgs/original/` (read-only, like the extracts) and can always be
   rebuilt from it. Nothing else writes `source/`, and a capture is never edited
   there by hand — change the script's settings and re-run it. The second
@@ -106,7 +107,7 @@ right way to start over.
   The third is `data/3dgs/lod/`, which `build-lod.sh` owns: derived from
   `source/`, rebuilt by re-running it, never edited by hand. Its spec is
   `specs/build-lod.md`.
-- **The cleaner's traps live in `clean-splat.sh` and
+- **The splat processor's traps live in `process-splat.sh` and
   `splat-density-cut.mjs`, with comments and tests**: `-V` compares `scale_*` in metres though the file
   stores log scale; a negative number passed to `node` without `--` is read as
   a node option; and splat-transform's `--stats`, `.csv` output and library
@@ -115,7 +116,7 @@ right way to start over.
   into a filter argument must negate it). Its output is SPZ v3 because Spark
   2.3.1 recognises an SPZ only by gzip magic, and v4 is not gzipped. The
   density step uses splat-transform's library API, so the script refuses any
-  version but 3.4.x. Its spec is `specs/clean-splat.md`.
+  version but 3.4.x. Its spec is `specs/process-splat.md`.
 
 ## The contract with `app/`
 

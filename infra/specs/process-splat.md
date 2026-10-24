@@ -1,7 +1,8 @@
-# Spec — `clean-splat.sh`: strip outlying, oversized and floating Gaussians
+# Spec — `process-splat.sh`: strip outlying, oversized and floating Gaussians
 
-Status: **revision 6, approved 2026-10-23**: the script moves to
-`infra/scripts/`; see *Changes from revision 5*. Revision 5 and revision 3
+Status: **revision 7, approved 2026-10-24**: `clean-splat.sh` is renamed
+`process-splat.sh`; see *Changes from revision 6*. Revision 6 (approved
+2026-10-23) moved the script to `infra/scripts/`. Revision 5 and revision 3
 were both approved 2026-10-22. Revision 3 read a scan's `point_cloud.sog`;
 revision 5 reads its `point_cloud.<ext>` in any single-file format
 splat-transform reads. Revision 4
@@ -17,8 +18,8 @@ Spark can load. Every capture gets the same treatment from one command, with
 no per-capture setting to pick.
 
 ```bash
-./scripts/clean-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, 0.25 m
-./scripts/clean-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+./scripts/process-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, 0.25 m
+./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 ```
 
 ## Where files live
@@ -28,12 +29,12 @@ data/3dgs/original/<scan>/   one folder per scan, as delivered — read-only
   point_cloud.<ext>          the splat, in one supported format (below); the
                              only file the script reads
   …                          anything else (gnss.csv, poses.csv) is ignored
-data/3dgs/source/<scan>.spz  the scans as served — written only by clean-splat.sh
+data/3dgs/source/<scan>.spz  the scans as served — written only by process-splat.sh
 ```
 
 The `files` service serves `source/` at `/3dgs/`, and `04_splats.sql`
 (`splats_dir`) checks control-point files against it. The rule "never modify
-`data/`" keeps one exception: `clean-splat.sh` owns `data/3dgs/source/`.
+`data/`" keeps one exception: `process-splat.sh` owns `data/3dgs/source/`.
 `original/` stays read-only, so a capture can always be cleaned again from what
 was delivered.
 
@@ -157,7 +158,7 @@ script, each with a comment, and each has a test.
 
 ## Tests
 
-`test/clean-splat.sh`, run at the end of `test/run.sh` and runnable on its own.
+`test/process-splat.sh`, run at the end of `test/run.sh` and runnable on its own.
 It builds its scans with splat-transform's `.mjs` generator input, written out
 as `<scan>/point_cloud.<ext>` originals in a scratch directory, so no binary
 fixture is checked in. Every clump is a dense grid of small Gaussians, so the
@@ -198,6 +199,14 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
 step reads any more), the splat layer spec's served counts, and the 2026-10-21
 decision entry in `app/ai/DECISIONS.md`, which has not landed yet and is
 rewritten for the density rule rather than superseded.
+
+## Changes from revision 6
+
+- `clean-splat.sh` is renamed `process-splat.sh`, its test
+  `test/clean-splat.sh` is renamed `test/process-splat.sh`, and this spec
+  `specs/clean-splat.md` is renamed `specs/process-splat.md`: the script will
+  do more than clean. Its temporary directory in `source/` is `.process-*`
+  rather than `.clean-*`. What it does does not change.
 
 ## Changes from revision 5
 
@@ -249,6 +258,6 @@ on 2026-10-22, the day it was approved.
 - Connectivity (`-C`), box (`-B`) or opacity cuts, SH or decimation.
 - The scan's `gnss.csv`, and the KZ0918 scans' frame. (The SOG first
   delivered was y-up; the PLYs now delivered are z-up and georeferenced, and
-  `control-points.mjs` places them from that.) The cleaner's cuts are the same
+  `control-points.mjs` places them from that.) Its cuts are the same
   on every axis and it converts no coordinates, so the SPZ keeps the PLY's
   frame — checked by decoding its positions.
