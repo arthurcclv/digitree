@@ -74,3 +74,8 @@ postgres:
         altitude_m: real
         heading_deg: real
         scale: real
+        # The exact origin. The point above is snapped to the 4096 grid of
+        # the z14 tile the app reads, up to 0.27 m per axis, so the app takes
+        # the origin from these and the point only places the capture in tiles.
+        lng: float8
+        lat: float8

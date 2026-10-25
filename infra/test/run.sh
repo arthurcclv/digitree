@@ -266,6 +266,8 @@ expect_query "loads both captures"              "SELECT count(*) FROM splats" 2
 expect_query "ids follow splat_id"              "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
 expect_query "recovers the origin within 1 mm" \
   "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.5608, 25.0345), 4326)::geography) < 0.001 FROM splats WHERE splat_id='SYN'" t
+expect_query "publishes the origin exactly as lng/lat" \
+  "SELECT lng = ST_X(geom) AND lat = ST_Y(geom) AND pg_typeof(lng)::text = 'double precision' FROM splats WHERE splat_id='SYN'" t
 expect_query "recovers heading 30° within 0.01°" "SELECT abs(heading_deg - 30) < 0.01 FROM splats WHERE splat_id='SYN'" t
 expect_query "recovers scale 1"                  "SELECT abs(scale - 1) < 1e-5 FROM splats WHERE splat_id='SYN'" t
 expect_query "sets the ground through H − Z"     "SELECT abs(altitude_m - 2) < 1e-3 FROM splats WHERE splat_id='SYN'" t

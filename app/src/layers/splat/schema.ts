@@ -2,7 +2,6 @@ import {
   decodeMvt,
   lngLatToMercator,
   type MercatorPoint,
-  type TileGeometry,
   type TileSource,
 } from "../../lib/tiles";
 
@@ -31,7 +30,7 @@ export interface SplatSource {
 export interface Splat {
   id: string;
   file: string;
-  /** Where the capture's local (0, 0) lands. */
+  /** Where the capture's local (0, 0) lands: exact, from `lng`/`lat`. */
   lngLat: [number, number];
   /** The local z = 0 plane, in metres above the map's ground. */
   altitudeM: number;
@@ -50,7 +49,12 @@ export const SPLAT_PROPS = {
   altitudeM: "altitude_m",
   headingDeg: "heading_deg",
   scale: "scale",
+  lng: "lng",
+  lat: "lat",
 } as const;
+
+/** Web Mercator's latitude limit, where the map stops. */
+const MAX_LAT = 85.06;
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
@@ -58,21 +62,23 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
  * The one reading of a capture. `null`, never a guess, for a feature with a
  * missing or invalid property: infra validates on load, so this is a schema
  * drift, and drawing a capture in the wrong place is worse than not at all.
+ * The origin is the `lng`/`lat` properties, never the feature's point: MVT
+ * snaps that to the tile's grid, about 0.54 m at z14 (*Martin: the `splats`
+ * source*), so the geometry is not read at all.
  */
-export function splatOf(props: Record<string, unknown>, geometry: () => TileGeometry): Splat | null {
+export function splatOf(props: Record<string, unknown>): Splat | null {
   const id = props[SPLAT_PROPS.id];
   const file = props[SPLAT_PROPS.file];
   const bytes = props[SPLAT_PROPS.bytes];
   const altitudeM = props[SPLAT_PROPS.altitudeM];
   const headingDeg = props[SPLAT_PROPS.headingDeg];
   const scale = props[SPLAT_PROPS.scale];
+  const lng = props[SPLAT_PROPS.lng];
+  const lat = props[SPLAT_PROPS.lat];
   if (typeof id !== "string" || id === "") return null;
   if (typeof file !== "string" || file === "" || file.includes("/")) return null;
   if (!finite(bytes) || !finite(altitudeM) || !finite(headingDeg) || !finite(scale) || scale <= 0) return null;
-  const g = geometry();
-  if (g.type !== "Point") return null;
-  const [lng, lat] = g.coordinates;
-  if (!finite(lng) || !finite(lat)) return null;
+  if (!finite(lng) || !finite(lat) || Math.abs(lng) > 180 || Math.abs(lat) > MAX_LAT) return null;
   return { id, file, lngLat: [lng, lat], altitudeM, headingDeg, scale, bytes };
 }
 

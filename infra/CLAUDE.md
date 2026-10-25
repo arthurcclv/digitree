@@ -179,11 +179,13 @@ The splat captures are a second published interface, read by
 | `/3dgs-lod/<stem>-lod.rad`, `<stem>-lod-<n>.radc` | `files.conf` | the app's `SPLATS.lodFiles` and `lodUrlOf`: what the layer draws, the header (by byte range) naming its chunk files beside it |
 
 Its properties — `splat_id`, `file`, `bytes`, `altitude_m`, `heading_deg`,
-`scale` — are read by name, as the tree properties are. The LoD file's name is
+`scale`, `lng`, `lat` — are read by name, as the tree properties are. The LoD file's name is
 not a property: it is `file` less its extension, plus `-lod.rad`, a rule held
 once on each side (`04_splats.sql` requires the file, the app's `lodUrlOf`
 derives the URL), so a rename touches both. The point is where the
-capture's local `(0, 0)` lands; `heading_deg` is its local +y, clockwise from
+capture's local `(0, 0)` lands, but snapped to the tile's grid (~0.54 m at the
+app's z14), so it only says which tiles hold the capture. The origin the app
+draws from is `lng`/`lat`: the same point as doubles, generated from `geom`; `heading_deg` is its local +y, clockwise from
 north. Rename any of these together with the app's schema and spec.
 
 The placements are **solved, not typed**: `04_splats.sql` fits each capture

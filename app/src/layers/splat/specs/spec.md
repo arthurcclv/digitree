@@ -1,7 +1,9 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 7 (the loader takes
-> `.spz` only) — approved 2026-10-23;** see *Changes in revision 7*.
+> **Status: approved 2026-10-20, implemented. Revision 8 (a capture's origin
+> is read from exact `lng`/`lat` properties, not the tile's quantized point) —
+> approved 2026-10-25;** see *Changes in revision 8*.
+> Revision 7 (the loader takes `.spz` only) — approved 2026-10-23.
 > Revision 6 (fit on WGS 84, draw with per-axis metres) — approved 2026-10-23.
 > Revision 5 (paged LoD: a tree built offline, streamed into a fixed page
 > pool, and captures unloaded by distance and count) — approved 2026-10-23.
@@ -425,9 +427,14 @@ CREATE TABLE splats (
   scale       real NOT NULL,                -- local units → metres
   rms_m       real NOT NULL,                -- the fit's horizontal RMS residual
   points      integer NOT NULL,             -- control points used
-  geom        geometry(Point, 4326) NOT NULL -- where local (0, 0) lands
+  geom        geometry(Point, 4326) NOT NULL, -- where local (0, 0) lands
+  lng         double precision GENERATED ALWAYS AS (ST_X(geom)) STORED, -- geom's, exactly
+  lat         double precision GENERATED ALWAYS AS (ST_Y(geom)) STORED  -- (*Martin*, below)
 );
 ```
+
+`lng` and `lat` are generated from `geom`, so the loader writes only `geom` and
+the two can never disagree.
 
 A new `sql/04_splats.sql` loads it, with its inputs as psql variables like the
 tree loader: `splats_csv` (default `/data/3dgs/control_points.csv`),
@@ -447,15 +454,26 @@ tree loader: `splats_csv` (default `/data/3dgs/control_points.csv`),
   mirrored capture (fails on `rms_m`), a scale of 1.5, a `File` that differs
   between rows, a missing file, a path in `File`, a `File` that is not `.spz`
   (a `.txt`, a `.ply`, an upper-case `.SPZ`), duplicate `Point`, and blank
-  `H` taking 0.
+  `H` taking 0. For the exact synthetic capture it also checks that `lng`
+  and `lat` equal `ST_X(geom)` and `ST_Y(geom)` exactly.
 
 ### Martin: the `splats` source
 
 `martin.yaml` publishes the table, explicitly, as source id **`splats`** and
 MVT layer **`splats`**: `id_column: id`, point geometry, `minzoom: 14`,
 `maxzoom: 20`, properties `splat_id`, `file`, `bytes`, `altitude_m`,
-`heading_deg` and `scale`. These names join the published interface in
-`infra/CLAUDE.md`, next to `trees`.
+`heading_deg`, `scale`, `lng` and `lat` (both `float8`). These names join the
+published interface in `infra/CLAUDE.md`, next to `trees`.
+
+**The point geometry is not the origin.** MVT stores geometry as integers on
+the tile's `extent` grid. The layer reads the z14 tiles, and with
+`extent: 4096` a z14 tile in Taipei is about 2.2 km wide, so the grid step is
+about 0.54 m. A point snaps up to 0.27 m on each axis. Measured on the 22
+captures, the snap moved each origin by 0.12–0.37 m, in a different direction
+for each capture, so overlapping captures were drawn up to about 0.5–0.7 m
+apart. `ST_AsMVT` writes `float8` properties as MVT doubles, so `lng` and
+`lat` arrive exact. The geometry still decides which tiles hold a capture,
+and nothing more.
 
 ### The files: a static `files` service
 
@@ -493,9 +511,14 @@ interface SplatSource {
 
 `schema.ts` holds the one reading (rule 5):
 
-- `splatOf(props, geometry)` reads one feature into a `Splat` (`id`, `file`,
+- `splatOf(props)` reads one feature into a `Splat` (`id`, `file`,
   `lngLat`, `altitudeM`, `headingDeg`, `scale`, `bytes`). It returns
   `null`, never a guess, for a feature with a missing or invalid property.
+  `lngLat` is `[lng, lat]` from the `lng` and `lat` properties, which must be
+  finite with `lng` in [−180, 180] and `lat` in [−85.06, 85.06] (Web
+  Mercator's range). It never comes from the feature's geometry, which is
+  quantized (*Martin: the `splats` source*). The geometry is not read at all,
+  so its type is not checked either.
 - `lodUrlOf(source, splat)` is the capture's paged LoD tree, the one URL the
   layer fetches: `lodFiles + <stem>-lod.rad`, where `<stem>` is `file` less
   its last extension, encoded. This is the one place in the app that holds
@@ -667,7 +690,8 @@ capture is drawn, as it does the tree models' credit.
    camera still and no load running, the map reaches `idle`.
 4. Spark is never imported, and no tile or file is fetched, while the layer is
    hidden or below `minZoom` and nothing has been loaded before.
-5. One reading of a capture (`splatOf`), in `schema.ts`.
+5. One reading of a capture (`splatOf`), in `schema.ts`. A capture's origin
+   comes from its `lng`/`lat` properties, never from tile geometry.
 6. The attribution is in the map's credit line whenever a capture is drawn.
 7. One copy of `three` (`npm ls three` lists one version).
 8. infra: a bad control-point row or a fit over its checks fails the whole
@@ -692,7 +716,12 @@ capture is drawn, as it does the tree models' credit.
   assertions as `TILES_PROXY_TARGET`; through a real Vite server, a `Range`
   request reaches the target unchanged and its `206` comes back.
 - `splat/schema.test.ts`: `splatOf` on valid and on each kind of invalid
-  feature; `lodUrlOf` (the stem, only the last extension, a stem already
+  feature, including a missing, non-finite or out-of-range `lng` or `lat`.
+  Given a geometry 0.3 m from its `lng`/`lat`, `splatOf` takes the properties
+  to the last bit. A real MVT carrying the `splats` layer's properties
+  (`lng`/`lat` as doubles, written with `pbf`'s `PbfWriter` in the test,
+  since no MVT encoder is a dependency), decoded through `decodeMvt` at z14, gives back `lngLat` equal to the
+  encoded doubles; `lodUrlOf` (the stem, only the last extension, a stem already
   ending in `-lod`, encoding); `splatsIn` deduplicates. `planTiles` is tested in `lib/tiles/frame.test.ts`.
 - `splat/frame.test.ts`, on plain numbers, with the stretch evaluated on the
   CPU: `similarity` maps a local point to the east/north the loader's solve
@@ -739,7 +768,11 @@ capture is drawn, as it does the tree models' credit.
 In the browser: each capture renders upright at its place and keeps its shape at
 high pitch and any bearing; both KZ0918 captures match the OSM footprints at
 zoom 19 at the four edges of each capture; buildings in front hide it; it survives a basemap
-swap; after a pan the map goes idle and sunlight/AO recompute.
+swap; after a pan the map goes idle and sunlight/AO recompute. Overlapping
+captures (KY0917A over KY0917C, and KZ0918-093638, -095308 and -101007-1/-2)
+show no seam where they meet: the same kerb, wall or pole lines up across
+them. Against the live Martin, every capture's decoded z14 `lngLat` equals the
+table's `lng`/`lat`.
 
 ## Documentation changes, with the implementation
 
@@ -764,6 +797,38 @@ swap; after a pan the map goes idle and sunlight/AO recompute.
    deploying.
 3. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 8
+
+- **A capture's origin is read from `lng`/`lat` properties, not from the
+  tile's point.** Until now `splatOf` took `lngLat` from the MVT point. At z14
+  with `extent: 4096`, that point is quantized to a grid of about 0.54 m, so
+  each capture was drawn 0.12–0.37 m off its solved origin, in a different
+  direction per capture. The values were measured by decoding Martin's tiles
+  with the app's own `decodeMvt` and `splatOf` and comparing them with the
+  table. Overlapping captures disagreed by up to about 0.5–0.7 m, while the
+  3dgs-viewer, which reads `control_points.csv` directly, lined them up.
+  Heading, scale and the per-axis metres were already exact: through the
+  table's values, every control point lands within 1 mm of its RTK fix.
+- `splats` gains `lng` and `lat`, `double precision` columns generated from
+  `geom`. Martin publishes them as `float8`, and they join the published
+  property names in `infra/CLAUDE.md`. The point geometry stays, to say which
+  tiles hold a capture.
+- Alternatives not taken:
+  - A larger `extent` (2²⁰ gives about 2 mm). It only shrinks the error
+    rather than removing it, and it couples the origin's accuracy to a tiling
+    setting.
+  - Fetching the capture's tiles at z20. That still leaves about 1 cm of
+    quantization, and costs many more tiles.
+- Not changed: `heading_deg` and `scale` stay `real`. Float32 rounding there
+  moves a point 300 m out by under 0.2 mm.
+- Files changed:
+  - Code: `infra/sql/01_schema.sql`, `infra/martin.yaml`, `schema.ts`, with
+    tests in `schema.test.ts` and `infra/test/run.sh`.
+  - Docs: `infra/CLAUDE.md` (the property list and what the point is for)
+    and a new top entry in `app/ai/DECISIONS.md`.
+  - After it lands: re-run `infra/load.sh` and restart Martin so it reads the
+    new columns.
 
 ## Changes in revision 7
 

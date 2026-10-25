@@ -1,5 +1,6 @@
+import { PbfWriter } from "pbf";
 import { describe, expect, test } from "vitest";
-import { lngLatToMercator, type TileGeometry } from "../../lib/tiles";
+import { decodeMvt, lngLatToMercator, tileOfLngLat, type TileGeometry, type TileId } from "../../lib/tiles";
 import {
   lodUrlOf,
   splatOf,
@@ -8,8 +9,59 @@ import {
   type SplatSource,
 } from "./schema";
 
-const PROPS = { splat_id: "KY0917A", file: "KY0917A.spz", bytes: 40422461, altitude_m: 0.4, heading_deg: 30, scale: 1.01 };
-const point = (lng: number, lat: number) => () => ({ type: "Point", coordinates: [lng, lat] }) as TileGeometry;
+// KZ0918-093638's solved origin, to the last bit the table holds.
+const LNG = 121.5403129;
+const LAT = 25.04008900123;
+const PROPS = {
+  splat_id: "KY0917A",
+  file: "KY0917A.spz",
+  bytes: 40422461,
+  altitude_m: 0.4,
+  heading_deg: 30,
+  scale: 1.01,
+  lng: LNG,
+  lat: LAT,
+};
+
+/**
+ * One-feature MVT for the `splats` layer, as Martin writes it: the point on
+ * the tile's 4096 grid, `lng`/`lat` as doubles and the rest as Martin types
+ * them. No MVT encoder is a dependency, so the few fields are written by hand
+ * (vector_tile.proto, version 2).
+ */
+function splatsTile(t: TileId, props: Record<string, string | number>): ArrayBuffer {
+  const EXTENT = 4096;
+  const m = lngLatToMercator(props.lng as number, props.lat as number);
+  const n = 2 ** t.z;
+  const x = Math.round((m.x * n - t.x) * EXTENT);
+  const y = Math.round((m.y * n - t.y) * EXTENT);
+  const zigzag = (v: number) => (v << 1) ^ (v >> 31);
+  const keys = Object.keys(props);
+  const pbf = new PbfWriter();
+  pbf.writeMessage(3, (_: unknown, layer: PbfWriter) => {
+    layer.writeVarintField(15, 2);
+    layer.writeStringField(1, "splats");
+    layer.writeMessage(2, (_: unknown, f: PbfWriter) => {
+      f.writeVarintField(1, 1);
+      f.writePackedVarint(2, keys.flatMap((_, i) => [i, i]));
+      f.writeVarintField(3, 1);
+      f.writePackedVarint(4, [9, zigzag(x), zigzag(y)]);
+    }, null);
+    for (const k of keys) layer.writeStringField(3, k);
+    for (const k of keys) {
+      const v = props[k];
+      layer.writeMessage(4, (_: unknown, w: PbfWriter) => {
+        if (typeof v === "string") w.writeStringField(1, v);
+        else if (k === "lng" || k === "lat") w.writeDoubleField(3, v);
+        else if (Number.isInteger(v)) w.writeVarintField(5, v);
+        else w.writeFloatField(2, v);
+      }, null);
+    }
+    layer.writeVarintField(5, EXTENT);
+  }, null);
+  const out = pbf.finish();
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
+}
 
 const splat = (id: string, lng: number, lat: number): Splat => ({
   id,
@@ -23,10 +75,10 @@ const splat = (id: string, lng: number, lat: number): Splat => ({
 
 describe("splatOf", () => {
   test("reads every published property", () => {
-    expect(splatOf(PROPS, point(121.539, 25.0386))).toEqual({
+    expect(splatOf(PROPS)).toEqual({
       id: "KY0917A",
       file: "KY0917A.spz",
-      lngLat: [121.539, 25.0386],
+      lngLat: [LNG, LAT],
       altitudeM: 0.4,
       headingDeg: 30,
       scale: 1.01,
@@ -43,13 +95,38 @@ describe("splatOf", () => {
     ["a non-finite altitude", { ...PROPS, altitude_m: Number.NaN }],
     ["a zero scale", { ...PROPS, scale: 0 }],
     ["no bytes", { ...PROPS, bytes: undefined }],
+    ["no lng", { ...PROPS, lng: undefined }],
+    ["no lat", { ...PROPS, lat: undefined }],
+    ["a text lng", { ...PROPS, lng: "121.54" }],
+    ["a non-finite lat", { ...PROPS, lat: Number.POSITIVE_INFINITY }],
+    ["a lng past 180", { ...PROPS, lng: 180.5 }],
+    ["a lat past Web Mercator's limit", { ...PROPS, lat: -85.1 }],
   ])("drops a feature with %s", (_, props) => {
-    expect(splatOf(props as Record<string, unknown>, point(121.539, 25.0386))).toBeNull();
+    expect(splatOf(props as Record<string, unknown>)).toBeNull();
   });
 
-  test("drops a feature that is not a point", () => {
-    const line = () => ({ type: "LineString", coordinates: [[0, 0], [1, 1]] }) as TileGeometry;
-    expect(splatOf(PROPS, line)).toBeNull();
+  test("takes the origin from lng/lat, never from the geometry", () => {
+    // About 0.3 m off, as a z14 point can be.
+    const off = () => ({ type: "Point", coordinates: [LNG + 3e-6, LAT - 2e-6] }) as TileGeometry;
+    const read = splatOf as (p: Record<string, unknown>, g: () => TileGeometry) => Splat | null;
+    expect(read(PROPS, off)?.lngLat).toEqual([LNG, LAT]);
+  });
+
+  test("a z14 tile gives back the exact origin, where its point is snapped", () => {
+    const t = tileOfLngLat(LNG, LAT);
+    const buf = splatsTile(t, PROPS);
+    const [s] = decodeMvt(buf, t, "splats", splatOf);
+    expect(s.lngLat[0]).toBe(LNG);
+    expect(s.lngLat[1]).toBe(LAT);
+    expect(s).toMatchObject({ id: "KY0917A", file: "KY0917A.spz", bytes: 40422461 });
+    // The point itself is on the 4096 grid, centimetres off: what the origin
+    // used to be read from.
+    const [g] = decodeMvt(buf, t, "splats", (_, geometry) => geometry());
+    if (g.type !== "Point") throw new Error(`a ${g.type}, not a point`);
+    const [gl, ga] = g.coordinates;
+    const offM = Math.hypot((gl - LNG) * 111320 * Math.cos((LAT * Math.PI) / 180), (ga - LAT) * 110574);
+    expect(offM).toBeGreaterThan(0.01);
+    expect(offM).toBeLessThan(0.4);
   });
 });
 

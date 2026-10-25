@@ -79,7 +79,13 @@ CREATE TABLE splats (
   rms_m       real NOT NULL CHECK (rms_m >= 0),
   points      integer NOT NULL CHECK (points >= 3),
   -- Where local (0, 0) lands.
-  geom        geometry(Point, 4326) NOT NULL
+  geom        geometry(Point, 4326) NOT NULL,
+  -- geom's longitude and latitude, exactly, for the app to read as the
+  -- capture's origin. Martin publishes them as MVT doubles; the point itself
+  -- is snapped to the tile's grid (~0.54 m at z14), so it only says which
+  -- tiles hold the capture. Generated, so they can never disagree with geom.
+  lng         double precision GENERATED ALWAYS AS (ST_X(geom)) STORED,
+  lat         double precision GENERATED ALWAYS AS (ST_Y(geom)) STORED
 );
 
 CREATE INDEX splats_geom_idx ON splats USING GIST (geom);

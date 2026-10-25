@@ -6,6 +6,35 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-25 — A splat capture's origin is read from `lng`/`lat` properties, not its tile point
+
+**Decision.** The `splats` table gains `lng` and `lat`, `double precision`
+columns generated from `geom`. Martin publishes them as `float8`, and
+`splatOf` takes `lngLat` from them, never from the MVT point. The point stays
+in the tile, to say which tiles hold a capture. Splat spec revision 8.
+
+**Why.** MVT geometry is integers on the tile's `extent` grid. At the app's
+z14 with `extent: 4096`, that grid is about 0.54 m in Taipei. Decoding the
+live tiles showed each capture's origin 0.12–0.37 m off its solved value, in a
+different direction per capture. Overlapping captures were drawn up to about
+0.5–0.7 m apart, while the 3dgs-viewer, which reads `control_points.csv`
+directly, lined them up. Everything else in the placement was already exact:
+through the table's values, every control point lands within 1 mm of its RTK
+fix.
+
+**Rules out.**
+- A larger `extent`: it only shrinks the error, and ties the origin's
+  accuracy to a tiling setting.
+- Fetching z20 tiles for the origin: still about 1 cm off, and many more
+  fetches.
+- Reading any position from tile geometry where exactness matters.
+
+**Revisit if** the splats stop being served as MVT (a JSON endpoint would
+carry the doubles directly), or a capture property needs more precision than
+`real` gives.
+
+---
+
 ## 2026-10-24 — `process-splat.sh` aligns a capture before cleaning it, in the PLY's own frame
 
 **Decision.**
