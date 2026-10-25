@@ -6,6 +6,37 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-25 — A scan's control-point `H` is its antenna height, measured on its own Gaussians
+
+**Decision.** `control-points.mjs` writes `H` as the scan's GNSS antenna
+height above the capture's ground. It takes 50 RTK fixes spread through the
+scan and, under each one, the densest 15 cm layer of solid Gaussians within
+1 m and 0.5–3 m below it. `H` is the median over those samples, and the
+script refuses a scan with fewer than 10 samples or a height outside
+1.0–2.5 m. The loader's `mean(H − scale·Z)` then sets the capture's ground on
+the map's ground. The loader and the app are unchanged.
+`infra/specs/control-points.md` revision 8.
+
+**Why.** With `H` blank, the loader put the antenna on the map's ground, and
+every capture sat 1.36–1.73 m too low. Heights differ by scan, in two
+groups, so a single constant would not do. The PLY's Gaussians, not the
+lidar, because:
+- `H` must put this file's ground on the map, and the PLY is what gets
+  placed;
+- every scan has a PLY, while 7 of 22 lack the lever arm the lidar needs.
+
+The lidar agrees to about 3 cm and is tighter per sample.
+
+**Rules out.**
+- A per-point `H`: any one spot may be a car roof.
+- Terrain: the map ground is 0 m everywhere.
+
+**Revisit if** the map gains terrain, or a scanner is carried at varying
+heights within one scan, which would show as a wide p10–p90 in the
+script's output.
+
+---
+
 ## 2026-10-25 — A splat capture's origin is read from `lng`/`lat` properties, not its tile point
 
 **Decision.** The `splats` table gains `lng` and `lat`, `double precision`

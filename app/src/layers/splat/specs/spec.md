@@ -349,7 +349,10 @@ KY0917A,KY0917A.spz,3,55.62,-22.90,0.11,25.034655,121.561212,0,gate pillar, west
 
 **Choosing points.** Three points spread across the capture, not in a line, on
 features that are sharp in both the capture and the map imagery. Points on the
-ground (`H` blank) are best. A fourth or fifth point is accepted and makes
+ground (`H` blank) are best. That is for points measured by hand. A scan's
+generated points are its GNSS antenna, and their `H` is the antenna's
+measured height above the capture's ground (`infra/specs/control-points.md`,
+revision 8). A fourth or fifth point is accepted and makes
 the fit more robust.
 
 **One frame, no conversion.** A capture's file and its rows of

@@ -1,10 +1,11 @@
 // Write a scan's rows of control_points.csv from its own georeference: three
 // RTK-fixed GNSS fixes spread wide and off a line, each put into the splat
-// file's coordinates through the UTM offset in its PLY header.
+// file's coordinates through the UTM offset in its PLY header, with H the
+// antenna's height above the capture's ground, measured on its Gaussians.
 //
 //   node scripts/control-points.mjs [<scan>…]   # from infra/; default: every scan
 //
-// Reads original/<scan>/gnss.csv and point_cloud.ply's header, never writes
+// Reads original/<scan>/gnss.csv and point_cloud.ply, never writes
 // original/. Replaces only the given scans' rows of control_points.csv and
 // keeps every other row byte for byte. The rules and their numbers are in
 // specs/control-points.md.
@@ -19,6 +20,15 @@ const HEADER = 'SplatID,File,Point,X,Y,Z,LAT,LON,H,Note';
 const GNSS_HEADER = '#timestamp,status,latitude,longitude,altitude,';
 const RTK_FIXED = '4';
 const MIN_SPREAD_M = 2; // the loader's own minimums, caught here instead of at load
+// The antenna height (specs/control-points.md, step 6).
+const SAMPLES = 50;
+const RADIUS_M = 1;
+const DEPTH_M = [0.5, 3];
+const MIN_UNDER = 30; // solid Gaussians under a sample, or it is skipped
+const BIN_M = 0.05;
+const MIN_SAMPLES = 10;
+const HEIGHT_M = [1.0, 2.5];
+const CHUNK = 64 << 20;
 // process-splat.sh's single-file formats: a scan has exactly one of them.
 const CAPTURES = ['ply', 'compressed.ply', 'sog', 'spz', 'splat', 'ksplat'].map((e) => `point_cloud.${e}`);
 const PLY = 'point_cloud.ply';
@@ -164,6 +174,109 @@ function pick(scan, c) {
   return [p1, p2, p3];
 }
 
+// The PLY's body layout, for reading x, y, z and opacity in place.
+const PLY_TYPES = { char: 1, uchar: 1, int8: 1, uint8: 1, short: 2, ushort: 2, int16: 2, uint16: 2, int: 4, uint: 4, int32: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
+function plyLayout(scan, head, size) {
+  const text = head.toString('latin1');
+  const end = text.indexOf('end_header\n');
+  if (end < 0) fail(`${scan}: ${PLY} has no LF-terminated header`);
+  const headerLen = end + 'end_header\n'.length;
+  const hl = text.slice(0, end).split('\n').map((l) => l.trim());
+  if (!hl.includes('format binary_little_endian 1.0')) fail(`${scan}: ${PLY} must be binary_little_endian 1.0 to measure the antenna height`);
+  const elements = hl.filter((l) => l.startsWith('element '));
+  if (elements.length !== 1 || !elements[0].startsWith('element vertex ')) fail(`${scan}: ${PLY} must have exactly one element, vertex`);
+  const count = num(elements[0].split(/\s+/)[2], `${scan}: ${PLY} vertex count`);
+  const props = new Map();
+  let stride = 0;
+  for (const l of hl.filter((x) => x.startsWith('property '))) {
+    const [, type, name] = l.split(/\s+/);
+    if (!PLY_TYPES[type]) fail(`${scan}: ${PLY} property '${l}' is not supported`);
+    props.set(name, { type, offset: stride });
+    stride += PLY_TYPES[type];
+  }
+  for (const p of ['x', 'y', 'z', 'opacity']) {
+    if (!props.has(p)) fail(`${scan}: ${PLY} has no property ${p}, needed for the antenna height`);
+    if (!['float', 'float32'].includes(props.get(p).type)) fail(`${scan}: ${PLY} property ${p} must be float`);
+  }
+  if (size !== headerLen + count * stride) fail(`${scan}: ${PLY} is ${size} bytes; its header says ${headerLen + count * stride}`);
+  const at = (p) => props.get(p).offset;
+  return { headerLen, count, stride, ox: at('x'), oy: at('y'), oz: at('z'), oo: at('opacity') };
+}
+
+const medianOf = (v) => {
+  const s = [...v].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// How high the antenna was carried above the capture's own ground: 50 fixes
+// spread through the scan in time; under each, the densest 15 cm layer of
+// solid Gaussians 0.5–3 m below it, within 1 m; the median over the samples.
+// The densest layer, not the lowest points: floaters lie below the road, and
+// a sample over a car roof finds the roof, which the median outvotes.
+async function antennaHeight(scan, candidates) {
+  const n = candidates.length;
+  const samples = n <= SAMPLES ? candidates : Array.from({ length: SAMPLES }, (_, i) => candidates[Math.floor(((i + 0.5) * n) / SAMPLES)]);
+  // Each sample is listed in the 1 m cells its disc can reach.
+  const cells = new Map();
+  samples.forEach((s, i) => {
+    const cx = Math.floor(s.x), cy = Math.floor(s.y);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const k = `${cx + dx},${cy + dy}`;
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k).push(i);
+    }
+  });
+  const depths = samples.map(() => []);
+  const path = join(ORIGINAL, scan, PLY);
+  const { size } = statSync(path);
+  const fh = await open(path, 'r');
+  try {
+    const head = Buffer.alloc(Math.min(size, 64 * 1024));
+    await fh.read(head, 0, head.length, 0);
+    const L = plyLayout(scan, head, size);
+    const buf = Buffer.alloc(Math.max(1, Math.floor(CHUNK / L.stride)) * L.stride);
+    const total = L.count * L.stride, r2 = RADIUS_M * RADIUS_M;
+    for (let pos = 0; pos < total;) {
+      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, total - pos), L.headerLen + pos);
+      if (bytesRead === 0) fail(`${scan}: ${PLY} ended early`);
+      for (let o = 0; o + L.stride <= bytesRead; o += L.stride) {
+        if (!(buf.readFloatLE(o + L.oo) > 0)) continue; // opacity logit > 0: over 0.5
+        const x = buf.readFloatLE(o + L.ox), y = buf.readFloatLE(o + L.oy);
+        const list = cells.get(`${Math.floor(x)},${Math.floor(y)}`);
+        if (!list) continue;
+        const z = buf.readFloatLE(o + L.oz);
+        for (const i of list) {
+          const s = samples[i], ex = x - s.x, ey = y - s.y, d = s.z - z;
+          if (ex * ex + ey * ey <= r2 && d >= DEPTH_M[0] && d <= DEPTH_M[1]) depths[i].push(d);
+        }
+      }
+      pos += bytesRead;
+    }
+  } finally {
+    await fh.close();
+  }
+  const heights = [];
+  for (const d of depths) {
+    if (d.length < MIN_UNDER) continue;
+    const bins = new Map();
+    for (const v of d) { const b = Math.floor(v / BIN_M); bins.set(b, (bins.get(b) ?? 0) + 1); }
+    let best = null, bestN = -1;
+    for (const b of [...bins.keys()].sort((p, q) => p - q)) {
+      const c = (bins.get(b - 1) ?? 0) + bins.get(b) + (bins.get(b + 1) ?? 0);
+      if (c > bestN) { best = b; bestN = c; } // strict: the nearer bin wins a tie
+    }
+    const lo = (best - 1) * BIN_M, hi = (best + 2) * BIN_M;
+    const layer = d.filter((v) => v >= lo && v < hi);
+    heights.push(layer.reduce((a, v) => a + v, 0) / layer.length);
+  }
+  if (heights.length < MIN_SAMPLES) fail(`${scan}: the ground was found under ${heights.length} samples of ${samples.length}; at least ${MIN_SAMPLES} are needed for the antenna height`);
+  const h = medianOf(heights);
+  const s = [...heights].sort((a, b) => a - b), q = (p) => s[Math.min(s.length - 1, Math.floor(p * s.length))];
+  if (h < HEIGHT_M[0] || h > HEIGHT_M[1]) fail(`${scan}: the antenna height is ${h.toFixed(3)} m, outside ${HEIGHT_M[0]}–${HEIGHT_M[1]} m`);
+  console.log(`${scan}: antenna ${h.toFixed(3)} m above the ground, the median of ${heights.length} of ${samples.length} samples (p10–p90 ${q(0.1).toFixed(2)}–${q(0.9).toFixed(2)} m)`);
+  return { h, kept: heights.length, of: samples.length };
+}
+
 // Rounded first, so a value a hair below zero is written 0.000, not -0.000.
 const fixed3 = (v) => { const r = Math.round(v * 1000) / 1000; return (r === 0 ? 0 : r).toFixed(3); };
 
@@ -177,9 +290,13 @@ async function rowsFor(scan) {
     const [E, N] = utm(f.latV, f.lonV, geo.zone, geo.north);
     return { ...f, x: E - ox, y: N - oy, z: f.h - oz };
   });
-  return pick(scan, candidates).map((p, i) =>
-    // H blank: the loader reads it as 0, so the antenna sits on the map's ground.
-    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, '', `gnss ${p.tRaw}; EPSG:${geo.epsg}`].join(','));
+  const points = pick(scan, candidates);
+  // H, the antenna's height above the ground: the loader sets the capture's
+  // ground on the map's through mean(H − scale·Z).
+  const a = await antennaHeight(scan, candidates);
+  return points.map((p, i) =>
+    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, fixed3(a.h),
+      `gnss ${p.tRaw}; EPSG:${geo.epsg}; antenna over ${a.kept} of ${a.of} samples`].join(','));
 }
 
 const scans = scansToRun();

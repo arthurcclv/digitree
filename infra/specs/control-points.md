@@ -1,7 +1,7 @@
 # Spec — `control-points.mjs`: control points from a scan's georeference
 
-Status: **revision 7 — approved 2026-10-23.** See *Changes from
-revision 6*.
+Status: **revision 8 — approved 2026-10-25.** See *Changes from
+revision 7*. Revision 7 — approved 2026-10-23.
 
 ## What it is
 
@@ -10,7 +10,10 @@ A script in `infra/scripts/`, run from `infra/`, that writes a scan's rows of
 points measured by hand in a viewer. For each scan it picks three RTK-fixed
 GNSS fixes, spread wide and not in a line, and writes each fix twice: as
 latitude/longitude, and in the splat file's own coordinates, through the
-georeference the scanner wrote into the file's header.
+georeference the scanner wrote into the file's header. It also measures how
+high the GNSS antenna was carried above the ground, from the capture's own
+Gaussians, and writes that as each point's `H`, so the loader sets the
+capture's ground on the map's ground.
 
 ```bash
 node scripts/control-points.mjs             # every scan in original/
@@ -21,7 +24,8 @@ node scripts/control-points.mjs KZ0918-075047   # just these scans
 
 ```
 data/3dgs/original/<scan>/   read-only, as delivered
-  point_cloud.ply            the capture; only its header is read (below)
+  point_cloud.ply            the capture: its header (below) and, for the
+                             antenna height, its x, y, z and opacity
   gnss.csv                   the GNSS receiver's fixes (below)
 data/3dgs/control_points.csv the scan's rows are replaced; every other row is kept
 ```
@@ -57,8 +61,11 @@ names) and height `h` is stored at
 file x = E − offsetx,   file y = N − offsety,   file z = h − offsetz
 ```
 
-z-up, metric, x east and y north of the projection's grid. The script reads
-the header only, never the vertices (the file is 0.9–1.3 GB).
+z-up, metric, x east and y north of the projection's grid. The georeference
+comes from the header alone. The vertices (the file is 0.9–1.3 GB) are read
+only to measure the antenna height (step 6), in chunks, never whole; that
+needs float properties `x`, `y`, `z` and `opacity` in a binary little-endian
+body, the same requirement `splat-align.mjs` has.
 
 This was checked on both KZ0918 scans, not taken from a format document:
 `offsetx/y/z` is the scan's first `gnss.csv` fix in UTM 51N to under 1 mm, and
@@ -101,7 +108,29 @@ status 4); only status-4 fixes need numbers.
    (`04_splats.sql`), so a file this writes cannot fail them at load. Distance
    off the line 1–2 is not the same measure: (0,0), (100,0), (50,2) is 2 m off
    it, but its singular value is 1.63 m.
-6. **Write** one row per point:
+6. **Antenna height.** How high the antenna was carried above the ground,
+   measured on the capture's own Gaussians in the file's frame, so the
+   loader puts this file's ground (not the true ground) on the map's:
+   1. **Samples.** 50 candidates spread evenly through the scan in time:
+      candidate `floor((i + 0.5)·n / 50)`, i = 0…49, in time order (all of
+      them when n ≤ 50).
+   2. **Under each sample:** the solid Gaussians (opacity logit > 0, that is
+      opacity over 0.5) within 1 m of it horizontally and 0.5–3 m below it.
+      Each gives a depth `d` = the sample's z − the Gaussian's z. A sample
+      with fewer than 30 is skipped: nothing was captured under it.
+   3. **The ground under a sample** is the densest 15 cm layer. Put `d` into
+      5 cm bins, `floor(d / 0.05)`, and take the bin `b` whose count plus
+      both neighbours' is largest, the nearer bin on a tie. The sample's
+      antenna height is the mean `d` in `[(b − 1)·0.05, (b + 2)·0.05)`. The
+      densest layer, not the lowest points, because floaters lie below the
+      road and a sample over a car roof or a step finds that instead.
+   4. **The scan's antenna height** is the median over the samples kept
+      (the mean of the middle two for an even count). One height for the
+      scan: a carried scanner stays at about one height, and the median
+      outvotes the samples over a roof or a hole.
+   5. **Refused**, naming the scan and the number: fewer than 10 samples
+      kept, or a height outside 1.0–2.5 m.
+7. **Write** one row per point:
 
    | column | value |
    | --- | --- |
@@ -110,8 +139,8 @@ status 4); only status-4 fixes need numbers.
    | `Point` | `1`, `2`, `3` |
    | `X`, `Y`, `Z` | the fix's file x, y, z, 3 decimals |
    | `LAT`, `LON` | the fix's `latitude`, `longitude` as written in `gnss.csv` |
-   | `H` | blank (the loader reads it as 0: the GNSS antenna is put on the map's ground) |
-   | `Note` | `gnss <timestamp>; EPSG:<epsg>` — no commas, so it needs no quoting |
+   | `H` | the scan's antenna height (step 6), 3 decimals, the same on all three points |
+   | `Note` | `gnss <timestamp>; EPSG:<epsg>; antenna over <k> of <m> samples` — no commas, so it needs no quoting |
 
 `04_splats.sql` fits the points with its 2D similarity on the WGS 84
 ellipsoid, the same ellipsoid as UTM's (`app/src/layers/splat/specs/spec.md`,
@@ -127,8 +156,54 @@ true metres, k ≈ 0.99987 here. On the real KZ0918 scans, as loaded:
 (UTM 51N's grid convergence at 121.54° E, 25.04° N is −0.62°.) A fit
 outside the loader's RMS and scale limits still fails the load.
 
+The loader's vertical offset is `mean(H − scale·Z)`, so `H` lifts each
+capture by its antenna height. As `control-points.mjs` measured it on the
+22 delivered scans (2026-10-25), in metres, with the per-sample p10–p90 it
+prints:
+
+| scan | height | p10–p90 | samples kept |
+| --- | --- | --- | --- |
+| KY0917-03 | 1.730 | 1.69–1.75 | 50 |
+| KY0917A | 1.501 | 1.44–1.54 | 50 |
+| KY0917B | 1.525 | 1.41–1.57 | 50 |
+| KY0917C | 1.721 | 1.64–1.76 | 50 |
+| KZ0917-06 | 1.706 | 1.60–1.83 | 50 |
+| KZ0917E | 1.685 | 1.43–1.79 | 50 |
+| KZ0918-075047 | 1.569 | 1.48–1.68 | 50 |
+| KZ0918-090946 | 1.723 | 1.70–1.76 | 50 |
+| KZ0918-093638 | 1.719 | 1.69–1.75 | 50 |
+| KZ0918-095308 | 1.707 | 1.68–1.75 | 50 |
+| KZ0918-101007-1 | 1.469 | 1.37–1.57 | 36 |
+| KZ0918-101007-2 | 1.506 | 1.47–1.60 | 14 |
+| KZ0918-132221 | 1.505 | 1.43–1.56 | 50 |
+| KZ0918-135904 | 1.551 | 1.51–1.60 | 50 |
+| KZ0918-140755 | 1.535 | 1.47–1.60 | 50 |
+| KZ0918-143613 | 1.556 | 0.53–1.69 | 50 |
+| KZ0918-153127 | 1.714 | 1.52–2.02 | 48 |
+| KZ0918090721 | 1.415 | 1.33–1.55 | 49 |
+| KZ0918153456 | 1.358 | 1.16–1.42 | 49 |
+| KZ0918160415 | 1.440 | 1.28–1.58 | 49 |
+| KZ0918161007 | 1.710 | 1.67–1.75 | 50 |
+| KZ0918162445 | 1.692 | 0.72–1.77 | 50 |
+
+Heights come in two groups, about 1.7 m and 1.36–1.57 m, so they are
+measured per scan and not set once. KZ0918-143613 and -162445 have a tenth of
+their samples at 0.5–0.7 m (over a car or a wall), and their medians are
+unmoved. KZ0918-101007-2's PLY is half a split scan, so most of its fixes
+have nothing under them, and 14 samples remain.
+
+**Against the lidar.** For the 15 scans with a lever arm (`map_config.json`),
+the same measurement on `octree.bin`, all in the poses' frame (antenna = pose
++ rotated `rtk_external_param`), agrees with the above to a median of 0.03 m.
+The PLY is the higher one on every scan (by 0.00–0.09 m), and the lidar's
+per-sample spread is 3–10 times tighter (0.01–0.02 m on a clean scan). The PLY is
+used anyway: what `H` must do is put this file's ground on the map, which the
+PLY measures directly, and the PLY exists for every scan where the lever arm
+does not.
+
 ## Output contract
 
+- `H` is never blank in a row this writes.
 - `control_points.csv` keeps its header `SplatID,File,Point,X,Y,Z,LAT,LON,H,Note`;
   a file with any other header is refused, untouched. A missing file is
   created with that header.
@@ -140,28 +215,40 @@ outside the loader's RMS and scale limits still fails the load.
 - `original/` is only read. Re-running gives the same file.
 - Prints each scan's EPSG and offset, and its three points with their pairwise
   distances, the distance of point 3 from the line, and the spread across it
-  (the singular value), so a poor spread is visible.
+  (the singular value), so a poor spread is visible. It also prints the
+  antenna height, the samples kept, and the per-sample p10–p90.
+- Reading the vertices takes about 1–2 s per scan when the file is in the OS
+  cache, and longer when it is not.
 
 ## What it does not check
 
-- **That the header's georeference is true of the vertices.** The script never
-  reads them. It was verified on the two KZ0918 scans as above; a capture
+- **That the header's georeference is true of the vertices.** It reads them
+  only for the height, not to check the georeference. It was verified on the two KZ0918 scans as above; a capture
   whose header lies fits just as well and lands wrong. Check each new capture
   by eye after its first load.
 - The GNSS antenna's offset from the scanner (lever arm) and any latency, as
   before: centimetres. The splat was built from the same trajectory, so its
   georeference already carries both.
-- **Height.** With `H` blank the antenna's height is put on the map's ground,
-  and the capture's ground sits that far below it: about 1.6–1.9 m on the
-  KZ0918 scans (their ground is at file z ≈ −1.7). Unchanged from revision 3,
-  where the pose origin did the same.
+- **The ground's own height.** The map has no terrain: its ground is 0 m
+  everywhere. `H` puts the capture's ground on it on average over the three
+  points, and keeps whatever slope the street has. Taipei's basin is flat
+  enough that this is centimetres within a capture.
+- **A scanner carried at changing heights.** One height per scan is assumed.
+  A scan that changes, say from hand to pole, gets the median, and its
+  p10–p90 in the printout shows it.
 
 ## Tests
 
 `test/control-points.sh`, run at the end of `test/run.sh` and runnable on its
 own; it needs only `node`. Its scans are written in a scratch directory. The
-committed fixture `T1` becomes a `gnss.csv` and a header-only `point_cloud.ply`
-(0 vertices); `poses.csv` is removed from it.
+committed fixture `T1` is a `gnss.csv` and a header-only `point_cloud.ply`
+(`poses.csv` is removed from it). It gains eight RTK fixes inside its
+triangle, so it has twelve samples, and none of them is ever picked.
+`test/control-points-scene.mjs` writes each test scan's vertices at run
+time, keeping the header's comments: only `x, y, z, opacity`, a solid ground
+of Gaussians at a known depth under its fixes, plus the layers a case asks
+for. No binary is committed. `test/run.sh` loads a scratch copy of T1 with
+that ground.
 
 - **The projection against the vendor's own numbers:** a header whose offset is
   KZ0918-075047's, and that scan's first fix (25.039362564, 121.540875478,
@@ -177,6 +264,20 @@ committed fixture `T1` becomes a `gnss.csv` and a header-only `point_cloud.ply`
 - an existing file with a KY row, and an older row of the same scan: the KY
   row is kept byte for byte, the old row is replaced, and a re-run is
   identical;
+- **The antenna height:**
+  - A flat ground 1.600 m below every fix gives `H` 1.600 (within 5 mm) on
+    all three points. The Note reads `antenna over 50 of 50 samples`.
+  - It still does when that scene also has:
+    - floaters scattered 2.0–2.9 m below;
+    - a car roof 0.8 m below a fifth of the samples;
+    - transparent Gaussians (opacity logit −2) forming a denser layer 1.2 m
+      below.
+  - A ground under only 9 of the 50 samples is refused, naming the scan and
+    "9 samples".
+  - A ground 0.7 m below every fix is refused as outside 1.0–2.5 m.
+  - A PLY without `opacity`, or with a `double` `z`, is refused, naming the
+    property.
+  - Re-running gives the same `H`.
 - refused, leaving the file untouched: a wrong header; collinear fixes; a thin
   triangle (100 m base, apex 2.2 m off it, which is 1.80 m across by the
   loader's measure); fewer
@@ -189,8 +290,25 @@ committed fixture `T1` becomes a `gnss.csv` and a header-only `point_cloud.ply`
   that point (γ = atan(tan(λ − λ₀)·sin φ)), scale within 1e-4 of 1/k (k the
   UTM point scale there, 0.999868), and RMS under 5 mm.
   Replaces revision 3's "heading 30°" case, which tested the poses' frame.
+  Its `altitude_m` is `H − scale·mean(Z)` within 1 mm, so the ground under
+  the fixes lands at 0 m.
 
 ## Docs
+
+Revision 8:
+
+- `infra/README.md`: the control-points paragraph says `H` is the measured
+  antenna height, not blank, and that the vertices are read for it.
+- `infra/CLAUDE.md`: where it says the header is trusted and the vertices are
+  not read, it adds that they are read for the antenna height, and still not
+  to check the georeference.
+- `app/src/layers/splat/specs/spec.md`, *Control points CSV*: "Points on the
+  ground (`H` blank) are best" applies to hand-measured points. A scan's
+  points are its antenna, with `H` measured.
+- `app/ai/DECISIONS.md`: a new top entry. A scan's `H` is its antenna height
+  measured on its own Gaussians, not the lidar's, and why.
+
+Earlier revisions:
 
 - `infra/CLAUDE.md`: the layout line becomes `original/<scan>/gnss.csv +
   point_cloud.ply's header -> the scan's rows of control_points.csv`; the
@@ -222,7 +340,28 @@ committed fixture `T1` becomes a `gnss.csv` and a header-only `point_cloud.ply`
   capture takes.
 - Captures without a georeference (`.sog`, `.spz`, a PLY without the
   comments): they are refused, and placed by hand-measured points as before.
-- Setting `H` from the antenna's height above the ground.
+- Terrain: a map ground other than 0 m.
+- Measuring the height on the lidar (`octree.bin`): it is tighter, but
+  needs the lever arm, which 7 of the 22 scans lack, and measures the true
+  ground, not this file's (*Against the lidar*).
+- A per-point `H` (each point's own ground). One height per scan is steadier
+  than any one spot, which may be a car roof.
+- The 3dgs-viewer (another repository) uses `U = s·Z` and ignores `H`. It
+  stays an antenna height low until it adds the loader's
+  `mean(H − s·Z)`.
+
+## Changes from revision 7
+
+- **`H` is the scan's antenna height, measured, not blank** (step 6). With
+  `H` blank the loader put the antenna on the map's ground, and every capture
+  sat 1.36–1.73 m below it, sunk to about the operator's chest. The script
+  now reads the vertices (`x, y, z, opacity`) for this. The georeference
+  still comes from the header alone.
+- The Note gains `antenna over <k> of <m> samples`.
+- New refusals: fewer than 10 samples with ground under them; a height
+  outside 1.0–2.5 m; a PLY lacking float `x, y, z, opacity`.
+- "Setting `H` from the antenna's height above the ground" leaves *Out of
+  scope*.
 
 ## Changes from revision 6
 

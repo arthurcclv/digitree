@@ -345,12 +345,16 @@ splat_rejects "points read y-up, not in the file's own frame" unconverted.csv "U
 # scale of 1/k, where k = 0.999868 is UTM's point scale there: a file unit is
 # a grid metre, 1/k true metres. The loader fits on the same ellipsoid as UTM,
 # so only the projections' curvature is left over: millimetres
-# (specs/control-points.md).
+# (specs/control-points.md). Its ground is 1.6 m below every fix, so H is
+# 1.600 and the loader lifts the capture by it: altitude_m = H − scale·mean(Z),
+# Z of the picked fixes 0, 0.6 and 0.7.
 # The CSV and a stand-in T1.spz go into the container's /tmp: /test is
 # read-only, and the loader only checks that the file exists.
 case_ "control points generated from a scan's georeference"
 cp_work=$(mktemp -d)
-SPLATS_ORIGINAL_DIR=test/fixtures/control-points SPLATS_CONTROL_POINTS=$cp_work/cp.csv \
+mkdir -p "$cp_work/original" && cp -R test/fixtures/control-points/T1 "$cp_work/original/"
+node test/control-points-scene.mjs -- "$cp_work/original/T1"
+SPLATS_ORIGINAL_DIR=$cp_work/original SPLATS_CONTROL_POINTS=$cp_work/cp.csv \
   node scripts/control-points.mjs T1 > /dev/null
 docker compose exec -T db sh -c 'mkdir -p /tmp/cp-source /tmp/cp-lod && echo stand-in > /tmp/cp-source/T1.spz &&
   echo stand-in > /tmp/cp-lod/T1-lod.rad && cat > /tmp/cp.csv' < "$cp_work/cp.csv"
@@ -364,6 +368,8 @@ expect_query "puts the origin on the first fix, within 5 mm" \
 expect_query "faces grid north (359.3823°) within 0.01°" "SELECT abs(heading_deg - 359.3823) < 0.01 FROM splats" t
 expect_query "  at scale 1/k (1.000132) within 1e-4" "SELECT abs(scale - 1.000132) < 1e-4 FROM splats" t
 expect_query "  with RMS under 5 mm"             "SELECT rms_m < 0.005 FROM splats" t
+expect_query "sets the ground at 0 m: altitude is H − scale·mean(Z) within 1 mm" \
+  "SELECT abs(altitude_m - (1.6 - scale * (0 + 0.6 + 0.7) / 3)) < 0.001 FROM splats" t
 
 docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" > /dev/null
 

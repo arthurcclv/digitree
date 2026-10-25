@@ -293,13 +293,16 @@ The PLY's header names a UTM zone and an offset (`comment epsg 32651`,
 (E − offsetx, N − offsety, h − offsetz). For each scan the script takes the
 RTK-fixed fixes (status 4), puts each into the file's coordinates through
 that, picks the farthest-apart pair and the fix farthest from their line, and
-writes those three with their latitude/longitude, `H` blank. The loader then
+writes those three with their latitude/longitude. Their `H` is the antenna's
+height above the capture's ground (1.36–1.73 m on the delivered scans),
+measured on the Gaussians under 50 fixes, so the loader sets the capture's
+ground on the map's instead of the antenna. The loader then
 solves where the scan sits and which way it faces (for KZ0918: heading
 ≈ 359.38°, the grid's turn from true north, scale ≈ 1.0001, UTM's point
 scale; RMS a few millimetres, since the loader fits on the same ellipsoid). It replaces only those scans' rows and keeps
 the rest of the file as it is. `poses.csv` is not read: it is in a frame of
-its own. The header is read, the vertices are not, so a header that does not
-describe its file fits just as well and lands wrong; check a new capture by
+its own. The vertices are read only for that height, never to check the header, so a
+header that does not describe its file fits just as well and lands wrong; check a new capture by
 eye. A capture without a georeference (`.sog`, `.spz`) is refused. Spec:
 `specs/control-points.md`.
 
