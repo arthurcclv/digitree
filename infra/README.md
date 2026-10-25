@@ -189,10 +189,12 @@ A capture without its `lod/<scan>-lod.rad` fails the splat load. The
 load prints each capture's fit (`rms_m`, `scale`, `heading_deg`) and every
 point's residual.
 
-**Cleaning.** A capture straight from training carries Gaussians that only get
-in the way on the map: sparse strays around and above the scene, oversized
-blobs, and floaters. `process-splat.sh` drops them and writes the result as SPZ
-v3 (Spark 2.3.1 does not load splat-transform's default v4):
+**Aligning and cleaning.** A capture straight from training sits a few
+centimetres — sometimes more — from where the scanner's own RTK and lidar put
+it, and carries Gaussians that only get in the way on the map: sparse strays
+around and above the scene, oversized blobs, and floaters.
+`process-splat.sh` corrects the first, drops the rest, and writes the result
+as SPZ v3 (Spark 2.3.1 does not load splat-transform's default v4):
 
 ```bash
 ./scripts/process-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
@@ -200,11 +202,26 @@ v3 (Spark 2.3.1 does not load splat-transform's default v4):
 ```
 
 It reads the scan's one `point_cloud.<ext>` — `.ply`, `.compressed.ply`,
-`.sog`, `.spz`, `.splat` or `.ksplat` — and nothing else in the folder, and
-writes `source/<scan>.spz`. A folder with none, or with more than one (say a
+`.sog`, `.spz`, `.splat` or `.ksplat` — and writes `source/<scan>.spz`, with
+`source/<scan>.align.json` beside it. A folder with none, or with more than one (say a
 `.ply` and a `.sog` of the same scan), is refused: keep the one to serve. A
 `point_cloud.mjs` is never run — a generator is code, and the folder is data.
 Cleaning needs ~1 GB of free disk per 13M Gaussians for its intermediate file.
+
+First it aligns (`scripts/splat-align.mjs`, a port of the XGRIDS handoff's
+`align.py`), when the splat is a `point_cloud.ply` and the folder also has
+`gnss.csv`, `poses.csv`, `octree.bin`, `metadata.json` and `map_config.json`:
+it fits the trajectory to the RTK-fixed GNSS fixes (antenna lever arm from
+`map_config.json`), carries the lidar into the PLY's frame with that fit,
+matches it to the Gaussians by ICP, and moves every Gaussian by the rigid
+correction found — within the PLY's own frame, so the control points below
+still apply. The `.align.json` records the outcome: `pass` (moved under
+10 cm), `corrected` (more), `fail` or `skipped`. A scan missing one of those
+files is skipped, and one that fails validation (ICP matching under 40% of
+the lidar, or the RTK fit's p95 over 10 cm) prints an error and is served
+unaligned — the run still succeeds. Of the 22 scans delivered, 7 have no
+`map_config.json`. The step takes ~20 s and 1.3–1.8 GB, under what the
+density step needs.
 
 The outlier rule follows the capture's own distribution, not a distance. It
 counts the Gaussians in 2 m cubes (`--cell`), takes the count of the cube the
@@ -214,14 +231,15 @@ Gaussians with any axis over `--max-scale` and runs splat-transform's floater
 filter (`--floaters`, its defaults). So a long or L-shaped street is kept
 whole, and a sky floater above a dense street goes. It always reads
 `original/`, so re-running with other settings never compounds the cuts, and
-it only removes Gaussians — the control points stay valid.
+apart from the alignment it only removes Gaussians — the control points
+stay valid.
 
 With the defaults the KY0917 captures lost 3.7–5.3%. It needs
 `splat-transform` 3.4.x installed globally with npm (the density step uses its
 library) and `node`. It holds a scan in memory: KZ0918-075047 (19.3M
 Gaussians, a 222 MB `.sog`) peaks at 3.5 GB, takes ~2.5 min and serves
-269 MB. Its spec is `specs/process-splat.md`, and
-`./test/run.sh` tests it.
+269 MB. Its specs are `specs/process-splat.md` and `specs/splat-align.md`,
+and `./test/run.sh` tests both.
 
 **The LoD tree.** The app draws a capture through Spark's paged LoD: a tree
 built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a

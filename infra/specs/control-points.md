@@ -64,8 +64,11 @@ This was checked on both KZ0918 scans, not taken from a format document:
 `offsetx/y/z` is the scan's first `gnss.csv` fix in UTM 51N to under 1 mm, and
 every status-4 fix, put through the formula, lies on the capture's splats
 (median distance to the nearest splat 0 m at a 0.5 m grid, none over 5 m).
-`source/<scan>.spz` keeps these coordinates: `process-splat.sh` converts nothing
-(checked by decoding the SPZ positions).
+`source/<scan>.spz` keeps these coordinates: `process-splat.sh` converts
+nothing (checked by decoding the SPZ positions). Its align step
+(`specs/splat-align.md`) moves the Gaussians only within this frame, toward
+where RTK and the lidar put them, so these control points fit the aligned
+capture at least as well as the original.
 
 **`gnss.csv`**: `#timestamp,status,latitude,longitude,altitude,…`. A fix
 without a solution writes `nan` (1,966 of KZ0918-075047's, none of them
@@ -85,8 +88,9 @@ status 4); only status-4 fixes need numbers.
    the line. Non-RTK fixes are never used: KZ0918-075047 has 30% of its fixes
    at status 0, 1, 2 or 5.
 3. **Project.** Each candidate to UTM in the header's zone and hemisphere
-   (Krüger's series to n³ on WGS 84: under 1 mm within a zone), then into the
-   file's frame by the formula above.
+   (Krüger's series to n³ on WGS 84: under 1 mm within a zone; in
+   `scripts/utm.mjs`, shared with `splat-align.mjs`), then into the file's
+   frame by the formula above.
 4. **Pick three.** On the candidates' file x, y: points 1 and 2 are the
    farthest-apart pair, and point 3 is the candidate farthest from the line
    through them. Ties go to the earlier fix, so a re-run picks the same three.

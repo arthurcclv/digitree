@@ -375,6 +375,11 @@ printf '\n== process-splat.sh ==\n'
 processor_ok=1
 ./test/process-splat.sh || processor_ok=0
 
+# --- the align step (splat-align.mjs) -----------------------------------------
+printf '\n== splat-align.mjs ==\n'
+align_ok=1
+./test/splat-align.sh || align_ok=0
+
 # --- the control-point generator (control-points.mjs) ------------------------
 printf '\n== control-points.mjs ==\n'
 generator_ok=1
@@ -385,4 +390,4 @@ printf '\n== build-lod.sh ==\n'
 lod_ok=1
 ./test/build-lod.sh || lod_ok=0
 
-[ "$fail" -eq 0 ] && [ "$processor_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$lod_ok" = 1 ]
+[ "$fail" -eq 0 ] && [ "$processor_ok" = 1 ] && [ "$align_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$lod_ok" = 1 ]

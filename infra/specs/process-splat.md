@@ -1,7 +1,9 @@
-# Spec — `process-splat.sh`: strip outlying, oversized and floating Gaussians
+# Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 7, approved 2026-10-24**: `clean-splat.sh` is renamed
-`process-splat.sh`; see *Changes from revision 6*. Revision 6 (approved
+Status: **revision 8, approved 2026-10-24**: an align step runs before the
+cuts; see *Changes from revision 7* and its own spec, `specs/splat-align.md`.
+Revision 7 (approved 2026-10-24) renamed `clean-splat.sh` to
+`process-splat.sh`. Revision 6 (approved
 2026-10-23) moved the script to `infra/scripts/`. Revision 5 and revision 3
 were both approved 2026-10-22. Revision 3 read a scan's `point_cloud.sog`;
 revision 5 reads its `point_cloud.<ext>` in any single-file format
@@ -11,10 +13,12 @@ splat-transform reads. Revision 4
 
 ## What it is
 
-A script in `infra/scripts/` that cleans one Gaussian splat capture before it is
-served: it drops the Gaussians that lie outside the capture's own distribution,
-the ones that are too large, and the floaters, and writes the result as a file
-Spark can load. Every capture gets the same treatment from one command, with
+A script in `infra/scripts/` that prepares one Gaussian splat capture before
+it is served: it corrects the capture's placement against the scanner's RTK
+and lidar (`splat-align.mjs`, when the scan carries what that needs), drops
+the Gaussians that lie outside the capture's own distribution, the ones that
+are too large, and the floaters, and writes the result as a file Spark can
+load. Every capture gets the same treatment from one command, with
 no per-capture setting to pick.
 
 ```bash
@@ -26,10 +30,14 @@ no per-capture setting to pick.
 
 ```
 data/3dgs/original/<scan>/   one folder per scan, as delivered — read-only
-  point_cloud.<ext>          the splat, in one supported format (below); the
-                             only file the script reads
-  …                          anything else (gnss.csv, poses.csv) is ignored
+  point_cloud.<ext>          the splat, in one supported format (below)
+  gnss.csv, poses.csv,       read by the align step, when every one of them is
+  octree.bin, metadata.json, there and the splat is point_cloud.ply
+  map_config.json
+  …                          anything else is ignored
 data/3dgs/source/<scan>.spz  the scans as served — written only by process-splat.sh
+data/3dgs/source/<scan>.align.json
+                             what the align step did to that .spz
 ```
 
 The `files` service serves `source/` at `/3dgs/`, and `04_splats.sql`
@@ -86,6 +94,21 @@ with `<ext>` one of:
 
 ## What it does, in order
 
+0. **Align** (`scripts/splat-align.mjs`, a node step; spec
+   `specs/splat-align.md`). When the splat is `point_cloud.ply` and the scan
+   has all five files above, fit the trajectory to RTK, match the lidar to
+   the Gaussians, and move every Gaussian by the rigid correction found, in
+   the PLY's own frame, to a temporary `.ply`; the density step reads that.
+   Otherwise it is **skipped**, with the reason printed
+   (`align skipped: no map_config.json`), and the density step reads the
+   original. When the step's validation **fails** (ICP inliers ≤ 40%, or
+   RTK p95 > 0.10 m), it prints `error: <scan>: align failed (<reason>);
+   continuing unaligned` on stderr and goes on with the original: the scan
+   is still served, and the script still exits 0. A file that is there but
+   wrong (a PLY without `epsg`, a Potree encoding other than `DEFAULT`, …)
+   fails the scan, naming the file. Either way the step's report is written
+   to `source/<scan>.align.json`, with `status` `pass`, `corrected`, `fail`
+   or `skipped`.
 1. **Density cut** (`scripts/splat-density-cut.mjs`, a node step). Read the capture,
    put every Gaussian in a cubic voxel of edge `--cell` by its centre, and count
    each voxel. The voxels sit on multiples of `--cell` from the capture's
@@ -98,8 +121,9 @@ with `<ext>` one of:
    `<= --max-scale` (three `-V … lte`).
 3. **Floaters.** `-F` with `--floaters`.
 4. **Write** SPZ **version 3** (`--spz-version 3`).
-5. **Report** the typical density, and Gaussians before, after each cut,
-   after all, and the % removed.
+5. **Report** the align step's status (and how far it moved the capture),
+   the typical density, and Gaussians before, after each cut, after all, and
+   the % removed.
 
 Step 2 is one splat-transform run on the temporary `.ply`, writing a second
 temporary `.ply`, so the size cut's own count can be reported; steps 3–4 are
@@ -147,11 +171,17 @@ script, each with a comment, and each has a test.
 - The output is a gzip-wrapped SPZ v3. Spark 2.3.1 identifies an SPZ only by
   the gzip magic (`getSplatFileType`), so the default v4 output — not gzipped —
   does not load at all.
-- Gaussians are only removed, never moved, so the capture's frame is unchanged
-  and its rows in `control_points.csv` stay valid without re-measuring.
-- The script writes to a temporary file in `source/` and renames it into place
-  only on success; a failed run leaves the previous output untouched and no
-  temporary file behind (the intermediate `.ply` included).
+- Gaussians are moved only by the align step's one rigid correction, within
+  the PLY's own frame (UTM less the header's offset), and otherwise only
+  removed. The frame is unchanged, so rows `control-points.mjs` wrote stay
+  valid — they come from GNSS, which the corrected capture now agrees with.
+  A row **measured by hand** on an aligned capture's file coordinates is off
+  by up to its `correction_max_m` and must be re-measured or regenerated.
+  (As of this revision every row is from GNSS.)
+- The script writes to temporary files in `source/` and renames the
+  `.align.json` and then the `.spz` into place only on success; a failed run
+  leaves the previous outputs untouched and no temporary file behind (the
+  intermediate `.ply` files included).
 - A run that would remove **every** Gaussian fails, naming the scan.
 - Re-running is idempotent: it always reads `original/`, so the cuts never
   compound.
@@ -190,7 +220,17 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
 - a folder with both a `point_cloud.ply` and a `point_cloud.sog` is refused,
   naming both, and so is one with only a `point_cloud.mjs`;
 - a missing scan, a folder with no `point_cloud.<ext>`, a path in `<scan>`,
-  and a non-positive `--cell`, `--min-density` or `--max-scale` are refused.
+  and a non-positive `--cell`, `--min-density` or `--max-scale` are refused;
+- the `.sog` scene is skipped by the align step as not a `point_cloud.ply`,
+  and its `.align.json` says so;
+- with scans from `test/splat-align-scene.mjs`: a misplaced one is served
+  put back (its end wall no longer past 20.2 m) with `corrected` recorded; one
+  whose validation fails prints the error, exits 0, records `fail`, and
+  serves a `.spz` byte-identical to that of the same `point_cloud.ply`
+  skipped for missing files, whose log names them.
+
+The align step's own cases are in `test/splat-align.sh`
+(`specs/splat-align.md`).
 
 ## Docs
 
@@ -199,6 +239,17 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
 step reads any more), the splat layer spec's served counts, and the 2026-10-21
 decision entry in `app/ai/DECISIONS.md`, which has not landed yet and is
 rewritten for the density rule rather than superseded.
+
+## Changes from revision 7
+
+- New step 0, align (`splat-align.mjs`, `specs/splat-align.md`). The script
+  now reads a scan's `gnss.csv`, `poses.csv`, `octree.bin`, `metadata.json`
+  and `map_config.json` when all are there, and writes
+  `source/<scan>.align.json` beside every `.spz`.
+- Gaussians may now be moved, by one rigid correction in the capture's own
+  frame; before, they were only removed.
+- A failed validation is an error line, not a failed run.
+- No new input.
 
 ## Changes from revision 6
 
@@ -256,8 +307,8 @@ on 2026-10-22, the day it was approved.
 - Pinning splat-transform in an `infra/package.json`. The script checks the
   global version instead; a pinned copy is the next step if 3.5 breaks it.
 - Connectivity (`-C`), box (`-B`) or opacity cuts, SH or decimation.
-- The scan's `gnss.csv`, and the KZ0918 scans' frame. (The SOG first
-  delivered was y-up; the PLYs now delivered are z-up and georeferenced, and
-  `control-points.mjs` places them from that.) Its cuts are the same
-  on every axis and it converts no coordinates, so the SPZ keeps the PLY's
-  frame — checked by decoding its positions.
+- Converting the capture's frame. (The SOG first delivered was y-up; the
+  PLYs now delivered are z-up and georeferenced, and `control-points.mjs`
+  places them from that.) Its cuts are the same on every axis, and the align
+  step moves Gaussians only within the PLY's frame, so the SPZ keeps it —
+  checked by decoding its positions.

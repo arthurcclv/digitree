@@ -122,6 +122,8 @@ expect_contains "the typical voxel is main's, and both 8s go" "$log" "1475 gauss
 expect "writes source/<scan>.spz with main, c27, far and sizes less 64" "$(count "$out")" 1395
 expect_contains "reports the size cut on its own" "$log" "1395 kept by size"
 expect_contains "reports what it removed" "$log" "1395 kept after floaters; 80 removed in all (5.4%)"
+expect_contains "skips the align step for a .sog" "$log" "align skipped: point_cloud.sog is not a point_cloud.ply"
+expect "  and says so beside the .spz" "$(node -e 'const j = require(process.argv[1]); console.log(j.status, j.reason)' -- "$SPLATS_SOURCE_DIR/scene.align.json")" "skipped point_cloud.sog is not a point_cloud.ply"
 
 case_ "every coordinate negative"
 if log=$(process mirror); then
@@ -129,7 +131,7 @@ if log=$(process mirror); then
 else
   bad "cleans a mirrored scan" "$log"
 fi
-rm -f "$SPLATS_SOURCE_DIR/mirror.spz"
+rm -f "$SPLATS_SOURCE_DIR"/mirror.*
 
 case_ "every format splat-transform can write"
 for ext in "${formats[@]}"; do
@@ -138,7 +140,7 @@ for ext in "${formats[@]}"; do
   else
     bad "cleans a point_cloud.$ext" "$log"
   fi
-  rm -f "$SPLATS_SOURCE_DIR/as-$ext.spz"
+  rm -f "$SPLATS_SOURCE_DIR"/as-$ext.*
 done
 
 case_ "each cut alone"
@@ -178,7 +180,7 @@ kept=$(sum "$out")
 if log=$(process scene --min-density 2); then bad "fails when nothing is left" "it succeeded"; else ok "fails when nothing is left"; fi
 expect_contains "  says so"                     "$log" "remove every Gaussian"
 expect "  leaves the previous output"           "$(sum "$out")" "$kept"
-expect "  leaves no temporary file"             "$(ls -A "$SPLATS_SOURCE_DIR")" scene.spz
+expect "  leaves no temporary file"             "$(ls -A "$SPLATS_SOURCE_DIR" | tr '\n' ' ')" "scene.align.json scene.spz "
 if log=$(process absent); then bad "refuses a missing scan" "it succeeded"; else expect_contains "refuses a missing scan" "$log" "'absent' is not a scan folder in"; fi
 if log=$(process empty); then bad "refuses a scan with no splat" "it succeeded"; else expect_contains "refuses a scan with no splat" "$log" "'empty' has no point_cloud.<ext>"; fi
 if log=$(process both); then bad "refuses two splats" "it succeeded"; else expect_contains "refuses two splats, naming both" "$log" "more than one splat: point_cloud.ply point_cloud.sog"; fi
@@ -187,6 +189,49 @@ if log=$(process ../original/scene); then bad "refuses a path" "it succeeded"; e
 if log=$(process scene --cell 0); then bad "refuses a zero cell" "it succeeded"; else expect_contains "refuses a zero cell" "$log" "--cell must be a positive number"; fi
 if log=$(process scene --min-density -1); then bad "refuses a negative density" "it succeeded"; else expect_contains "refuses a negative density" "$log" "--min-density must be a positive fraction"; fi
 if log=$(process scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
+
+# Scans with everything the align step reads, from splat-align-scene.mjs (its
+# own suite, test/splat-align.sh, tests the step itself). nomap is unreliable
+# without its map_config.json: the same point_cloud.ply, byte for byte.
+case_ "the align step"
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/aligned" '{"shift":[0.4,0.3,0],"turnDeg":0.3}'
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/unreliable" '{"lidar":"random"}'
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/nomap" '{"lidar":"random","omit":["map_config.json","gnss.csv"]}'
+status_of() { node -e 'console.log(require(process.argv[1]).status)' -- "$SPLATS_SOURCE_DIR/$1.align.json"; }
+if log=$(process aligned); then
+  expect_contains "aligns a scan with every file" "$log" "align corrected: moved up to"
+  expect "  and records it beside the .spz" "$(status_of aligned)" corrected
+  # The cuts read the aligned file. The scene's end walls are at x = ±20 m;
+  # misplaced, one sits at 20.4 m, so ~10,000 Gaussians lie past 20.2 m on
+  # one side or the other. Put back, only the haze (which was never
+  # misplaced, so the correction moves it) is past. Both sides are counted:
+  # which sign -V sees is the trap the CLAUDE.md notes, and does not matter.
+  beyond() {
+    local n total=0 side
+    for side in x,gt,20.2 x,lt,-20.2; do
+      n=$(splat-transform -q --no-tty "$1" -V "$side" --info json null 2> /dev/null | node -e '
+        let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => console.log(s ? JSON.parse(s).numGaussians : 0));')
+      total=$((total + n))
+    done
+    echo "$total"
+  }
+  expect "  the misplaced original has its wall past 20.2 m" "$(( $(beyond "$SPLATS_ORIGINAL_DIR/aligned/point_cloud.ply") > 9000 ))" 1
+  expect "  the served capture has it back at 20 m" "$(( $(beyond "$SPLATS_SOURCE_DIR/aligned.spz") < 200 ))" 1
+else
+  bad "aligns a scan with every file" "$log"
+fi
+if log=$(process unreliable); then
+  ok "a failed validation does not fail the run"
+  expect_contains "  prints the error, naming the scan and the reason" "$log" "error: unreliable: align failed (ICP inliers"
+  expect_contains "  and carries on unaligned" "$log" "continuing unaligned"
+  expect "  records the failure" "$(status_of unreliable)" fail
+else
+  bad "a failed validation does not fail the run" "$log"
+fi
+log=$(process nomap)
+expect_contains "skips a scan missing files, naming them" "$log" "align skipped: no gnss.csv, map_config.json"
+expect "  and records it" "$(status_of nomap)" skipped
+expect "a failed align serves what a skipped one does" "$(sum "$SPLATS_SOURCE_DIR/unreliable.spz")" "$(sum "$SPLATS_SOURCE_DIR/nomap.spz")"
 
 case_ "run from outside infra/"
 # Without the overrides, the default folders are found from the script's own

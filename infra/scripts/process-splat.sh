@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Clean one Gaussian splat capture for serving: drop the Gaussians outside the
-# capture's own distribution, the oversized ones and the floaters, and write it
-# as SPZ v3.
+# Process one Gaussian splat capture for serving: correct its placement
+# against the scanner's RTK and lidar, drop the Gaussians outside the capture's
+# own distribution, the oversized ones and the floaters, and write it as SPZ v3.
 #
 #   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, 0.25 m
 #   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 #
-# Reads the one data/3dgs/original/<scan>/point_cloud.<ext>, which it never
-# writes, and writes data/3dgs/source/<scan>.spz, which the files service
-# serves. Nothing else in the scan folder is read. It always starts from the original, so
-# re-running never compounds the cuts. The spec is specs/process-splat.md.
+# Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, and for the
+# align step gnss.csv, poses.csv, octree.bin, metadata.json and map_config.json
+# — and never writes it. Writes data/3dgs/source/<scan>.spz, which the files
+# service serves, and <scan>.align.json beside it. It always starts from the
+# original, so re-running never compounds the cuts. The specs are
+# specs/process-splat.md and specs/splat-align.md.
 set -euo pipefail
 
 infra=$(cd "$(dirname "$0")/.." && pwd)
@@ -80,6 +82,7 @@ out=$source_dir/$scan.spz
 mkdir -p "$source_dir"
 work=$(mktemp -d "$source_dir/.process-XXXXXX")
 tmp=$source_dir/.$scan.tmp.spz
+align_out=$source_dir/$scan.align.json
 trap 'rm -rf "$work" "$tmp"' EXIT
 
 # Every node argument goes after `--`: without it node reads a negative number
@@ -92,7 +95,38 @@ json() { node -e '
     console.log(process.argv.slice(1).map(k => j[k]).join(" "));
   });' -- "$@"; }
 
-echo "==> $scan (${found[0]}): density in ${cell} m voxels >= ${min_density} x typical, every axis <= ${max_scale} m, floaters $floaters"
+echo "==> $scan (${found[0]}): align, density in ${cell} m voxels >= ${min_density} x typical, every axis <= ${max_scale} m, floaters $floaters"
+
+# 0. Align: correct the capture's placement in its own frame. Skipped, and the
+# cuts run on the original, when a file it needs is not there or validation
+# fails; a file that is there but wrong fails the scan.
+skip_align() {
+  node -e 'console.log(JSON.stringify({ scan: process.argv[1], status: "skipped", reason: process.argv[2] }, null, 2))' \
+    -- "$scan" "$1" > "$work/align.json"
+  echo "    align skipped: $1"
+}
+missing=()
+for f in gnss.csv poses.csv octree.bin metadata.json map_config.json; do
+  [ -f "$original_dir/$scan/$f" ] || missing+=("$f")
+done
+if [ "${found[0]}" != point_cloud.ply ]; then
+  skip_align "${found[0]} is not a point_cloud.ply"
+elif [ ${#missing[@]} -gt 0 ]; then
+  skip_align "no $(IFS=,; echo "${missing[*]}" | sed 's/,/, /g')"
+else
+  rc=0
+  report=$(node "$infra/scripts/splat-align.mjs" -- "$original_dir/$scan" "$work/aligned.ply" "$work/align.json") || rc=$?
+  case $rc in
+    0)
+      in=$work/aligned.ply
+      read -r status moved turned < <(echo "$report" | json status correction_max_m correction_rot_deg)
+      echo "    align $status: moved up to $moved m, turned $turned deg" ;;
+    4)
+      reason=$(echo "$report" | json reason)
+      echo "error: $scan: align failed ($reason); continuing unaligned" >&2 ;;
+    *) die "$scan: the align step failed; $out is unchanged" ;;
+  esac
+fi
 
 # 1. The density cut, which splat-transform's CLI cannot express.
 rc=0
@@ -100,6 +134,7 @@ report=$(node "$infra/scripts/splat-density-cut.mjs" -- "$lib" "$in" "$work/dens
 [ "$rc" = 3 ] && die "$scan: these settings remove every Gaussian; $out is unchanged"
 [ "$rc" = 0 ] || die "$scan: the density step failed; $out is unchanged"
 read -r before typical dense < <(echo "$report" | json before typical kept)
+rm -f "$work/aligned.ply" # ~1 GB per 13M Gaussians; dense.ply holds the rest
 echo "    $before gaussians; typical voxel holds $typical; $dense kept by density"
 
 # One splat-transform run, failing the script with the reason if it fails.
@@ -129,9 +164,10 @@ echo "    $sized kept by size"
 transform "$work/sized.ply" -F "$floaters" --spz-version 3 "$tmp"
 
 after=$(gaussians "$tmp")
+mv "$work/align.json" "$align_out"
 mv "$tmp" "$out"
 
 removed=$((before - after))
 pct=$(node -e 'console.log((100 * process.argv[1] / process.argv[2]).toFixed(1))' -- "$removed" "$before")
 echo "    $after kept after floaters; $removed removed in all ($pct%)"
-echo "    wrote $out"
+echo "    wrote $out and $align_out"

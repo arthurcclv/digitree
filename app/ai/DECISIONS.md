@@ -6,6 +6,47 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-24 — `process-splat.sh` aligns a capture before cleaning it, in the PLY's own frame
+
+**Decision.**
+- **A new step 0, `infra/scripts/splat-align.mjs`**, ports steps 1–2 of the
+  XGRIDS handoff's `align.py`: fit the scan's trajectory to its RTK-fixed
+  GNSS (lever arm from `map_config.json`), carry the lidar `octree.bin` into
+  the PLY's frame, ICP it against the solid Gaussians, and move every
+  Gaussian by the inverse — one rigid correction. Spec
+  `infra/specs/splat-align.md`; `process-splat.md` revision 8.
+- **The frame is not converted.** `align.py` goes on to ENU; this stops in
+  the PLY's own frame (UTM less the header's offset).
+- **Node, not the handoff's Python.** `utm()` moves from
+  `control-points.mjs` to a shared `scripts/utm.mjs`.
+- **A scan the step cannot check is served unaligned, not refused**: one
+  missing any of the five files it reads (7 of the 22 delivered have no
+  `map_config.json`), or one whose validation fails (ICP inliers ≤ 40%, or
+  RTK p95 > 0.10 m) — the latter with an error line, and the run still
+  succeeds. A file that is there but wrong still fails the scan.
+- `source/<scan>.align.json` records what was done to each `.spz`.
+
+**Why.** The frame: `control-points.mjs` and `04_splats.sql` already work in
+it, the loader's similarity fit absorbs everything ENU would remove (−0.62°
+grid convergence, 0.99987 scale), and skipped scans stay in the same frame
+as aligned ones. Node: the infra tools have no Python, and this needs only a
+k-d tree, a 3×3 fit and the UTM series the repo already had. Serving
+unaligned: the user's call — a capture placed by its header, as before, is
+better on the map than none.
+
+**Rules out.** ENU or ECEF coordinates in `source/`. A Python dependency in
+`infra/`. Hand-measured control points on an aligned capture without
+re-measuring after each re-align (it moves by up to `correction_max_m`).
+
+**Revisit / open.** Run on the 15 scans with every file: see the spec's
+table. KZ0918-075047 and the other K2 scans fail on the RTK fit (p95 ~1 m)
+— likely a lever arm or frame difference in K2's `map_config.json`, not
+investigated. KZ0917E is corrected by 1.7 m / 0.44°, more than any other;
+check it by eye. Corrections near 0.10 m read `pass` or `corrected` with the
+sampling seed, as they do in `align.py`.
+
+---
+
 ## 2026-10-24 — `clean-splat.sh` is renamed `process-splat.sh`
 
 **Decision.** `infra/scripts/clean-splat.sh` becomes

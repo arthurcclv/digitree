@@ -32,26 +32,31 @@ sql/03_checks.sql    assertions over the loaded table; fails the load
 sql/04_splats.sql    control points -> validate -> fit -> splats
 load.sh              the whole bring-up in one command
 scripts/             the splat tools, each an explicit step load.sh never runs:
-  process-splat.sh   original/<scan>/point_cloud.<ext> -> density, size and
-                     floater cuts -> source/<scan>.spz
+  process-splat.sh   original/<scan>/ -> align -> density, size and floater
+                     cuts -> source/<scan>.spz + <scan>.align.json
+  splat-align.mjs    process-splat.sh's align step: RTK + lidar -> one rigid
+                     correction, in the PLY's own frame
   splat-density-cut.mjs
                      process-splat.sh's density cut, on splat-transform's library
+  utm.mjs            WGS 84 <-> UTM, shared by control-points and splat-align
   control-points.mjs original/<scan>/gnss.csv + point_cloud.ply's header ->
                      the scan's rows of control_points.csv
   build-lod.sh       source/<scan>.spz -> Spark's build-lod (v2.3.1, in
                      Docker) -> lod/<scan>-lod.rad + <scan>-lod-<n>.radc,
                      the chunked tree the app draws
-specs/               specs for the scripts (process-splat.md, control-points.md,
-                     build-lod.md)
+specs/               specs for the scripts (process-splat.md, splat-align.md,
+                     control-points.md, build-lod.md)
 test/                fixture CSVs and run.sh, the loader's test suite;
-                     process-splat.sh, the splat processor's; control-points.sh,
-                     the control-point generator's; build-lod.sh, the LoD
-                     builder's
+                     process-splat.sh, the splat processor's; splat-align.sh
+                     (+ splat-align-scene.mjs, its scan generator), the align
+                     step's; control-points.sh, the control-point
+                     generator's; build-lod.sh, the LoD builder's
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 data/3dgs/           splat captures and control_points.csv (gitignored):
                      original/<scan>/ as delivered, source/<scan>.spz as
-                     cleaned, lod/<scan>-lod.rad and -lod-<n>.radc as drawn
+                     aligned and cleaned (+ .align.json), lod/<scan>-lod.rad
+                     and -lod-<n>.radc as drawn
 ```
 
 Commands (run from `infra/`): `./load.sh` does everything, `./test/run.sh` runs
@@ -97,7 +102,8 @@ right way to start over.
   correction belongs in `02_load.sql` so it is reproducible and reviewable. The
   one thing a contributor *adds* there is a drop-in CSV under `data/custom/` —
   and the loader still never writes to it, in either direction. The one
-  exception is `data/3dgs/source/`, which `process-splat.sh` owns: it is derived
+  exception is `data/3dgs/source/` — the `.spz` files and their
+  `.align.json` — which `process-splat.sh` owns: it is derived
   from `data/3dgs/original/` (read-only, like the extracts) and can always be
   rebuilt from it. Nothing else writes `source/`, and a capture is never edited
   there by hand — change the script's settings and re-run it. The second
@@ -107,6 +113,15 @@ right way to start over.
   The third is `data/3dgs/lod/`, which `build-lod.sh` owns: derived from
   `source/`, rebuilt by re-running it, never edited by hand. Its spec is
   `specs/build-lod.md`.
+- **The align step works in the PLY's own frame and never converts it.**
+  `splat-align.mjs` moves Gaussians by one rigid correction within UTM less
+  the header's offset, so `control-points.mjs` and the loader need no change;
+  the handoff's `align.py` converts to ENU, and that part was left out on
+  purpose. Its sampling is seeded, so a re-run is byte-identical, but a
+  correction near 0.10 m can read `pass` or `corrected` with the seed — it
+  is applied either way. A scan missing a file it reads, or failing its
+  validation, is served unaligned, not refused. Its spec is
+  `specs/splat-align.md`.
 - **The splat processor's traps live in `process-splat.sh` and
   `splat-density-cut.mjs`, with comments and tests**: `-V` compares `scale_*` in metres though the file
   stores log scale; a negative number passed to `node` without `--` is read as
@@ -180,8 +195,11 @@ them — not the loader (`file x = X`, …, in one place), not the app, which
 draws the file as stored. `control-points.mjs` gets there through the PLY
 header's georeference (UTM less `offsetx/y/z`), never through `poses.csv`,
 which is in a frame of its own (the KZ0918 poses are turned 21.9° and 91.3°
-from their files). The header is trusted, not checked against the vertices:
-it was verified on the KZ0918 scans by hand. No check can catch a reading turned about up: a
+from their files; `splat-align.mjs` reads them, but only to fit them to RTK,
+and writes nothing in their frame). The header is trusted, not checked against the vertices:
+it was verified on the KZ0918 scans by hand. (Where the align step runs, it
+does check the vertices against RTK and the lidar, and moves them to the
+header's frame; its `.align.json` says how far.) No check can catch a reading turned about up: a
 rotation is what the fit solves for, so the capture fits and lands turned.
 `test/run.sh` keeps a case that shows it; a wrong frame is found only by eye. It fits them with a 2D similarity on a local projection of the WGS 84
 ellipsoid, in true metres, because a capture is metric. (It used to fit on the

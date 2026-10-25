@@ -11,6 +11,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { utm } from './utm.mjs';
 
 const ORIGINAL = process.env.SPLATS_ORIGINAL_DIR ?? 'data/3dgs/original';
 const OUT = process.env.SPLATS_CONTROL_POINTS ?? 'data/3dgs/control_points.csv';
@@ -94,26 +95,6 @@ async function georeference(scan) {
     if (c.has(`scale${axis}`) && field(`scale${axis}`) !== 1) fail(`${scan}: ${PLY} has scale${axis} ${c.get(`scale${axis}`)}; only 1 is supported`);
   }
   return { epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')] };
-}
-
-// WGS 84 to UTM, Krüger's series to n³: under 1 mm within a zone.
-const A_WGS84 = 6378137, F_WGS84 = 1 / 298.257223563, K0 = 0.9996;
-function utm(latDeg, lonDeg, zone, north) {
-  const n = F_WGS84 / (2 - F_WGS84);
-  const A = (A_WGS84 / (1 + n)) * (1 + n ** 2 / 4 + n ** 4 / 64);
-  const alpha = [n / 2 - (2 * n ** 2) / 3 + (5 * n ** 3) / 16, (13 * n ** 2) / 48 - (3 * n ** 3) / 5, (61 * n ** 3) / 240];
-  const e = (2 * Math.sqrt(n)) / (1 + n);
-  const phi = (latDeg * Math.PI) / 180;
-  const lam = ((lonDeg - (zone * 6 - 183)) * Math.PI) / 180;
-  const t = Math.sinh(Math.atanh(Math.sin(phi)) - e * Math.atanh(e * Math.sin(phi)));
-  const xi = Math.atan2(t, Math.cos(lam));
-  const eta = Math.atanh(Math.sin(lam) / Math.sqrt(1 + t * t));
-  let E = eta, N = xi;
-  alpha.forEach((a, j) => {
-    E += a * Math.cos(2 * (j + 1) * xi) * Math.sinh(2 * (j + 1) * eta);
-    N += a * Math.sin(2 * (j + 1) * xi) * Math.cosh(2 * (j + 1) * eta);
-  });
-  return [500000 + K0 * A * E, K0 * A * N + (north ? 0 : 10000000)];
 }
 
 // gnss.csv: #timestamp,status,latitude,longitude,altitude,… A fix without a
