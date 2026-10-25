@@ -16,7 +16,9 @@ import { utm } from './utm.mjs';
 
 const ORIGINAL = process.env.SPLATS_ORIGINAL_DIR ?? 'data/3dgs/original';
 const OUT = process.env.SPLATS_CONTROL_POINTS ?? 'data/3dgs/control_points.csv';
-const HEADER = 'SplatID,File,Point,X,Y,Z,LAT,LON,H,Note';
+const HEADER = 'SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note';
+// Revision 8's, without ALT: upgraded, not refused (specs/control-points.md).
+const OLD_HEADER = 'SplatID,File,Point,X,Y,Z,LAT,LON,H,Note';
 const GNSS_HEADER = '#timestamp,status,latitude,longitude,altitude,';
 const RTK_FIXED = '4';
 const MIN_SPREAD_M = 2; // the loader's own minimums, caught here instead of at load
@@ -104,7 +106,11 @@ async function georeference(scan) {
     if (c.has(`shift${axis}`) && field(`shift${axis}`) !== 0) fail(`${scan}: ${PLY} has shift${axis} ${c.get(`shift${axis}`)}; only 0 is supported`);
     if (c.has(`scale${axis}`) && field(`scale${axis}`) !== 1) fail(`${scan}: ${PLY} has scale${axis} ${c.get(`scale${axis}`)}; only 1 is supported`);
   }
-  return { epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')] };
+  return {
+    epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')],
+    // ALT: the file origin's altitude, written as the header gives it.
+    offsetzRaw: c.get('offsetz'),
+  };
 }
 
 // gnss.csv: #timestamp,status,latitude,longitude,altitude,… A fix without a
@@ -295,7 +301,7 @@ async function rowsFor(scan) {
   // ground on the map's through mean(H − scale·Z).
   const a = await antennaHeight(scan, candidates);
   return points.map((p, i) =>
-    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, fixed3(a.h),
+    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, geo.offsetzRaw, fixed3(a.h),
       `gnss ${p.tRaw}; EPSG:${geo.epsg}; antenna over ${a.kept} of ${a.of} samples`].join(','));
 }
 
@@ -305,8 +311,20 @@ const scans = scansToRun();
 let kept = [];
 if (existsSync(OUT)) {
   const [head, ...rest] = (await readFile(OUT, 'utf8')).split('\n');
-  if (head.replace(/\r$/, '') !== HEADER) fail(`${OUT} does not start with the header ${HEADER}; left untouched`);
+  const h = head.replace(/\r$/, '');
+  if (h !== HEADER && h !== OLD_HEADER) fail(`${OUT} does not start with the header ${HEADER}; left untouched`);
   kept = rest.filter((l) => l.trim() !== '' && !scans.includes(l.slice(0, l.indexOf(','))));
+  // An old file gains an empty ALT after LON, its eighth field. The first
+  // eight hold no free text, so the eighth comma is LON's end.
+  if (h === OLD_HEADER) {
+    kept = kept.map((l) => {
+      let at = -1;
+      for (let k = 0; k < 8 && (at = l.indexOf(',', at + 1)) >= 0; k++);
+      if (at < 0) fail(`${OUT}: row '${l}' has fewer than nine fields; left untouched`);
+      return `${l.slice(0, at + 1)},${l.slice(at + 1)}`;
+    });
+    console.log(`upgrading ${OUT} to the header with ALT`);
+  }
 }
 
 const generated = [];

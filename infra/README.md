@@ -266,8 +266,8 @@ latitude/longitude. The loader fits a rotation, a scale and a shift from
 them. One row per point:
 
 ```
-SplatID,File,Point,X,Y,Z,LAT,LON,H,Note
-KY0917A,KY0917A.spz,1,12.40,-3.85,0.02,25.034512,121.560841,,NE corner of the low wall
+SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note
+KY0917A,KY0917A.spz,1,12.40,-3.85,0.02,25.034512,121.560841,,,NE corner of the low wall
 ```
 
 | column | what to enter |
@@ -277,6 +277,7 @@ KY0917A,KY0917A.spz,1,12.40,-3.85,0.02,25.034512,121.560841,,NE corner of the lo
 | `Point` | a label for the point, unique within the capture (`1`, `2`, `3`, …) |
 | `X`, `Y`, `Z` | the point in the capture's own coordinates **as stored** (metres): z-up, the ground is X/Y — the frame of its scan's `poses.csv` |
 | `LAT`, `LON` | the same point in WGS84 decimal degrees |
+| `ALT` | the altitude of the capture file's origin, the same on every row (a scan's PLY `offsetz`, written by `control-points.mjs`); blank when unknown. Recorded, not used to place the capture |
 | `H` | the point's height above the ground in metres; blank for a point on the ground |
 | `Note` | what the point is, for whoever checks it later; quote it if it has a comma |
 

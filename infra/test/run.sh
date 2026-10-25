@@ -263,6 +263,7 @@ case_ "control points from known placements"
 schema
 out=$(load_splats ok.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
 expect_query "loads both captures"              "SELECT count(*) FROM splats" 2
+expect_query "  SYN with an ALT, FOUR with it blank" "SELECT string_agg(splat_id, ',' ORDER BY splat_id) FROM splats" "FOUR,SYN"
 expect_query "ids follow splat_id"              "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
 expect_query "recovers the origin within 1 mm" \
   "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.5608, 25.0345), 4326)::geography) < 0.001 FROM splats WHERE splat_id='SYN'" t
@@ -332,6 +333,9 @@ splat_rejects "an upper-case .SPZ"              upper-ext.csv      "File 'syn.SP
 splat_rejects "a Point given twice"             dup-point.csv      "DUP: Point 1 appears 2 times (lines 2, 3)"
 splat_rejects "one file, two captures"          shared-file.csv    "shared.spz is used by 2 captures"
 splat_rejects "a coordinate that is not a number" not-a-number.csv "line 2 (NAN): X 'N/A' is not a number"
+splat_rejects "an ALT that is not a number"     alt-not-a-number.csv "line 2 (NAN): ALT 'high' is not a number"
+splat_rejects "ALTs that differ in a capture"   alt-differs.csv    "NAN: its rows give 2 different ALTs (26.9, 27.4)"
+splat_rejects "the header from before ALT"      old-header.csv     "could not be loaded"
 splat_rejects "a capture with no LoD built"      missing-lod.csv    "NOLOD: its LoD nolod-lod.rad is not in /test/fixtures/splats/lod (run ./scripts/build-lod.sh nolod)"
 # The same kind of points read y-up, as a viewer shows them (X = −x, Y = z,
 # Z = y): turned a quarter-turn on their side, they cannot be fitted by a

@@ -41,7 +41,8 @@ cp -R test/fixtures/control-points/T1 "$SPLATS_ORIGINAL_DIR/"
 scene() { node test/control-points-scene.mjs -- "$SPLATS_ORIGINAL_DIR/$1" "${2:-}"; }
 scene T1
 
-HEADER='SplatID,File,Point,X,Y,Z,LAT,LON,H,Note'
+HEADER='SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note'
+OLD_HEADER='SplatID,File,Point,X,Y,Z,LAT,LON,H,Note'
 GNSS_HEAD='#timestamp,status,latitude,longitude,altitude,gnss_type,undulation,pdop,hdop,vdop,var_x2,var_y2,var_z2,satellite_num,satellite_utc'
 gen() { node scripts/control-points.mjs "$@" 2>&1; }
 row() { grep "^T1,T1.spz,$1," "$SPLATS_CONTROL_POINTS" | cut -d, -f"$2"; }
@@ -86,14 +87,16 @@ expect "keeps the header"                 "$(head -1 "$SPLATS_CONTROL_POINTS")" 
 # file's origin: our UTM agrees with theirs to the millimetre.
 expect "the fix at the header's offset is the file's origin" "$(row 1 4-6)" "0.000,0.000,0.000"
 expect "1 and 2 are the widest pair, 3 the farthest off its line" \
-  "$(cut -d, -f10 "$SPLATS_CONTROL_POINTS" | tail -3 | cut -d' ' -f2 | tr -d ';' | tr '\n' ' ')" "100.020000 102.020000 101.020000 "
+  "$(cut -d, -f11 "$SPLATS_CONTROL_POINTS" | tail -3 | cut -d' ' -f2 | tr -d ';' | tr '\n' ' ')" "100.020000 102.020000 101.020000 "
 # Fix (40, 30) at 27.6006 m: every axis distinct and non-zero, so a swap or
 # a negation shows.
 expect "X, Y, Z are the fix in the file's frame" "$(row 2 4-6)" "40.000,30.000,0.700"
 expect "names the cleaned file"           "$(row 1 2)" "T1.spz"
 expect "takes LAT/LON as written"         "$(row 2 7-8)" "25.039637300,121.541268665"
-expect "H is the antenna height, on every point" "$(cut -d, -f9 "$SPLATS_CONTROL_POINTS" | tail -3 | tr '\n' ' ')" "1.600 1.600 1.600 "
-expect "notes the fix, the CRS and the samples" "$(row 3 10)" "gnss 101.020000; EPSG:32651; antenna over 12 of 12 samples"
+expect "ALT is the header's offsetz as written, on every point" \
+  "$(cut -d, -f9 "$SPLATS_CONTROL_POINTS" | tail -3 | tr '\n' ' ')" "26.9006000000000007 26.9006000000000007 26.9006000000000007 "
+expect "H is the antenna height, on every point" "$(cut -d, -f10 "$SPLATS_CONTROL_POINTS" | tail -3 | tr '\n' ' ')" "1.600 1.600 1.600 "
+expect "notes the fix, the CRS and the samples" "$(row 3 11)" "gnss 101.020000; EPSG:32651; antenna over 12 of 12 samples"
 expect_contains "reports the georeference" "$out" "EPSG:32651, offset 352796.828723579 2770099.747090695 26.9006"
 expect_contains "reports the spread"      "$out" "1–2 50.00 m"
 expect_contains "  and the RTK fixes"     "$out" "12 RTK fixes"
@@ -129,12 +132,12 @@ scan50() {
   scan "$name" "${pairs[@]}"
   scene "$name" "{\"recenter\":true${2:+,$2}}"
 }
-h_of() { SPLATS_CONTROL_POINTS=$work/$1.csv gen "$1" > /dev/null && cut -d, -f9 "$work/$1.csv" | tail -3 | sort -u | tr '\n' ' '; }
+h_of() { SPLATS_CONTROL_POINTS=$work/$1.csv gen "$1" > /dev/null && cut -d, -f10 "$work/$1.csv" | tail -3 | sort -u | tr '\n' ' '; }
 
 case_ "the antenna height"
 scan50 FLAT
 expect "a ground 1.600 m below every fix"  "$(h_of FLAT)" "1.600 "
-expect "  noted over 50 of 50 samples"     "$(tail -1 "$work/FLAT.csv" | cut -d, -f10 | sed 's/.*; antenna/antenna/')" "antenna over 50 of 50 samples"
+expect "  noted over 50 of 50 samples"     "$(tail -1 "$work/FLAT.csv" | cut -d, -f11 | sed 's/.*; antenna/antenna/')" "antenna over 50 of 50 samples"
 scan50 FLOAT '"floaters":true'
 expect "  with floaters 2.0–2.9 m below"   "$(h_of FLOAT)" "1.600 "
 scan50 ROOF '"roof":true'
@@ -152,12 +155,24 @@ rm -f "$work"/{FLAT,FLOAT,ROOF,CLEAR,ALL,DEEP}.csv
 rm -rf "$SPLATS_ORIGINAL_DIR"/{FLAT,FLOAT,ROOF,CLEAR,ALL,DEEP}
 
 case_ "merging into an existing file"
-printf '%s\nKY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,,"a note, quoted"\r\nT1,T1.spz,9,0,0,0,25,121,,stale\n' "$HEADER" > "$SPLATS_CONTROL_POINTS"
+printf '%s\nKY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,,,"a note, quoted"\r\nT1,T1.spz,9,0,0,0,25,121,,,stale\n' "$HEADER" > "$SPLATS_CONTROL_POINTS"
 gen T1 > /dev/null
 expect "keeps another capture's row byte for byte" \
-  "$(sed -n 2p "$SPLATS_CONTROL_POINTS")" "$(printf 'KY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,,"a note, quoted"\r')"
+  "$(sed -n 2p "$SPLATS_CONTROL_POINTS")" "$(printf 'KY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,,,"a note, quoted"\r')"
 expect "replaces the scan's old rows"     "$(grep -c '^T1,' "$SPLATS_CONTROL_POINTS")" 3
 expect "  and drops the stale one"        "$(grep -c stale "$SPLATS_CONTROL_POINTS" || true)" 0
+before=$(shasum "$SPLATS_CONTROL_POINTS")
+gen T1 > /dev/null
+expect "a re-run gives the same file"     "$(shasum "$SPLATS_CONTROL_POINTS")" "$before"
+
+case_ "upgrading a file from before ALT"
+printf '%s\nKY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,0.5,"a note, quoted"\r\nT1,T1.spz,9,0,0,0,25,121,,stale\n' "$OLD_HEADER" > "$SPLATS_CONTROL_POINTS"
+out=$(gen T1) || bad "upgrades the file" "$out"
+expect "takes the header with ALT"        "$(head -1 "$SPLATS_CONTROL_POINTS")" "$HEADER"
+expect "gives a kept row an empty ALT after LON, its Note as it was" \
+  "$(sed -n 2p "$SPLATS_CONTROL_POINTS")" "$(printf 'KY0917A,KY0917A.spz,1,-1.247,-0.367,-4.934,25.038566,121.539141,,0.5,"a note, quoted"\r')"
+expect "  and replaces the scan's old rows" "$(grep -c '^T1,' "$SPLATS_CONTROL_POINTS")" 3
+expect_contains "  and says so"          "$out" "upgrading"
 before=$(shasum "$SPLATS_CONTROL_POINTS")
 gen T1 > /dev/null
 expect "a re-run gives the same file"     "$(shasum "$SPLATS_CONTROL_POINTS")" "$before"

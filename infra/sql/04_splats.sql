@@ -45,7 +45,7 @@ DROP TABLE IF EXISTS stg_splat_csv, stg_splat_points, stg_splat_en, stg_splat_fi
 -- the header).
 CREATE UNLOGGED TABLE stg_splat_csv (
   "SplatID" text, "File" text, "Point" text,
-  "X" text, "Y" text, "Z" text, "LAT" text, "LON" text, "H" text, "Note" text,
+  "X" text, "Y" text, "Z" text, "LAT" text, "LON" text, "ALT" text, "H" text, "Note" text,
   line bigint GENERATED ALWAYS AS IDENTITY
 );
 
@@ -57,7 +57,7 @@ SET LOCAL splats.max_rms_m TO :'splats_max_rms_m';
 DO $$
 DECLARE
   csv  text := current_setting('splats.csv');
-  head text[] := ARRAY['SplatID','File','Point','X','Y','Z','LAT','LON','H','Note'];
+  head text[] := ARRAY['SplatID','File','Point','X','Y','Z','LAT','LON','ALT','H','Note'];
 BEGIN
   -- missing_ok: no control points at all is the normal state of a fresh
   -- checkout, not an error. The table stays empty and the map shows no splats.
@@ -78,20 +78,25 @@ END $$;
 -- Every field is trimmed: a hand-filled CSV picks up stray spaces after commas
 -- (" 121.538950"), and those are typing, not data. Numbers are guarded by a
 -- regex before the cast, so one 'N/A' becomes a named problem below instead of
--- an anonymous cast error. Note is never read.
+-- an anonymous cast error. Note is never read. ALT is checked, never used:
+-- it records the altitude of the file's origin (a scan's PLY offsetz), for
+-- whoever needs a point's GNSS altitude back (ALT + Z), and nothing here
+-- places a capture by it.
 CREATE UNLOGGED TABLE stg_splat_points AS
 SELECT line + 1                         AS csv_line,
        nullif(btrim("SplatID"), '')     AS splat_id,
        nullif(btrim("File"), '')        AS file,
        nullif(btrim("Point"), '')       AS point,
        btrim("X") AS x_raw, btrim("Y") AS y_raw, btrim("Z") AS z_raw,
-       btrim("LAT") AS lat_raw, btrim("LON") AS lon_raw, btrim("H") AS h_raw
+       btrim("LAT") AS lat_raw, btrim("LON") AS lon_raw, btrim("ALT") AS alt_raw,
+       btrim("H") AS h_raw
 FROM stg_splat_csv;
 
 ALTER TABLE stg_splat_points
   ADD COLUMN x double precision, ADD COLUMN y double precision,
   ADD COLUMN z double precision, ADD COLUMN lat double precision,
-  ADD COLUMN lon double precision, ADD COLUMN h double precision;
+  ADD COLUMN lon double precision, ADD COLUMN alt double precision,
+  ADD COLUMN h double precision;
 
 UPDATE stg_splat_points SET
   x   = CASE WHEN x_raw   ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN x_raw::double precision END,
@@ -99,6 +104,7 @@ UPDATE stg_splat_points SET
   z   = CASE WHEN z_raw   ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN z_raw::double precision END,
   lat = CASE WHEN lat_raw ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN lat_raw::double precision END,
   lon = CASE WHEN lon_raw ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN lon_raw::double precision END,
+  alt = CASE WHEN alt_raw ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN alt_raw::double precision END,
   -- A blank H is a point on the ground, which is what most control points are.
   h   = CASE WHEN coalesce(h_raw, '') = '' THEN 0
              WHEN h_raw ~ '^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$' THEN h_raw::double precision END;
@@ -138,6 +144,7 @@ UPDATE stg_splat_points SET file_x = x, file_y = y, file_z = z;
 --             pair the other way round is a header error above, not a range
 --             error here.
 --   H         a number, or blank for 0.
+--   ALT       a number, or blank.
 DO $$
 DECLARE
   dir      text := current_setting('splats.dir');
@@ -169,6 +176,9 @@ BEGIN
            LATERAL (VALUES ('X', x_raw, x), ('Y', y_raw, y), ('Z', z_raw, z),
                            ('LAT', lat_raw, lat), ('LON', lon_raw, lon), ('H', h_raw, h)) AS v(col, raw, val)
       WHERE val IS NULL
+    UNION ALL
+    SELECT csv_line, format('line %s (%s): ALT %L is not a number', csv_line, splat_id, alt_raw)
+      FROM stg_splat_points WHERE coalesce(alt_raw, '') <> '' AND alt IS NULL
     UNION ALL
     SELECT csv_line, format('line %s (%s): LAT %s is outside [-90, 90]', csv_line, splat_id, lat)
       FROM stg_splat_points WHERE lat NOT BETWEEN -90 AND 90
@@ -215,6 +225,13 @@ BEGIN
     SELECT format('%s: its rows name %s files (%s)', splat_id, count(DISTINCT file),
                   string_agg(DISTINCT file, ', ')) AS msg
       FROM stg_splat_points GROUP BY splat_id HAVING count(DISTINCT file) > 1
+    UNION ALL
+    -- One origin per capture, so one ALT: blank on every row, or one number.
+    SELECT format('%s: its rows give %s different ALTs (%s)', splat_id,
+                  count(DISTINCT coalesce(alt::text, 'blank')),
+                  string_agg(DISTINCT coalesce(alt::text, 'blank'), ', '))
+      FROM stg_splat_points GROUP BY splat_id
+      HAVING count(DISTINCT coalesce(alt::text, 'blank')) > 1
     UNION ALL
     SELECT format('%s is used by %s captures (%s)', file, count(DISTINCT splat_id),
                   string_agg(DISTINCT splat_id, ', '))

@@ -1,8 +1,10 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 8 (a capture's origin
-> is read from exact `lng`/`lat` properties, not the tile's quantized point) —
-> approved 2026-10-25;** see *Changes in revision 8*.
+> **Status: approved 2026-10-20, implemented. Revision 9 (`control_points.csv`
+> gains `ALT`, the altitude of the capture file's origin) — approved
+> 2026-10-25;** see *Changes in revision 9*.
+> Revision 8 (a capture's origin is read from exact `lng`/`lat` properties,
+> not the tile's quantized point) — approved 2026-10-25.
 > Revision 7 (the loader takes `.spz` only) — approved 2026-10-23.
 > Revision 6 (fit on WGS 84, draw with per-axis metres) — approved 2026-10-23.
 > Revision 5 (paged LoD: a tree built offline, streamed into a fixed page
@@ -329,10 +331,10 @@ three points per capture. The header is matched exactly
 are rejected rather than loaded:
 
 ```
-SplatID,File,Point,X,Y,Z,LAT,LON,H,Note
-KY0917A,KY0917A.spz,1,12.40,3.85,0.02,25.034512,121.560841,0,NE corner of the low wall
-KY0917A,KY0917A.spz,2,-18.10,-40.27,0.05,25.034790,121.560527,0,lamp post base
-KY0917A,KY0917A.spz,3,55.62,-22.90,0.11,25.034655,121.561212,0,gate pillar, west side
+SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note
+KY0917A,KY0917A.spz,1,12.40,3.85,0.02,25.034512,121.560841,,0,NE corner of the low wall
+KY0917A,KY0917A.spz,2,-18.10,-40.27,0.05,25.034790,121.560527,,0,lamp post base
+KY0917A,KY0917A.spz,3,55.62,-22.90,0.11,25.034655,121.561212,,0,gate pillar, west side
 ```
 
 (The values above are made up, to show the format.)
@@ -344,6 +346,7 @@ KY0917A,KY0917A.spz,3,55.62,-22.90,0.11,25.034655,121.561212,0,gate pillar, west
 | `Point` | the point's label within the capture (`1`, `2`, `3`, or a name) | unique within the capture |
 | `X`, `Y`, `Z` | the point in the capture's own coordinates, **as stored** (metres): z-up, the ground is X/Y. See *One frame, no conversion* | finite |
 | `LAT`, `LON` | WGS84 of the same point, in decimal degrees | in range |
+| `ALT` | the altitude, in metres, of the capture file's origin (local `(0, 0, 0)`): for a scan, its PLY header's `offsetz`, in `gnss.csv`'s altitude datum. The same on every row of the capture. A record only: not used to place the capture | blank, or a number, the same on every row of the capture |
 | `H` | the point's height above the ground, in metres | finite; blank = 0 (a point on the ground) |
 | `Note` | what the point is, for whoever checks it later | free text, ignored by the loader |
 
@@ -456,8 +459,10 @@ tree loader: `splats_csv` (default `/data/3dgs/control_points.csv`),
   swapped LAT/LON header, two points, collinear points, coincident points, a
   mirrored capture (fails on `rms_m`), a scale of 1.5, a `File` that differs
   between rows, a missing file, a path in `File`, a `File` that is not `.spz`
-  (a `.txt`, a `.ply`, an upper-case `.SPZ`), duplicate `Point`, and blank
-  `H` taking 0. For the exact synthetic capture it also checks that `lng`
+  (a `.txt`, a `.ply`, an upper-case `.SPZ`), duplicate `Point`, blank
+  `H` taking 0, a non-numeric `ALT`, an `ALT` that differs between a
+  capture's rows, and the revision-8 header without `ALT` (refused like any
+  wrong header). Blank `ALT` loads. For the exact synthetic capture it also checks that `lng`
   and `lat` equal `ST_X(geom)` and `ST_Y(geom)` exactly.
 
 ### Martin: the `splats` source
@@ -800,6 +805,26 @@ table's `lng`/`lat`.
    deploying.
 3. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 9
+
+- **`control_points.csv` gains `ALT`, after `LON`.** It records the altitude
+  of the capture file's origin: for a scan, its PLY header's `offsetz`. That
+  number is what turns the file's z back into a GNSS altitude
+  (`altitude = offsetz + z`). The CSV is the one place a capture's
+  georeference is written down outside its PLY, and without `ALT` the vertical
+  part was lost. The header becomes
+  `SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note`, still matched exactly.
+- The loader validates `ALT` (blank or a number, one value per capture) and
+  does not use it. The fit, the `splats` table, the tiles and the app are
+  unchanged.
+- A file with the old header is refused by the loader, naming the expected
+  header. `control-points.mjs` upgrades one when it writes
+  (`infra/specs/control-points.md`, revision 9).
+- The loader's fixtures gain the column (blank).
+- Not done:
+  - Storing `ALT` in `splats` or publishing it. Nothing reads it yet, and
+    the map has no terrain to set it against.
 
 ## Changes in revision 8
 

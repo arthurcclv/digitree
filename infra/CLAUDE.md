@@ -192,7 +192,9 @@ north. Rename any of these together with the app's schema and spec.
 
 The placements are **solved, not typed**: `04_splats.sql` fits each capture
 from its rows in `data/3dgs/control_points.csv`
-(`SplatID,File,Point,X,Y,Z,LAT,LON,H,Note`, at least three points per capture).
+(`SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note`, at least three points per capture;
+`ALT` is the altitude of the file's origin, a scan's PLY `offsetz`, checked
+by the loader and never used by it).
 X/Y/Z are **file coordinates as stored**: a capture's file and its control
 points share one frame, z-up, the ground on x/y, and nothing converts between
 them — not the loader (`file x = X`, …, in one place), not the app, which

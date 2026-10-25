@@ -1,7 +1,8 @@
 # Spec — `control-points.mjs`: control points from a scan's georeference
 
-Status: **revision 8 — approved 2026-10-25.** See *Changes from
-revision 7*. Revision 7 — approved 2026-10-23.
+Status: **revision 9 — approved 2026-10-25.** See *Changes from
+revision 8*. Revision 8 — approved 2026-10-25. Revision 7 — approved
+2026-10-23.
 
 ## What it is
 
@@ -139,6 +140,7 @@ status 4); only status-4 fixes need numbers.
    | `Point` | `1`, `2`, `3` |
    | `X`, `Y`, `Z` | the fix's file x, y, z, 3 decimals |
    | `LAT`, `LON` | the fix's `latitude`, `longitude` as written in `gnss.csv` |
+   | `ALT` | the header's `offsetz` as written (e.g. `26.9006000000000007`): the altitude of the file's origin, the same on all three points |
    | `H` | the scan's antenna height (step 6), 3 decimals, the same on all three points |
    | `Note` | `gnss <timestamp>; EPSG:<epsg>; antenna over <k> of <m> samples` — no commas, so it needs no quoting |
 
@@ -204,11 +206,17 @@ does not.
 ## Output contract
 
 - `H` is never blank in a row this writes.
-- `control_points.csv` keeps its header `SplatID,File,Point,X,Y,Z,LAT,LON,H,Note`;
-  a file with any other header is refused, untouched. A missing file is
-  created with that header.
+- `control_points.csv` has the header `SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note`.
+  A missing file is created with that header.
+- **A file with the revision-8 header** (`SplatID,File,Point,X,Y,Z,LAT,LON,H,Note`,
+  no `ALT`) is upgraded as it is written. The new header replaces the old
+  one, and each kept row gains an empty `ALT` after its eighth field. The
+  first eight fields of a row hold no quoted commas, since `Note` is the only
+  free text, so that is the only change to the row. A file with any other
+  header is refused, untouched.
 - Rows whose `SplatID` is a scan being processed are removed; every other row
-  (e.g. the hand-measured KY0917 captures) is kept byte for byte, in order.
+  (e.g. the hand-measured KY0917 captures) is kept byte for byte, in order,
+  apart from that upgrade.
   The new rows are appended, scans in the order given.
 - Written to a temporary file beside it and renamed into place only when every
   scan succeeded: one failing scan leaves the file untouched.
@@ -259,7 +267,12 @@ that ground.
   fixes, and X/Y/Z are their projected values;
 - the farthest fix is status 2: it is not picked; a status-0 `nan` fix is
   skipped, not an error; a status-4 fix with `nan` is refused, naming the line;
-- LAT/LON are written as in `gnss.csv`;
+- LAT/LON are written as in `gnss.csv`, and ALT as the header's `offsetz`
+  is written (T1: `26.9006000000000007` on all three rows);
+- an existing file with the revision-8 header, holding a KY row with a
+  quoted, comma-bearing Note, is upgraded: the new header, and the KY row
+  with an empty ALT after LON and its Note unchanged. A re-run is
+  identical;
 - a southern-hemisphere EPSG (327xx) is projected with the false northing;
 - an existing file with a KY row, and an older row of the same scan: the KY
   row is kept byte for byte, the old row is replaced, and a re-run is
@@ -294,6 +307,9 @@ that ground.
   the fixes lands at 0 m.
 
 ## Docs
+
+Revision 9: the header in `infra/README.md` and `infra/CLAUDE.md` gains
+`ALT`, with one line on what it is.
 
 Revision 8:
 
@@ -349,6 +365,16 @@ Earlier revisions:
 - The 3dgs-viewer (another repository) uses `U = s·Z` and ignores `H`. It
   stays an antenna height low until it adds the loader's
   `mean(H − s·Z)`.
+
+## Changes from revision 8
+
+- **`ALT`, after `LON`: the header's `offsetz`, as written**, on every row.
+  The CSV already carried the horizontal georeference, through `LAT`/`LON`
+  against `X`/`Y`, but not the vertical one. With `ALT`, a point's GNSS
+  altitude is `ALT + Z`. The loader validates it and does not use it
+  (`app/src/layers/splat/specs/spec.md`, revision 9).
+- A file with the revision-8 header is upgraded rather than refused (*Output
+  contract*).
 
 ## Changes from revision 7
 
