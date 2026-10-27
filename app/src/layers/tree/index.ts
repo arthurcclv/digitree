@@ -1,5 +1,8 @@
 /** The two GeoLibre records. See "The two records" in `specs/spec.md`. */
-export { treeMeshRecord, treePointsLayer } from "./records";
+export { treeMeshRecord, treePointsLayer, TREE_KIND_COLORS } from "./records";
+
+/** What a click finds, and what the card shows. See `specs/tree-info.md`. */
+export { treeInfoRows, treeStillShown, type TreeInfoRow } from "./pick";
 
 /** The layer attached to a map. See `src/lib/mount/specs/spec.md`. */
 export { mountTree, type TreeMount } from "./mount";
@@ -23,7 +26,13 @@ export { canopyHullBaseOf, canopyHullOf, TREE_FORMS } from "./formGeometry";
 /** How tall and wide a tree draws. See *Per-instance transform*. */
 export { crownScale, type CrownScale } from "./crown";
 
-export { MODELS_ATTRIBUTION, TREE_LAYER_ID, TREE_POINTS_LAYER_ID } from "./constants";
+export {
+  MODELS_ATTRIBUTION,
+  TREE_HOVER_COLOR,
+  TREE_LAYER_ID,
+  TREE_POINTS_LAYER_ID,
+  TREE_SELECTED_COLOR,
+} from "./constants";
 
 /**
  * Where an inventory is (the host's descriptor) and the one reading of a tree,

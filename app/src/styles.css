@@ -560,6 +560,56 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .badge.loading { background: var(--accent-bg); color: var(--accent-text); }
 .badge.tile-error { background: var(--warn-bg); color: var(--warn); }
 
+/* --------------------------------------------------------------- tree card */
+/* The picked tree's card, in a MapLibre popup anchored at the tree's base.
+   The popup's own chrome is cleared so the card is an ordinary .panel. */
+.tree-popup .maplibregl-popup-content {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.tree-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--border-subtle); }
+.tree-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: var(--border-subtle); }
+.tree-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--border-subtle); }
+.tree-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--border-subtle); }
+
+.tree-card {
+  width: 264px;
+  font-family: inherit;
+}
+
+.tree-card__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.tree-card__kind {
+  background: var(--raised);
+  text-transform: capitalize;
+}
+
+.tree-card__close {
+  margin-left: auto;
+  padding: 0 4px;
+  background: none;
+  border: 0;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tree-card__close:hover { color: var(--fg); }
+
+.tree-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tree-card__rows .stat-line__v { text-align: right; }
+
 /* ----------------------------------------------------------------- spinner */
 .spinner {
   width: 12px;

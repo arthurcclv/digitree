@@ -28,7 +28,35 @@ describe("treeOf", () => {
       canopyWidthM: null,
       kind: "street",
       species: "榕樹",
+      district: null,
+      place: null,
+      placeNote: null,
+      diameterCm: null,
+      surveyDate: null,
     });
+  });
+
+  test("reads the display fields: text as non-empty strings, the diameter as a positive number", () => {
+    const props = {
+      tree_id: "BT1",
+      district: "士林區",
+      place: "文林路",
+      place_note: "東側人行道",
+      diameter_cm: 54,
+      survey_date: "2022-11-18",
+    };
+    expect(treeOf(props, point(121.5, 25))).toMatchObject({
+      district: "士林區",
+      place: "文林路",
+      placeNote: "東側人行道",
+      diameterCm: 54,
+      surveyDate: "2022-11-18",
+    });
+    const t = treeOf({ tree_id: "BT1", district: "", place: 3, place_note: null, survey_date: 20221118 }, point(0, 0))!;
+    expect([t.district, t.place, t.placeNote, t.surveyDate]).toEqual([null, null, null, null]);
+    for (const bad of [undefined, null, 0, -1, "54", Number.NaN]) {
+      expect(treeOf({ tree_id: "T1", diameter_cm: bad }, point(0, 0))!.diameterCm).toBeNull();
+    }
   });
 
   test("reads canopy_width_m as a positive number, and as null otherwise", () => {

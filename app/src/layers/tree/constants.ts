@@ -19,3 +19,15 @@ export const TREE_LAYER_ID = "threejs-tree";
  * per-file detail the status bar has no room for.
  */
 export const MODELS_ATTRIBUTION = "Tree models: evolveduk · CC BY 4.0";
+
+/**
+ * The two marks a tree can carry (`specs/tree-info.md`, *Highlight*): the one
+ * under the pointer, and the one whose card is open. Selection chrome, so they
+ * come from the accent's text colour rather than from the kind palette. On the
+ * meshes they multiply the material, on the circles they replace the colour.
+ */
+export const TREE_HOVER_COLOR = "#b9d4ec";
+export const TREE_SELECTED_COLOR = "#7fb8e6";
+
+/** The feature-state keys the circles' colour reads. */
+export const TREE_STATE = { hover: "hover", selected: "selected" } as const;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Map as MapLibreMap, config as maplibreConfig, type ErrorEvent } from "maplibre-gl";
+import { Map as MapLibreMap, Popup, config as maplibreConfig, type ErrorEvent } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { createLayerSync, installMapTransformCompat, type LayerSync } from "@geolibre/map";
 import { anchorUnderLabels, exportBasemapUsd, hideBasemapBuildings, type Basemap } from "../layers/basemaps";
@@ -9,7 +9,7 @@ import {
   exportBuildingsUsd,
   type BuildingSettings,
 } from "../layers/buildings";
-import { mountTree, type ModelStatus, type TreeMount, type TreeSettings } from "../layers/tree";
+import { mountTree, type ModelStatus, type TreeFeature, type TreeMount, type TreeSettings } from "../layers/tree";
 import {
   mountSunlight,
   type ProbeResult,
@@ -83,6 +83,7 @@ export function useMapEngine(
   splatSettings: SplatSettings,
   onProbe: (result: ProbeResult) => void,
   onTemperatureProbe: (result: PetProbe) => void,
+  onTreePick: (tree: TreeFeature | null) => void,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -96,6 +97,12 @@ export function useMapEngine(
   onProbeRef.current = onProbe;
   const onTemperatureProbeRef = useRef(onTemperatureProbe);
   onTemperatureProbeRef.current = onTemperatureProbe;
+  const onTreePickRef = useRef(onTreePick);
+  onTreePickRef.current = onTreePick;
+  // The tree card's anchor: one popup at the picked tree's base. Its content is
+  // the app's, rendered into `treeCardElement` through a portal.
+  const [treeCardElement] = useState(() => document.createElement("div"));
+  const treePopupRef = useRef<Popup | null>(null);
   const sunlightVisibleRef = useRef(sunlightSettings.visible);
   sunlightVisibleRef.current = sunlightSettings.visible;
   const temperatureVisibleRef = useRef(temperatureSettings.visible);
@@ -137,6 +144,13 @@ export function useMapEngine(
   const [aoState, setAoState] = useState<AoState>("off");
   const [temperatureStatus, setTemperatureStatus] = useState<TemperatureStatus | null>(null);
   const [splatStatus, setSplatStatus] = useState<SplatStatus | null>(null);
+
+  /** Close the tree card, whatever closed it, and clear the tree's mark. */
+  const closeTreeCard = useCallback(() => {
+    treePopupRef.current?.remove();
+    mountsRef.current?.tree.select(null);
+    onTreePickRef.current(null);
+  }, []);
 
   /** Push the current GeoLibre layer list at the map and re-anchor it. */
   const applyLayers = useCallback(() => {
@@ -217,6 +231,8 @@ export function useMapEngine(
 
     const onStyleLoad = () => {
       styleReadyRef.current = true;
+      // A new style lost the circles' marks; the card does not outlive them.
+      closeTreeCard();
       // setStyle wiped every layer, so whatever was synced before is gone.
       syncedRef.current = null;
       hideBasemapBuildings(map);
@@ -247,8 +263,26 @@ export function useMapEngine(
       });
     };
 
-    // A click probes each overlay that is on; with both off it does nothing.
-    const onClick = (e: { lngLat: { lng: number; lat: number } }) => {
+    // A click opens the card of the tree under it, or closes the card; and
+    // probes each overlay that is on. The two are independent.
+    const onClick = (e: { lngLat: { lng: number; lat: number }; point: { x: number; y: number } }) => {
+      const picked = mounts.tree.pick(e.point);
+      if (picked) {
+        mounts.tree.select(picked.id);
+        treePopupRef.current ??= new Popup({
+          closeButton: false,
+          closeOnClick: false,
+          className: "tree-popup",
+          maxWidth: "none",
+          // Beside the tree's base, not above it: above is where its crown is.
+          anchor: "left",
+          offset: 14,
+        }).setDOMContent(treeCardElement);
+        treePopupRef.current.setLngLat([picked.lng, picked.lat]).addTo(map);
+        onTreePickRef.current(picked);
+      } else {
+        closeTreeCard();
+      }
       const { lng, lat } = e.lngLat;
       if (sunlightVisibleRef.current) mounts.sunlight.probe(lng, lat).then((r) => onProbeRef.current(r));
       if (temperatureVisibleRef.current) {
@@ -265,6 +299,8 @@ export function useMapEngine(
     });
 
     return () => {
+      treePopupRef.current?.remove();
+      treePopupRef.current = null;
       syncRef.current?.dispose();
       syncRef.current = null;
       // Reverse mount order: downstream first, so nothing samples the
@@ -397,6 +433,8 @@ export function useMapEngine(
     exportSunlight,
     exportTemperature,
     exportScene,
+    treeCardElement,
+    closeTreeCard,
     flyTo,
     zoomBy,
     setPitch,

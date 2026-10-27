@@ -36,6 +36,11 @@ export const TREE_PROPS = {
   species: "species",
   height: "height_m",
   canopyWidth: "canopy_width_m",
+  district: "district",
+  place: "place",
+  placeNote: "place_note",
+  diameter: "diameter_cm",
+  surveyDate: "survey_date",
 } as const;
 
 /** One tree, read once for every layer that draws or casts it. */
@@ -52,6 +57,16 @@ export interface TreeFeature {
   canopyWidthM: number | null;
   kind: unknown;
   species: unknown;
+  /** The rest is for display only (`tree-info.md`); no geometry reads it. */
+  district: string | null;
+  /** The road or park name. */
+  place: string | null;
+  /** Which side of the road; street rows only. */
+  placeNote: string | null;
+  /** The surveyed trunk diameter in cm, or `null` where it is missing or not positive. */
+  diameterCm: number | null;
+  /** `YYYY-MM-DD`, as the tiles carry it. */
+  surveyDate: string | null;
 }
 
 /**
@@ -66,18 +81,27 @@ export function treeOf(
   const id = p[TREE_PROPS.id];
   if (typeof id !== "string" || geometry?.type !== "Point") return null;
   const [lng, lat] = geometry.coordinates as [number, number];
-  const h = p[TREE_PROPS.height];
-  const w = p[TREE_PROPS.canopyWidth];
   return {
     id,
     lng,
     lat,
-    heightM: typeof h === "number" && h > 0 ? h : null,
-    canopyWidthM: typeof w === "number" && w > 0 ? w : null,
+    heightM: positive(p[TREE_PROPS.height]),
+    canopyWidthM: positive(p[TREE_PROPS.canopyWidth]),
     kind: p[TREE_PROPS.kind],
     species: p[TREE_PROPS.species],
+    district: text(p[TREE_PROPS.district]),
+    place: text(p[TREE_PROPS.place]),
+    placeNote: text(p[TREE_PROPS.placeNote]),
+    diameterCm: positive(p[TREE_PROPS.diameter]),
+    surveyDate: text(p[TREE_PROPS.surveyDate]),
   };
 }
+
+/** A measurement: a positive number, or `null` — never zero. */
+const positive = (v: unknown): number | null => (typeof v === "number" && v > 0 ? v : null);
+
+/** A non-empty string, or `null`. */
+const text = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 
 /** A tree source as a `TileStore` source: decoded with `treeOf`, bounded by its extent. */
 export function treeTiles(source: TreeSource): TileSource<TreeFeature> {

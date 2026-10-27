@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-27 — A tree is picked by what is drawn: a ray on the meshes, a radius on the circles
+
+**Decision.** Clicking a tree opens a card with its inventory row, and the
+tree under the pointer and the selected tree are marked
+(`src/layers/tree/specs/tree-info.md`). Where the meshes are drawn, the pick
+is a three.js ray against the mesh instances, unprojected through the last
+frame's `mainMatrix`. Elsewhere it is `queryRenderedFeatures` on the circles,
+padded 6 px. The marks are feature-state on the circles and a per-instance
+colour on the meshes, at a gain of 3. Martin now also publishes `place_note`
+and `survey_date`. The tree mount gains `pick` and `select`, and owns the
+hover. The host owns the popup and places it to the right of the tree's base.
+
+**Why.** Under this map's pitch, a tall crown is drawn far from its base
+point on screen. Picking by the base point would open the wrong tree, or none.
+The ray needs nothing the layer does not already hold, and runs on the CPU, so
+it is tested without GL. Feature-state marks a circle without changing the
+record, so hovering never re-syncs GeoLibre. The gain exists because the browser
+showed the plain multiply darkening a dark crown into no visible mark. The card
+went beside the base because, placed above it, it covered the tree it described.
+
+**Rules out.** Reading MapLibre's depth buffer to stop picks through
+buildings (a GL readback on every mouse move). A separate highlight record or
+geometry. `UpdDate` and the TWD97 coordinates, which `infra` drops at load.
+
+**Revisit if** a picked tree behind a building confuses people; if a dense
+park at z14–15 makes a single marked dot too small to find; or if hovering
+costs frames on a full 20,000-instance view.
+
+---
+
 ## 2026-10-25 — A scan's control-point `H` is its antenna height, measured on its own Gaussians
 
 **Decision.** `control-points.mjs` writes `H` as the scan's GNSS antenna

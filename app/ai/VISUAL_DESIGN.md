@@ -306,6 +306,19 @@ than a poster with controls over it.
   is disabled like the GeoTIFF buttons: until the map is ready and each
   visible raster overlay is ready. A *Failed* stat line appears under the
   button, only after a rejected export.
+- **Tree card** (`.tree-card`, in a `.tree-popup` MapLibre popup): an ordinary
+  `.panel`, 264px wide, anchored **to the right of** the picked tree's base
+  (above it is where the tree's crown is drawn). The popup's own white chrome
+  is cleared and its tip is `--border-subtle`. Head: the species at 13px/600
+  `--fg`, a `.badge.tree-card__kind` on `--raised` in the tree's circle colour
+  (street `#5f8f5a`, park `#4a8f86`, custom `#c08a45`), and a bare × close
+  button (`--fg-muted`, `--fg` on hover). Body: `.stat-line` rows, values
+  right-aligned. A missing value is "—".
+- **Tree marks** (on the map, not in the chrome): hovered `#b9d4ec`, selected
+  `#7fb8e6` (`--accent-text`). On the circles they replace the kind colour; on
+  the meshes they multiply the crown at a gain of 3, so they brighten it
+  (hovered reads light seafoam, selected teal). `#b9d4ec` is the one new colour,
+  a lighter step of `--accent-text`, and is not a token: only the map uses it.
 - **Badge** (`.badge`): pill, 11px/600. Variants: `sync` (green on `#123a2b`, the
   layer sync is live), `loading` (neutral blue `#7fb8e6`), and `tile-error`
   (amber on `#4a3410`). The old blinking square is replaced by a labelled badge —

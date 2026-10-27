@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { BASEMAPS, OSM_ATTRIBUTION } from "./layers/basemaps";
 import { DEFAULT_BUILDING_SETTINGS, type BuildingSettings } from "./layers/buildings";
 import {
@@ -13,7 +14,11 @@ import {
 import {
   DEFAULT_TREE_SETTINGS,
   MODELS_ATTRIBUTION,
+  TREE_KIND_COLORS,
   TREE_MESH_MIN_ZOOM,
+  treeInfoRows,
+  treeStillShown,
+  type TreeFeature,
   type TreeKindFilter,
   type TreeMeshSource,
   type TreeSettings,
@@ -49,6 +54,7 @@ import { fromLocal, localDate, localMinutes, noonToday, offsetLabel } from "./li
 import { PLACE } from "./place";
 import { cameraReadout } from "./ui/cameraReadout";
 import { Compass } from "./ui/Compass";
+import { TreeCard } from "./ui/TreeCard";
 import { LayerMenu } from "./ui/LayerMenu";
 import {
   Badge,
@@ -199,6 +205,7 @@ export default function App() {
   const [usdError, setUsdError] = useState<string | null>(null);
   const [usdSideKm, setUsdSideKm] = useState<number>(USD_SIDE_KM.initial);
   const [collapsed, setCollapsed] = useState(false);
+  const [pickedTree, setPickedTree] = useState<TreeFeature | null>(null);
 
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
   const {
@@ -214,9 +221,16 @@ export default function App() {
     exportSunlight,
     exportTemperature,
     exportScene,
+    treeCardElement,
+    closeTreeCard,
     zoomBy,
     resetNorth,
-  } = useMapEngine(basemap, settings, tree, sun, ao, temp, splat, setProbe, setPetProbe);
+  } = useMapEngine(basemap, settings, tree, sun, ao, temp, splat, setProbe, setPetProbe, setPickedTree);
+
+  // A card for a tree the settings no longer draw would point at nothing.
+  useEffect(() => {
+    if (pickedTree && !treeStillShown(pickedTree, tree)) closeTreeCard();
+  }, [pickedTree, tree, closeTreeCard]);
 
   const patchAo = (next: Partial<AmbientOcclusionSettings>) => setAo((prev) => ({ ...prev, ...next }));
 
@@ -298,6 +312,17 @@ export default function App() {
 
   return (
     <div className="app-shell" data-collapsed={collapsed}>
+      {pickedTree &&
+        createPortal(
+          <TreeCard
+            title={typeof pickedTree.species === "string" ? pickedTree.species : "Unknown species"}
+            kind={String(pickedTree.kind)}
+            kindColor={TREE_KIND_COLORS[String(pickedTree.kind)]}
+            rows={treeInfoRows(pickedTree, TREES.fallbackHeightM)}
+            onClose={closeTreeCard}
+          />,
+          treeCardElement,
+        )}
       <header className="top-bar">
         <span className="top-bar__title">Digitree</span>
         <div className="top-bar__right">

@@ -1,5 +1,11 @@
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer } from "@geolibre/core";
-import { TREE_LAYER_ID, TREE_POINTS_LAYER_ID } from "./constants";
+import {
+  TREE_HOVER_COLOR,
+  TREE_LAYER_ID,
+  TREE_POINTS_LAYER_ID,
+  TREE_SELECTED_COLOR,
+  TREE_STATE,
+} from "./constants";
 import { TREE_PROPS, type TreeSource } from "./schema";
 import { TREE_NATIVE_LAYER_ID } from "./treeLayer";
 import type { TreeKindFilter, TreeSettings } from "./index";
@@ -17,21 +23,38 @@ const COLOR_PARK = "#4a8f86";
 const COLOR_CUSTOM = "#c08a45";
 const COLOR_UNKNOWN = "#5c6b7a";
 
+/** The circles' kind colours, for the UI that names a kind (the tree card's badge). */
+export const TREE_KIND_COLORS: Readonly<Record<string, string>> = {
+  street: COLOR_STREET,
+  park: COLOR_PARK,
+  custom: COLOR_CUSTOM,
+};
+
 /**
  * Colour by `kind` rather than by species: the inventory names 291 street and
- * 448 park species, which no legend can carry.
+ * 448 park species, which no legend can carry. A marked tree (selected, then
+ * hovered) takes its mark's colour instead, read from feature-state so that
+ * marking one never changes the record. Exported for its test.
  */
-function colorExpression(): string {
+export function colorExpression(): string {
+  const state = (key: string) => ["boolean", ["feature-state", key], false];
   return JSON.stringify([
-    "match",
-    ["get", TREE_PROPS.kind],
-    "street",
-    COLOR_STREET,
-    "park",
-    COLOR_PARK,
-    "custom",
-    COLOR_CUSTOM,
-    COLOR_UNKNOWN,
+    "case",
+    state(TREE_STATE.selected),
+    TREE_SELECTED_COLOR,
+    state(TREE_STATE.hover),
+    TREE_HOVER_COLOR,
+    [
+      "match",
+      ["get", TREE_PROPS.kind],
+      "street",
+      COLOR_STREET,
+      "park",
+      COLOR_PARK,
+      "custom",
+      COLOR_CUSTOM,
+      COLOR_UNKNOWN,
+    ],
   ]);
 }
 

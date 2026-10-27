@@ -56,7 +56,7 @@ fixed for the mount's life. It returns a
 
 | factory | sources | `S` | hooks | extra members |
 | --- | --- | --- | --- | --- |
-| `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | `exportUsd(frame)` |
+| `mountTree` | `{ trees }` | `TreeSettings` | `onModelStatus(ModelStatus)` | `exportUsd(frame)`, `pick(point)`, `select(treeId)` |
 | `mountSunlight` | `{ trees, buildings }` | `SunlightSettings` | `onStatus(SunlightStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)`, `exportLightUsd(frame)` |
 | `mountTemperature` | — | `TemperatureSettings` | `onStatus(TemperatureStatus)` | `probe(lng, lat)`, `exportGeoTiff()`, `exportUsd(frame)` |
 | `mountAmbientOcclusion` | `{ buildings }` | `{ ao: AmbientOcclusionSettings; extrusion: ShadedExtrusion }` | `onStatus(AoState)` | — |
@@ -147,13 +147,16 @@ layers share. It returns `{ ensureAdded(), dispose() }`:
   wiped the style.
 - Anchoring under labels (`labelsOnTop`). Stacking belongs to the host, and so
   does the list of style-layer ids anchored with the buildings.
-- The click handler: which overlays a click probes, and where results go.
+- The click handler: which overlays a click probes, whether it asks the tree
+  mount for a pick (and selects it), and where results go. The tree card's
+  popup is the host's too; its hover is the tree mount's own
+  (`src/layers/tree/specs/tree-info.md`).
 - Camera, basemap swaps, `ready` and `error`.
 
 ## Invariants
 
 All asserted by vitest, with a fake map (`src/lib/mount/fakeMap.ts`:
-`getLayer`, `addLayer`, `on`, `off`, `triggerRepaint`, `getZoom`, `getCenter`)
+`getLayer`, `addLayer`, `on` and `off` (which record the handlers), `triggerRepaint`, `getZoom`, `getCenter`)
 and a real `Graph`. No
 GL context is needed: every class creates its `WebGLRenderer` in `onAdd`,
 which the fake never calls.
@@ -179,7 +182,7 @@ exempting one is a change to this spec.
 
 8. **A mount exposes exactly its members.** A mount's returned object has
    exactly `update`, `prepareSync` and `dispose`, plus the extra members in
-   the factory table above (tree: `exportUsd`; sunlight: `probe`,
+   the factory table above (tree: `exportUsd`, `pick`, `select`; sunlight: `probe`,
    `exportGeoTiff`, `exportUsd`, `exportLightUsd`; temperature: `probe`,
    `exportGeoTiff`, `exportUsd`), and nothing else. A new member is how a host would come
    to push layer-specific state into a layer (a `setUpstreamState`, a

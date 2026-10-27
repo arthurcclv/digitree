@@ -14,6 +14,12 @@ Modules:
   drawn, shaded and exported by, and `radialWidthM`, how a shape's width is
   measured
 - `src/layers/tree/usd.ts` — the meshes as a USD package (see *USD export*)
+- `src/layers/tree/pick.ts` — the circles' half of picking, and the tree
+  card's rows (see *Picking and marks*)
+
+Feature specs, each the full record of one feature folded in here:
+- `specs/tree-info.md` — a click shows the tree's data; hover and selection
+  mark it
 
 ## Purpose
 
@@ -64,13 +70,18 @@ The schema, which any tree source must publish:
 | --- | --- |
 | geometry | Point |
 | feature id | integer `id` (MVT requires integers; `tree_id` is text) |
-| properties | `tree_id`, `kind`, `district`, `place`, `species`, `height_m`, `diameter_cm`, `canopy_width_m` |
+| properties | `tree_id`, `kind`, `district`, `place`, `place_note`, `species`, `height_m`, `diameter_cm`, `canopy_width_m`, `survey_date` |
 
 `treeOf(properties, geometry)` in `schema.ts` is the one reading of a tree,
 shared by the meshes and the direct-sun layer. It returns `null` unless the
 geometry is a Point and `tree_id` is a string, and it reads `height_m` as a
 height, and `canopy_width_m` as a width, only when each is a positive number
 (otherwise `null`).
+
+`place_note` (the street side, `RegionRemark`; street rows only) and
+`survey_date` (`YYYY-MM-DD`) are display-only: the tree card shows them and no
+layer draws from them. `treeOf` also reads `district`, `place`, `place_note`,
+`diameter_cm` and `survey_date`, for the card (`specs/tree-info.md`).
 
 `kind` is `"street"`, `"park"` or `"custom"`. The first two are the city's open
 data; `"custom"` is whatever a contributor dropped into `infra/data/custom/`,
@@ -981,6 +992,27 @@ The `ThreeTreeLayer` instance outlives style changes:
 A basemap swap also discards the vector source, so the instance list is empty
 until tiles reload. The refresh on `idle` covers this; no special case is needed.
 
+## Picking and marks
+
+The full contract is `specs/tree-info.md`; this is its summary.
+
+- `TreeMount.pick(point)` returns the tree drawn under a screen point: a ray
+  against the mesh instances where the meshes are drawn (zoom ≥
+  `TREE_MESH_MIN_ZOOM`, `meshVisible`), else a `queryRenderedFeatures` on the
+  circles within `CIRCLE_PICK_PX` (6) of a circle's edge, else nothing.
+  Nearest wins (to the camera, or to the click), ties on `tree_id`. A tree
+  behind a building can be picked: the ray reads no depth buffer.
+- `TreeMount.select(treeId | null)` marks the tree whose card is open. The
+  host calls it; the layer never selects on its own.
+- Hover is the mount's own: a `mousemove` listener, at most one pick per
+  frame, none while the camera moves, the `pointer` cursor over a tree.
+- A mark is `TREE_HOVER_COLOR` / `TREE_SELECTED_COLOR`: on the circles, their
+  colour through feature-state (`hover`, `selected`) in the points record's
+  colour expression; on the meshes, a per-instance colour multiplying every
+  part, times `MARK_GAIN` so it brightens. Selected wins over hovered.
+- The marks follow `tree_id` through every refresh, and a tree marked out of
+  view is marked when it is placed.
+
 ## USD export
 
 `mountTree`'s `exportUsd(frame)` returns the meshes as a USD package, as the
@@ -1149,3 +1181,7 @@ procedural source would credit evolveduk for icosahedra.
     level 0.
 20. A tree's scale is `crownScale`, in the meshes, the sunlight occluders and
     the USD export alike. `heightScale` reaches the vertical only.
+21. Picking only reads: `pick` changes no setting, draws nothing and triggers
+    no repaint. A mark changes a tree's colour and nothing else — not where it
+    stands, its size, its rotation, or which trees are drawn.
+    (`specs/tree-info.md`, *Invariants*, lists the tests.)

@@ -49,9 +49,13 @@ src/
       schema.ts       TreeSource; treeOf() — the one reading of a tree,
                       shared by the meshes and the direct-sun layer;
                       treeTiles()
-      constants.ts    the record ids and MODELS_ATTRIBUTION
+      constants.ts    the record ids, MODELS_ATTRIBUTION, the mark colours
+      pick.ts         pickCircle(), treeInfoRows() — picking on the circles
+                      and the tree card's rows (the meshes' half is
+                      ThreeTreeLayer.pickMesh)
       *.test.ts       vitest, beside the modules they cover
       specs/spec.md
+      specs/tree-info.md  the click-for-info and hover/selection marks feature
     sunlight/
       index.ts        SunlightSettings (the moment is the host's); the entry
       records.ts      sunlightRecord() GeoLibre record
@@ -144,6 +148,7 @@ src/
   ui/
     Panel.tsx       Panel / Toggle / Slider primitives
     Compass.tsx     bearing rose
+    TreeCard.tsx    the picked tree's card, portalled into the host's popup
     cameraReadout.ts  the status bar's lat/lon/zoom formatting (pure, tested)
   App.tsx           the interface: control state, panel, status bar, telemetry
   sources.ts        the app's datasets (TREES, BUILDINGS, SPLATS) — the only place

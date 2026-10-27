@@ -16,6 +16,11 @@ const tree = (id: string, over: Partial<TreeFeature> = {}): TreeFeature => ({
   canopyWidthM: null,
   kind: "street",
   species: "榕樹",
+  district: null,
+  place: null,
+  placeNote: null,
+  diameterCm: null,
+  surveyDate: null,
   ...over,
 });
 

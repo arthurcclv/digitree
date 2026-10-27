@@ -40,8 +40,9 @@ const [ao, setAo] = useState<AmbientOcclusionSettings>(DEFAULT_AO_SETTINGS);
 const [temp, setTemp] = useState<TemperatureSettings>(DEFAULT_TEMPERATURE_SETTINGS);
 const [probe, setProbe] = useState<ProbeResult | null>(null);
 const [petProbe, setPetProbe] = useState<PetProbe | null>(null);
-// the engine reports probe clicks back
-useMapEngine(basemap, settings, tree, sun, ao, temp, setProbe, setPetProbe);
+const [pickedTree, setPickedTree] = useState<TreeFeature | null>(null);
+// the engine reports probe clicks and the picked tree back
+useMapEngine(basemap, settings, tree, sun, ao, temp, splat, setProbe, setPetProbe, setPickedTree);
 
 // useMapEngine.ts — on any settings change
 mounts.ao.update({ ao, extrusion: shadedExtrusion(settings) }); // every update first: one
@@ -199,15 +200,16 @@ dependency rather than by topic:
 | --- | --- | --- |
 | `index.ts` | the folder's entry: `TreeSettings`, re-exports | no |
 | `records.ts` | the two GeoLibre records | no |
-| `mount.ts` | `mountTree` — the layer attached to a map | yes, via `treeLayer.ts` |
-| `constants.ts` | the record ids, `MODELS_ATTRIBUTION` | no |
+| `mount.ts` | `mountTree` — the layer attached to a map; `pick`, `select`, and the hover listener | yes, via `treeLayer.ts` |
+| `constants.ts` | the record ids, `MODELS_ATTRIBUTION`, the two mark colours and feature-state keys | no |
+| `pick.ts` | `pickCircle` (the circles' half of picking), `treeInfoRows` (the card's rows), `treeStillShown` | no |
 | `schema.ts` | `TreeSource`, `TREE_PROPS`, `treeOf` (the one reading of a tree), `treeTiles` | no (it pulls `lib/tiles`) |
 | `forms.ts` | `TreeForm`, the 100-species table, `formOf()` | **no** |
 | `placement.ts` | `rotationOf()` — a tree's yaw, hashed from its `tree_id` | **no** |
 | `crown.ts` | `crownScale()` — a tree's vertical and horizontal scale; `radialWidthM()` — a shape's yaw-independent width | **no** (types only) |
 | `formGeometry.ts` | the eight procedural shapes, the two shared materials, and `canopyHullOf` | yes |
 | `models.ts` | `FORM_MODELS`, the glTF loader, `normalizeModel`, the LOD rule | yes |
-| `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam | yes |
+| `treeLayer.ts` | `ThreeTreeLayer` — the custom layer, instancing, the GL seam; `pickMesh` (a ray against the instances) and `setMarks` (per-instance colour) | yes |
 
 `forms.ts`, `placement.ts` and `crown.ts` are deliberately three.js-free at
 runtime. `forms.ts` and `placement.ts` are the layer's two pure modules and therefore the ones fully testable without a GL
@@ -393,7 +395,7 @@ scale of a mesh's matrix, so the per-axis part is a world modifier
 | --- | --- |
 | `src/main.tsx` | React root, `StrictMode`, imports `styles.css` |
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
-| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks and export hand-offs, `exportScene` (the USD export: frame, packages, root, zip); exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
+| `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks, the tree pick and its card's popup (`treeCardElement`, `closeTreeCard`), and export hand-offs, `exportScene` (the USD export: frame, packages, root, zip); exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
@@ -409,6 +411,7 @@ scale of a mesh's matrix, so the per-axis part is a world modifier
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |
+| `src/ui/TreeCard.tsx` | the picked tree's card, rendered by `App` into the host's popup; knows no tree, only a title, a kind and rows |
 | `src/ui/LayerMenu.tsx` | the viewport's layer-visibility popover; owns only its own open/closed state |
 | `src/styles.css` | the entire design system; no CSS modules, no styled-components |
 

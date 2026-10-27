@@ -3,7 +3,7 @@ import { MercatorCoordinate, type CustomRenderMethodInput } from "maplibre-gl";
 import { sourceId } from "@geolibre/map/style-layer-ids";
 import { mercatorFrame, projection, ThreeLayer } from "../../lib/three";
 import { mercatorToLocal } from "../../lib/tiles";
-import { TREE_POINTS_LAYER_ID } from "./constants";
+import { TREE_HOVER_COLOR, TREE_POINTS_LAYER_ID, TREE_SELECTED_COLOR } from "./constants";
 import { crownScale } from "./crown";
 import { formOf, type TreeForm } from "./forms";
 import { buildForm, buildMaterials, TREE_FORMS, type FormGeometry } from "./formGeometry";
@@ -16,7 +16,7 @@ import {
   type ModelPart,
 } from "./models";
 import { rotationOf } from "./placement";
-import { treeOf, type TreeSource } from "./schema";
+import { treeOf, type TreeFeature, type TreeSource } from "./schema";
 
 /** Mirrors `TreeKindFilter` in `index.ts`; kept local to avoid a module cycle. */
 export type TreeKind = "all" | "street" | "park" | "custom";
@@ -51,6 +51,22 @@ export const MAX_INSTANCES = 20_000;
  */
 export const INITIAL_CAPACITY = 1_024;
 
+/**
+ * A tree found under a screen point, with the MVT feature id the circles'
+ * feature-state is keyed by. See `specs/tree-info.md`.
+ */
+export interface TreePick {
+  tree: TreeFeature;
+  /** `undefined` when the tile carried none. */
+  featureId: string | number | undefined;
+}
+
+/** The two marks a tree can carry, by `tree_id`. See *Highlight*. */
+export interface TreeMarks {
+  hover: string | null;
+  selected: string | null;
+}
+
 /** One tree pulled out of a vector tile. */
 interface TreeInstance {
   /** Carried past dedup because it is also what the tree's yaw is hashed from. */
@@ -61,6 +77,8 @@ interface TreeInstance {
   /** The surveyed canopy width, or `null`: the form's own proportions then. */
   width: number | null;
   form: TreeForm;
+  /** Kept whole so a ray that hits this instance can say which tree it is. */
+  pick: TreePick;
 }
 
 /** The local frame's up axis — `y`, per *The model matrix and the instance frame*. */
@@ -71,6 +89,17 @@ const LODS: readonly ModelLod[] = MODEL_LODS.map((rung) => rung.level);
 
 /** MapLibre's world is this many pixels across at z0. */
 const TILE_SIZE_PX = 512;
+
+/** An unmarked instance: the material's own colour, multiplied by white. */
+const UNMARKED = new THREE.Color(1, 1, 1);
+/**
+ * A mark multiplies the material by its colour times a gain. The gain is what
+ * makes it show: the colour alone is below white in every channel, so on a
+ * dark-green crown it only darkens, and the mark reads as no mark at all.
+ */
+export const MARK_GAIN = { hover: 3, selected: 3 } as const;
+const HOVER = new THREE.Color(TREE_HOVER_COLOR).multiplyScalar(MARK_GAIN.hover);
+const SELECTED = new THREE.Color(TREE_SELECTED_COLOR).multiplyScalar(MARK_GAIN.selected);
 
 /**
  * One form's meshes. Allocated on the form's first instance and grown by
@@ -86,6 +115,10 @@ const TILE_SIZE_PX = 512;
 interface FormMeshes {
   meshes: THREE.InstancedMesh[];
   instanceMatrix: THREE.InstancedBufferAttribute;
+  /** The marks, shared by every part the way the matrices are. */
+  instanceColor: THREE.InstancedBufferAttribute;
+  /** The tree at each instance index, rewritten with the matrices. */
+  picks: TreePick[];
   capacity: number;
   /** Which source built these; a switch discards the ones that no longer match. */
   source: MeshSource;
@@ -109,9 +142,18 @@ type BucketKey = `${TreeForm}|${number}`;
 const bucketKey = (form: TreeForm, lod: ModelLod): BucketKey => `${form}|${lod}`;
 
 function setCount(group: FormMeshes, count: number): void {
-  for (const mesh of group.meshes) mesh.count = count;
+  for (const mesh of group.meshes) {
+    mesh.count = count;
+    // Three caches the instances' bounding sphere for its raycast; they moved.
+    mesh.boundingSphere = null;
+  }
   // One attribute behind every mesh in the bucket, so one upload, not five.
   group.instanceMatrix.needsUpdate = true;
+  group.instanceColor.needsUpdate = true;
+}
+
+function writeMark(colors: THREE.InstancedBufferAttribute, index: number, mark: THREE.Color): void {
+  colors.setXYZ(index, mark.r, mark.g, mark.b);
 }
 
 /** Empty a bucket without re-uploading a buffer nothing is going to read. */
@@ -162,9 +204,15 @@ export class ThreeTreeLayer extends ThreeLayer {
   /** Filled lazily — a bucket with no tree in view has no buffers at all. */
   private readonly meshes = new Map<BucketKey, FormMeshes>();
   private readonly group = new THREE.Group();
+  private readonly raycaster = new THREE.Raycaster();
+  /** Where each tree in view landed: its bucket and its index there. */
+  private readonly placedAt = new Map<string, { group: FormMeshes; index: number }>();
+  private marks: TreeMarks = { hover: null, selected: null };
 
   /** Rebuilt on every refresh from the viewport centre. */
   private modelMatrix = new THREE.Matrix4();
+  /** The last frame's `mainMatrix`, which a pick unprojects through. */
+  private mainMatrix: THREE.Matrix4 | null = null;
   private heightScale = 1;
   private kind: TreeKind = "all";
   private meshSource: MeshSource = "procedural";
@@ -251,10 +299,14 @@ export class ThreeTreeLayer extends ThreeLayer {
       16,
     );
     instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
+    instanceColor.setUsage(THREE.DynamicDrawUsage);
 
     const meshes = desired.parts.map((part) => {
       const mesh = new THREE.InstancedMesh(part.geometry, part.material, capacity);
       mesh.instanceMatrix = instanceMatrix;
+      // Set before the first draw, so every program is built with it.
+      mesh.instanceColor = instanceColor;
       mesh.count = 0;
       // Instances are placed per refresh across the whole viewport, so three's
       // object-level frustum culling has no useful bounding volume to test.
@@ -270,7 +322,7 @@ export class ThreeTreeLayer extends ThreeLayer {
     }
     this.group.add(...meshes);
 
-    const group: FormMeshes = { meshes, instanceMatrix, capacity, source: desired.source };
+    const group: FormMeshes = { meshes, instanceMatrix, instanceColor, picks: [], capacity, source: desired.source };
     this.meshes.set(key, group);
     return group;
   }
@@ -278,6 +330,9 @@ export class ThreeTreeLayer extends ThreeLayer {
   render(_gl: WebGL2RenderingContext, args: CustomRenderMethodInput): void {
     // See `projection`: MapLibre v6's `mainMatrix`, never the older recipes' matrix.
     this.camera.projectionMatrix = projection(args, this.modelMatrix);
+    // Kept apart from the model matrix: a refresh may move the anchor before
+    // the next frame, and a pick must use the anchor the instances are in.
+    this.mainMatrix = projection(args, new THREE.Matrix4());
     this.pass((renderer) => renderer.render(this.scene, this.camera));
   }
 
@@ -342,6 +397,7 @@ export class ThreeTreeLayer extends ThreeLayer {
         height,
         width: tree.canopyWidthM,
         form: formOf(tree.species),
+        pick: { tree, featureId: feature.id },
       });
     }
 
@@ -413,6 +469,8 @@ export class ThreeTreeLayer extends ThreeLayer {
       else buckets.set(key, [item]);
     }
 
+    this.placedAt.clear();
+
     // Anything not refilled below holds no tree this frame. A bucket that has
     // never been allocated stays that way.
     for (const [key, idle] of this.meshes) {
@@ -431,8 +489,13 @@ export class ThreeTreeLayer extends ThreeLayer {
         const { baseHeightM, baseWidthM } = this.partsFor(form, lod);
         const base = { heightM: baseHeightM, widthM: baseWidthM };
         const matrices = group.instanceMatrix.array as Float32Array;
+        group.picks.length = 0;
         bucket.forEach((item, i) => {
           const { tree } = item;
+          group.picks.push(tree.pick);
+          this.placedAt.set(tree.id, { group, index: i });
+          // A marked tree keeps its mark wherever this refresh put it.
+          writeMark(group.instanceColor, i, this.markOf(tree.id));
           position.set(item.x, 0, item.z);
           // The one rule the sunlight occluders and the USD export scale by too.
           const s = crownScale(base, { heightM: tree.height, widthM: tree.width }, this.heightScale);
@@ -496,6 +559,75 @@ export class ThreeTreeLayer extends ThreeLayer {
   /** Empties every allocated bucket without giving its buffers back. */
   private clear(): void {
     for (const group of this.meshes.values()) clearCount(group);
+    this.placedAt.clear();
+  }
+
+  private markOf(id: string): THREE.Color {
+    if (id === this.marks.selected) return SELECTED;
+    if (id === this.marks.hover) return HOVER;
+    return UNMARKED;
+  }
+
+  /**
+   * Mark the hovered and the selected tree. Only the instances whose mark
+   * changed are rewritten; a tree not in view is marked when it is placed.
+   */
+  setMarks(marks: TreeMarks): void {
+    const before = this.marks;
+    if (before.hover === marks.hover && before.selected === marks.selected) return;
+    this.marks = { ...marks };
+    let changed = false;
+    for (const id of new Set([before.hover, before.selected, marks.hover, marks.selected])) {
+      const at = id === null ? undefined : this.placedAt.get(id);
+      if (!at) continue;
+      writeMark(at.group.instanceColor, at.index, this.markOf(id!));
+      at.group.instanceColor.needsUpdate = true;
+      changed = true;
+    }
+    if (changed) this.repaint();
+  }
+
+  /** The instance colour a tree in view carries now; `null` when it is not placed. Read by tests. */
+  markColorOf(id: string): [number, number, number] | null {
+    const at = this.placedAt.get(id);
+    if (!at) return null;
+    const c = at.group.instanceColor;
+    return [c.getX(at.index), c.getY(at.index), c.getZ(at.index)];
+  }
+
+  /**
+   * The tree whose mesh is under a screen point (CSS px from the map's
+   * top-left), nearest the camera first, or `null`. The click is unprojected
+   * through the last frame's projection into the instances' own metre frame,
+   * so the ray needs no Mercator maths. It reads only. See `specs/tree-info.md`.
+   */
+  pickMesh(point: { x: number; y: number }): TreePick | null {
+    const map = this.map;
+    if (!map || !this.visible || !this.mainMatrix) return null;
+    const canvas = map.getCanvas();
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (!width || !height) return null;
+
+    const localFromClip = this.mainMatrix.clone().multiply(this.modelMatrix).invert();
+    const x = (point.x / width) * 2 - 1;
+    const y = 1 - (point.y / height) * 2;
+    const near = new THREE.Vector3(x, y, -1).applyMatrix4(localFromClip);
+    const far = new THREE.Vector3(x, y, 1).applyMatrix4(localFromClip);
+    this.raycaster.set(near, far.sub(near).normalize());
+
+    const groups = [...this.meshes.values()];
+    const drawn = groups.flatMap((g) => g.meshes.filter((m) => m.count > 0));
+    let best: { distance: number; pick: TreePick } | null = null;
+    for (const hit of this.raycaster.intersectObjects(drawn, false)) {
+      const group = groups.find((g) => g.meshes.includes(hit.object as THREE.InstancedMesh));
+      const pick = hit.instanceId === undefined ? undefined : group?.picks[hit.instanceId];
+      if (!pick) continue;
+      // Sorted by distance; on an exact tie the lower tree_id wins.
+      if (best && hit.distance > best.distance) break;
+      if (!best || pick.tree.id < best.pick.tree.id) best = { distance: hit.distance, pick };
+    }
+    return best?.pick ?? null;
   }
 
   /**
