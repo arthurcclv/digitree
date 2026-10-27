@@ -46,6 +46,12 @@ postgres:
         height_m: real
         diameter_cm: real
         canopy_width_m: real
+        # Display only: the app's tree card shows them (app/src/layers/tree/
+        # specs/tree-info.md). No layer draws from them. Measured 2026-10-27,
+        # uncompressed, over a block of central tiles: +9.0% at z14 (25 tiles,
+        # 6.21 -> 6.77 MB) and +8.3% at z16 (81 tiles, 2.47 -> 2.68 MB).
+        place_note: text
+        survey_date: date
     # The Gaussian splat captures, as MVT layer `splats`: one point per capture,
     # at the origin 04_splats.sql solved from its control points. The app's
     # splat layer fetches these on the z14 grid to learn which captures are in

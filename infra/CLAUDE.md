@@ -163,9 +163,11 @@ asserts and what the app's spec promises. The mirror image holds for
 custom header's order is part of the interface as well:
 `TreeID,TreeType,Diameter,TreeHeight[,CanopyWidth],LAT,LON`.
 
-The published property names (`tree_id`, `kind`, `district`, `place`, `species`,
-`height_m`, `diameter_cm`, `canopy_width_m`) are equally load-bearing: the app styles and filters
-on them by name, and `tree_id` additionally deduplicates the tile-buffer repeats
+The published property names (`tree_id`, `kind`, `district`, `place`, `place_note`,
+`species`, `height_m`, `diameter_cm`, `canopy_width_m`, `survey_date`) are equally
+load-bearing: the app styles and filters on them by name, and its tree card shows
+them (`place_note` and `survey_date` are published for the card alone,
+`app/src/layers/tree/specs/tree-info.md`), and `tree_id` additionally deduplicates the tile-buffer repeats
 that `querySourceFeatures` returns. Note that `id_column` makes `id` the MVT
 *feature* id, which is not a property — so `tree_id` has to be listed explicitly
 or the 3D layer silently renders nothing.
