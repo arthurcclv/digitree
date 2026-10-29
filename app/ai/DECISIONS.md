@@ -6,6 +6,77 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-29 — A header-placed capture's height is its `offsetz` less its group's median
+
+**Decision.** In `header` mode, `altitude_m` is `OFFSETZ − datum`. The
+captures are sorted by `OFFSETZ` and split wherever neighbours differ by more
+than `splats_datum_gap_m` (5 m). Each group's datum is its median `OFFSETZ`,
+computed at every load. The delivered scans form one group, datum 26.60 m.
+Splat spec revision 11. This amends the entry below: the header's height is
+no longer drawn as it is.
+
+**Why.** The terrain-less map cannot draw an ellipsoidal height, and drawing
+it as it is put every capture 25 m up. The captures' RTK heights are what
+stitch them together, so they are kept relative to each other and shifted
+together. Only `OFFSETZ` is used, because it is the RTK value the file's frame
+is defined by. A capture's ground, its measured antenna height `H` and a
+nominal antenna height are all estimates, and none is assumed. So each origin
+(the antenna) lands near 0 m, and the captures' ground lands 1.4–1.7 m below
+the map's.
+
+**Rules out.**
+- Subtracting `H` or a nominal antenna height.
+- Setting each capture's own ground on the map's, which is the
+  control-point mode's way. Neighbouring grounds differ by up to 1.7 m, so
+  overlapping captures would meet with a step.
+- A fixed datum. A capture added to a group can now move it.
+- Grouping by position. Height alone was chosen, so a gap set under the 1.24 m
+  between KZ0918-093638 and KZ0918-101007-1, which overlap, would split them.
+
+**Revisit when** a capture lands far enough from the rest to need its own
+group while still touching them, or when the map gains terrain.
+
+---
+
+## 2026-10-29 — A splat capture is placed by its PLY header by default, height and all
+
+*Superseded in part by "A header-placed capture's height is its `offsetz`
+less its group's median" (above), 2026-10-29: `altitude_m` is no longer
+`offsetz` as it is, so the captures no longer float 25 m up. The rest
+stands.*
+
+**Decision.** `04_splats.sql` gains `splats_placement`. Its default,
+`header`, places each capture from its scan's PLY georeference alone, which
+`infra/scripts/georef.mjs` copies into `data/3dgs/georef.csv`. The origin is
+`(offsetx, offsety)` through PostGIS's UTM. The heading is the geodesic
+azimuth of grid north, the scale is UTM's 1/k, and `altitude_m` is
+`offsetz`, the origin's WGS 84 ellipsoidal height. `control_points` keeps the
+fit, unchanged, and `load.sh` passes `SPLATS_PLACEMENT` through.
+`splats.rms_m` and `points` become nullable. The app is unchanged. Splat spec
+revision 10, `infra/specs/georef.md`.
+
+**Why.** The captures should be drawn as the scanner's own georeference has
+them, with nothing from the control points in between, including their
+antenna height `H`, which is measured on the unaligned Gaussians. The
+height is the header's on purpose. The map has no terrain, so the captures
+float about 25 m up (the ~19 m geoid plus the ground's own height), and that
+is accepted. Horizontally the two ways agree to the fit's residual: the
+generated control points come through the same header.
+
+**Rules out.**
+- Reading the PLY header in the database: the `.spz` has none, and
+  `original/` is not mounted.
+- Taking the offset from `.align.json`: 7 of the 22 scans are not aligned and
+  have none.
+- Subtracting the geoid (`gnss.csv`'s `undulation`), or setting the ground on
+  the map's in this mode.
+- Deleting the control-point fit.
+
+**Revisit when** the map gains terrain in a known vertical datum, or the
+header and control-point placements are compared and one way wins for good.
+
+---
+
 ## 2026-10-27 — A tree is picked by what is drawn: a ray on the meshes, a radius on the circles
 
 **Decision.** Clicking a tree opens a card with its inventory row, and the

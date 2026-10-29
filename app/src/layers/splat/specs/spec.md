@@ -1,8 +1,14 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 9 (`control_points.csv`
-> gains `ALT`, the altitude of the capture file's origin) — approved
-> 2026-10-25;** see *Changes in revision 9*.
+> **Status: approved 2026-10-20, implemented. Revision 11 (a header-placed
+> capture's height is its `offsetz` less its group's datum, the median
+> `offsetz` of the captures grouped with it) — approved 2026-10-29;** see
+> *Changes in revision 11*.
+> Revision 10 (a capture is placed from its PLY header's georeference by
+> default, height included; the control-point fit stays, behind
+> `splats_placement`) — approved 2026-10-29.
+> Revision 9 (`control_points.csv` gains `ALT`, the altitude of the capture
+> file's origin) — approved 2026-10-25.
 > Revision 8 (a capture's origin is read from exact `lng`/`lat` properties,
 > not the tile's quantized point) — approved 2026-10-25.
 > Revision 7 (the loader takes `.spz` only) — approved 2026-10-23.
@@ -317,10 +323,115 @@ default output, not gzipped — does not load.
 `infra/data/custom/` are, so 228 MB of captures currently show as untracked.
 This change adds `infra/data/3dgs/` to `.gitignore`.
 
+### Placement: `splats_placement`
+
+`sql/04_splats.sql` places the captures one of two ways, chosen by the psql
+variable `splats_placement` (`load.sh` passes `SPLATS_PLACEMENT` through):
+
+| value | reads | places a capture by |
+| --- | --- | --- |
+| `header` (default) | `infra/data/3dgs/georef.csv` only | its PLY header's georeference, height included (*Georeference CSV → `splats` table*) |
+| `control_points` | `infra/data/3dgs/control_points.csv` only | the fit to its control points (*Control points CSV → `splats` table*) |
+
+Any other value fails the splat load, naming it. Each way reads only its own
+file: in `header` mode `control_points.csv` is not opened, and in
+`control_points` mode `georef.csv` is not. Both fill the same `splats` table,
+with the same file and LoD rules, so the tiles and the app do not know which
+way a capture was placed.
+
+### Georeference CSV → `splats` table
+
+A scan's `point_cloud.ply` carries its own georeference: a UTM zone and an
+offset (*The captures*). In `header` mode the loader places each capture from
+that alone. The loader cannot read a PLY header (the served `.spz` has none,
+and `original/` is not mounted), so `infra/scripts/georef.mjs` copies each
+scan's header into a CSV first (`infra/specs/georef.md`).
+
+**File:** `infra/data/3dgs/georef.csv`, one row per capture. The header is
+matched exactly:
+
+```
+SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ
+KZ0918-075047,KZ0918-075047.spz,32651,352796.8287235790048726,2770099.7470906949602067,26.9006000000000007
+```
+
+| column | meaning | rule |
+| --- | --- | --- |
+| `SplatID` | the capture's stable id | non-empty; unique |
+| `File` | file name inside `data/3dgs/source/` | as in `control_points.csv`: no `/`; ends in `.spz`; the file exists; unique; its LoD exists |
+| `EPSG` | the header's `epsg`: WGS 84 / UTM | an integer in 32601–32660 or 32701–32760 |
+| `OFFSETX`, `OFFSETY` | the header's `offsetx`, `offsety`: the UTM easting and northing of the file's origin | finite |
+| `OFFSETZ` | the header's `offsetz`: the height of the file's origin, in `gnss.csv`'s datum (WGS 84 ellipsoidal) | finite |
+
+**The placement** (in `sql/04_splats_header.sql`, PostGIS, per capture),
+with `O` the origin `(OFFSETX, OFFSETY)` in `EPSG` and `P` the point 100 m
+grid-north of it, `(OFFSETX, OFFSETY + 100)`:
+
+- `geom` = `O` transformed to WGS 84 (`ST_Transform`, PROJ's UTM). Local
+  `(0, 0)` lands there.
+- `heading_deg` = the geodesic azimuth from `O` to `P` on the WGS 84
+  ellipsoid (`ST_Azimuth` on `geography`), in [0, 360). The file's +y is grid
+  north, so this is 360° plus the grid convergence (359.38° for KZ0918). Over
+  100 m the azimuth is exact to under 10⁻⁵°.
+- `scale` = the geodesic distance from `O` to `P` (`ST_Distance` on
+  `geography`), over 100: one file unit in true metres, 1/k, k UTM's point
+  scale (1.00013 for KZ0918).
+- `altitude_m` = `OFFSETZ − datum`, the datum of the capture's group (*The
+  datum*, below). Local z = 0, the origin, is drawn that far above the map's
+  ground.
+- `rms_m` and `points` are NULL: nothing is fitted.
+
+**The datum.** The map has no terrain, so an ellipsoidal height cannot be
+drawn as it is: `OFFSETZ` alone puts every capture some 25 m in the air.
+Instead the loader subtracts one height, the **datum**, from every capture
+that may meet another, so their heights relative to each other stay exactly
+RTK's. Only `OFFSETZ` is used: it is the RTK height the file's frame is
+defined by, while a capture's ground and its antenna height are estimates.
+
+1. **Groups.** Sort the captures by `OFFSETZ`. Where two neighbours in that
+   order differ by more than `splats_datum_gap_m` (psql variable, default
+   `5`), a new group starts (single linkage). On the 22 delivered scans the
+   largest such gap is 0.37 m, so they form one group.
+2. **The datum of a group** is the median `OFFSETZ` of its captures (the mean
+   of the middle two for an even count), computed at every load: 26.60 m for
+   the delivered scans. A capture added to a group can move every capture in
+   it by up to its share of the median.
+3. Every capture's origin is drawn `OFFSETZ − datum` above the map's ground
+   (−0.44 to +1.32 m for the delivered scans). The origin is the antenna at
+   the scan's first fix, so a capture's own ground lands about its antenna
+   height below the map's (1.4–1.7 m). Nothing corrects that: no antenna
+   height is assumed.
+
+A gap over 5 m in `OFFSETZ` with nothing between is taken to mean captures
+far apart, which share no seam. Grouping looks at height only, so two
+captures that do overlap can still be split by a smaller
+`splats_datum_gap_m`: KZ0918-093638 and KZ0918-101007-1 share an origin to
+1 m and differ by 1.24 m in `OFFSETZ`. Split, they would meet with a step of
+the difference of their groups' datums.
+
+The load prints each capture's group, its datum and its `altitude_m`.
+
+Through the same header, the control-point fit lands the same place: its
+points are the scan's own fixes, put into the file through this offset, so
+the two agree to the fit's residual (under 5 mm on KZ0918). Only the height
+differs: the fit sets each capture's ground on the map's
+(`mean(H − scale·Z)`), the header keeps the captures' heights relative to
+each other.
+
+**Row rules.** Every problem is collected and the whole splat load fails,
+naming the CSV line or the capture: an empty `SplatID` or `File`; a `File`
+that is a path, not `.spz`, or not in `data/3dgs/source/`; an `EPSG` that is
+not an integer in the UTM ranges; an `OFFSET*` that is not a number; a
+`SplatID` or a `File` on two rows; a capture without its LoD. A
+`splats_datum_gap_m` that is not a positive number fails too. A missing
+`georef.csv` loads an empty table and says so, as a missing
+`control_points.csv` does.
+
 ### Control points CSV → `splats` table
 
-The captures carry no georeference, and an origin plus a heading cannot be
-measured directly. Instead, each capture is placed from **control points**:
+In `control_points` mode. A capture that carries no georeference (the KY0917
+captures this layer was built against) has no origin or heading to read.
+Instead, each capture is placed from **control points**:
 features recognisable both in the capture and on a map (a building corner, a
 kerb, a lamp post base), each given in local coordinates and in latitude and
 longitude. The loader solves the placement from them.
@@ -431,8 +542,8 @@ CREATE TABLE splats (
   altitude_m  real NOT NULL,                -- vertical offset of local z = 0
   heading_deg real NOT NULL,                -- of local +y, clockwise from north, [0, 360)
   scale       real NOT NULL,                -- local units → metres
-  rms_m       real NOT NULL,                -- the fit's horizontal RMS residual
-  points      integer NOT NULL,             -- control points used
+  rms_m       real,                         -- the fit's horizontal RMS residual; NULL when placed by the header
+  points      integer,                      -- control points used; NULL when placed by the header
   geom        geometry(Point, 4326) NOT NULL, -- where local (0, 0) lands
   lng         double precision GENERATED ALWAYS AS (ST_X(geom)) STORED, -- geom's, exactly
   lat         double precision GENERATED ALWAYS AS (ST_Y(geom)) STORED  -- (*Martin*, below)
@@ -443,9 +554,12 @@ CREATE TABLE splats (
 the two can never disagree.
 
 A new `sql/04_splats.sql` loads it, with its inputs as psql variables like the
-tree loader: `splats_csv` (default `/data/3dgs/control_points.csv`),
-`splats_dir` (default `/data/3dgs/source`), and `splats_max_rms_m` (default
-`1.0`).
+tree loader: `splats_placement` (default `header`), `splats_georef` (default
+`/data/3dgs/georef.csv`), `splats_csv` (default
+`/data/3dgs/control_points.csv`), `splats_dir` (default `/data/3dgs/source`),
+`splats_lod_dir` (default `/data/3dgs/lod`), `splats_max_rms_m` (default
+`1.0`), and `splats_datum_gap_m` (default `5`). The `header` way lives in `sql/04_splats_header.sql`, which
+`04_splats.sql` includes; the `control_points` way stays in `04_splats.sql`.
 
 - One transaction: truncate, `COPY` into a text staging table, validate, solve,
   insert.
@@ -463,7 +577,29 @@ tree loader: `splats_csv` (default `/data/3dgs/control_points.csv`),
   `H` taking 0, a non-numeric `ALT`, an `ALT` that differs between a
   capture's rows, and the revision-8 header without `ALT` (refused like any
   wrong header). Blank `ALT` loads. For the exact synthetic capture it also checks that `lng`
-  and `lat` equal `ST_X(geom)` and `ST_Y(geom)` exactly.
+  and `lat` equal `ST_X(geom)` and `ST_Y(geom)` exactly. These run with
+  `splats_placement=control_points`.
+- In `header` mode `test/run.sh` loads a `georef.csv` holding the `T1`
+  fixture's header (KZ0918-075047's) and a southern-hemisphere one, and checks
+  the placement against values computed outside PostGIS: `T1`'s origin is its
+  first fix within 5 mm, `heading_deg` 359.3823° within 0.001°, `scale`
+  1.000132 within 1e-5, `rms_m` and `points` NULL; that
+  `control_points.csv` is not read (a broken one beside it loads); and that
+  it rejects a wrong header, an empty `SplatID`, a non-numeric offset, an
+  `EPSG` outside UTM, a missing file, a `.ply` `File`, an empty `File`, a
+  `File` that is a path, a duplicate `SplatID`, a `File` on two rows (with
+  the row's shape as the hint), and a capture without its LoD. A missing `georef.csv` loads nothing. An
+  unknown `splats_placement` fails, and so does a `splats_datum_gap_m` of
+  `0` or `abc`.
+- The datum, in `header` mode: the two captures above, 16.9 m apart in
+  `OFFSETZ`, form two groups of one, each at `altitude_m` 0. Five captures at
+  `OFFSETZ` 10, 10.4, 11, 20 and 21 form two groups at the default gap, with
+  datums 10.4 and 20.5 (an even count's median), so `altitude_m` is −0.4, 0,
+  0.6, −0.5 and 0.5. At `splats_datum_gap_m=0.5` the first group splits
+  between 10.4 and 11 (a gap of 0.6), and at `0.6` it does not (a gap equal
+  to the threshold does not split); both split 20 from 21. The load's
+  report gives each capture's group, datum and `altitude_m` with those values.
+  `test/georef.sh` covers the generator (`infra/specs/georef.md`).
 
 ### Martin: the `splats` source
 
@@ -771,7 +907,9 @@ capture is drawn, as it does the tree models' credit.
 - Structure guards: the host allowlist gains `mountSplat` and `SplatSettings`
   only; `SPLATS` is the only place `/files/` appears outside `lib/tiles`.
 - infra: `test/run.sh`, the fixtures listed under *The metadata CSV*, and a
-  capture without its LoD; `test/build-lod.sh` (`infra/specs/build-lod.md`).
+  capture without its LoD; in `header` mode, the cases under *Georeference
+  CSV → `splats` table*; `test/georef.sh` (`infra/specs/georef.md`);
+  `test/build-lod.sh` (`infra/specs/build-lod.md`).
 
 In the browser: each capture renders upright at its place and keeps its shape at
 high pitch and any bearing; both KZ0918 captures match the OSM footprints at
@@ -805,6 +943,56 @@ table's `lng`/`lat`.
    deploying.
 3. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 11
+
+- **A header-placed capture's `altitude_m` is `OFFSETZ − datum`**, not
+  `OFFSETZ`. The captures are grouped by `OFFSETZ` (a new group where sorted
+  neighbours differ by more than `splats_datum_gap_m`, default 5 m), and each
+  group's datum is its median `OFFSETZ`, at every load. *The datum* says how.
+- **Why.** Revision 10 drew every capture about 25 m above the map. The
+  header's heights are what stitch the captures together, to RTK's accuracy,
+  so they are kept relative to each other and shifted together. Only
+  `OFFSETZ` is used: a capture's ground, its antenna height `H` and a nominal
+  antenna height are all estimates, and none of them is assumed. So the
+  origins, the antenna at each scan's first fix, land near the map's ground,
+  and the captures' own ground 1.4–1.7 m below it.
+- The load prints each capture's group, datum and `altitude_m`. The
+  `splats` table and the app do not change.
+- Not done:
+  - Grouping by position (overlap or distance). It matches "shares a seam"
+    better, but height alone was chosen. A smaller gap can split captures
+    that overlap.
+  - A fixed datum. A new capture can move its group.
+
+## Changes in revision 10
+
+- **A capture is placed from its PLY header by default.** `04_splats.sql`
+  gains `splats_placement`: `header` (the default) places each capture from
+  `georef.csv` alone, a copy of its scan's PLY georeference, and
+  `control_points` is the fit as before. `load.sh` passes
+  `SPLATS_PLACEMENT` through. *Placement* and *Georeference CSV → `splats`
+  table* say how.
+- **The height is the header's too.** `altitude_m` is `offsetz`, the origin's
+  ellipsoidal height, not `mean(H − scale·Z)`. The map has no terrain, so each
+  capture is drawn some 25 m above the map's ground. This is on purpose: the
+  header's placement is shown as it is, nothing from the control points or the
+  antenna height corrects it. The horizontal placement agrees with the
+  control-point fit to its residual.
+- New: `infra/scripts/georef.mjs` writes `infra/data/3dgs/georef.csv` from
+  each scan's `point_cloud.ply` header (`infra/specs/georef.md`). The header
+  reading moves out of `control-points.mjs` into `scripts/ply-header.mjs`,
+  shared by both, with the same refusals.
+- `splats.rms_m` and `splats.points` become nullable: NULL when placed by the
+  header. Neither is published.
+- The app does not change: it reads `lng`, `lat`, `heading_deg`, `scale` and
+  `altitude_m` as before.
+- Not done:
+  - The geoid. `offsetz` is ellipsoidal; nothing subtracts `gnss.csv`'s
+    `undulation`.
+  - Removing the control-point fit, or its CSV. It stays, one variable away.
+  - Placing a capture without a georeferenced PLY in `header` mode. It has no
+    `georef.csv` row and is not loaded.
 
 ## Changes in revision 9
 

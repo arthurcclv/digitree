@@ -29,7 +29,10 @@ files.conf           the files service: data/3dgs/source/ read-only at /3dgs/,
 sql/01_schema.sql    the trees and splats tables and their indexes
 sql/02_load.sql      staging COPY -> normalise -> clean -> insert
 sql/03_checks.sql    assertions over the loaded table; fails the load
-sql/04_splats.sql    control points -> validate -> fit -> splats
+sql/04_splats.sql    splats_placement: header (default, includes
+                     04_splats_header.sql: georef.csv -> validate -> place)
+                     or control_points (control points -> validate -> fit)
+                     -> splats
 load.sh              the whole bring-up in one command
 scripts/             the splat tools, each an explicit step load.sh never runs:
   process-splat.sh   original/<scan>/ -> align -> density, size and floater
@@ -39,23 +42,30 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
   splat-density-cut.mjs
                      process-splat.sh's density cut, on splat-transform's library
   utm.mjs            WGS 84 <-> UTM, shared by control-points and splat-align
+  ply-header.mjs     a scan's point_cloud.ply georeference, shared by
+                     control-points and georef
+  scan-csv.mjs       which scans to run, the other scans' rows kept, and the
+                     rename: shared by control-points and georef
   control-points.mjs original/<scan>/gnss.csv + point_cloud.ply's header
                      (+ its Gaussians, for the antenna height H) -> the
                      scan's rows of control_points.csv
+  georef.mjs         original/<scan>/point_cloud.ply's header -> the scan's
+                     row of georef.csv
   build-lod.sh       source/<scan>.spz -> Spark's build-lod (v2.3.1, in
                      Docker) -> lod/<scan>-lod.rad + <scan>-lod-<n>.radc,
                      the chunked tree the app draws
 specs/               specs for the scripts (process-splat.md, splat-align.md,
-                     control-points.md, build-lod.md)
+                     control-points.md, georef.md, build-lod.md)
 test/                fixture CSVs and run.sh, the loader's test suite;
                      process-splat.sh, the splat processor's; splat-align.sh
                      (+ splat-align-scene.mjs, its scan generator), the align
                      step's; control-points.sh (+ control-points-scene.mjs,
                      the Gaussians under its fixes), the control-point
-                     generator's; build-lod.sh, the LoD builder's
+                     generator's; georef.sh, the georef generator's;
+                     build-lod.sh, the LoD builder's
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
-data/3dgs/           splat captures and control_points.csv (gitignored):
+data/3dgs/           splat captures, georef.csv and control_points.csv (gitignored):
                      original/<scan>/ as delivered, source/<scan>.spz as
                      aligned and cleaned (+ .align.json), lod/<scan>-lod.rad
                      and -lod-<n>.radc as drawn
@@ -64,9 +74,11 @@ data/3dgs/           splat captures and control_points.csv (gitignored):
 Commands (run from `infra/`): `./load.sh` does everything, `./test/run.sh` runs
 the loader against fixtures in a scratch database. The splat tools run from
 here too — `./scripts/process-splat.sh <scan>`, `./scripts/build-lod.sh <scan>`,
-`node scripts/control-points.mjs [<scan>…]`. The two `.sh` tools find
-`data/` from their own location; `control-points.mjs` takes its default paths
-relative to the working directory, so it must run from here. `docker compose down` stops
+`node scripts/control-points.mjs [<scan>…]`, `node scripts/georef.mjs [<scan>…]`.
+`SPLATS_PLACEMENT=control_points ./load.sh` places the captures by their
+control points instead of their headers. The two `.sh` tools find
+`data/` from their own location; the `.mjs` tools take their default paths
+relative to the working directory, so they must run from here. `docker compose down` stops
 it; `docker compose down -v` also discards the database volume, which is the
 right way to start over.
 
@@ -80,8 +92,9 @@ right way to start over.
   must always be safe, and must always leave the live schema identical to the
   file.
 - **The loader takes its inputs as psql variables** (`street_csv`, `park_csv`,
-  `custom_dir`; `splats_csv`, `splats_dir`, `splats_lod_dir`,
-  `splats_max_rms_m` for the splats), defaulting to the mounted paths. That is what lets
+  `custom_dir`; `splats_placement`, `splats_georef`, `splats_datum_gap_m`,
+  `splats_csv`, `splats_dir`, `splats_lod_dir`, `splats_max_rms_m` for the
+  splats), defaulting to the mounted paths. That is what lets
   `test/run.sh` exercise the real SQL against fixtures instead of a second
   loader that drifts from it. A new input follows the same pattern.
 - **A bad drop-in fails the load; it never half-loads it.** The whole load is
@@ -112,6 +125,8 @@ right way to start over.
   exception is `data/3dgs/control_points.csv`: `control-points.mjs` rewrites
   the rows of the scans it is run on, and only those — every other row, hand
   measured, is kept byte for byte. Its spec is `specs/control-points.md`.
+  `data/3dgs/georef.csv` is the same: `georef.mjs` rewrites the rows of the
+  scans it is run on, and keeps every other row. Its spec is `specs/georef.md`.
   The third is `data/3dgs/lod/`, which `build-lod.sh` owns: derived from
   `source/`, rebuilt by re-running it, never edited by hand. Its spec is
   `specs/build-lod.md`.
@@ -185,14 +200,28 @@ The splat captures are a second published interface, read by
 Its properties — `splat_id`, `file`, `bytes`, `altitude_m`, `heading_deg`,
 `scale`, `lng`, `lat` — are read by name, as the tree properties are. The LoD file's name is
 not a property: it is `file` less its extension, plus `-lod.rad`, a rule held
-once on each side (`04_splats.sql` requires the file, the app's `lodUrlOf`
-derives the URL), so a rename touches both. The point is where the
+once on each side (`04_splats.sql`'s `splat_lod_problems` requires the file,
+for both placements; the app's `lodUrlOf` derives the URL), so a rename
+touches both. The File rules are held the same way: `04_splats.sql` defines
+them once, as session-temporary functions (`pg_temp.splat_file_problems`,
+`splat_lod_problems`), and each placement calls them. The point is where the
 capture's local `(0, 0)` lands, but snapped to the tile's grid (~0.54 m at the
 app's z14), so it only says which tiles hold the capture. The origin the app
 draws from is `lng`/`lat`: the same point as doubles, generated from `geom`; `heading_deg` is its local +y, clockwise from
 north. Rename any of these together with the app's schema and spec.
 
-The placements are **solved, not typed**: `04_splats.sql` fits each capture
+The placements are **computed, not typed**, one of two ways
+(`splats_placement`; the splat spec's *Placement*). **By default, from the
+header**: `04_splats_header.sql` places each capture from its row of
+`data/3dgs/georef.csv` (`SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ`, copied
+from its PLY header by `georef.mjs`): origin `(OFFSETX, OFFSETY)` through
+PostGIS's UTM, heading the geodesic azimuth of grid north there, scale UTM's
+1/k, and `altitude_m` = `OFFSETZ − datum`, the datum being the median
+`OFFSETZ` of the capture's group (sorted by `OFFSETZ`, split at gaps over
+`splats_datum_gap_m`, 5 m), so captures that may meet keep RTK's heights
+relative to each other on the terrain-less map. No ground or antenna height
+is used. `rms_m` and `points` are NULL. It never opens `control_points.csv`. **With
+`splats_placement=control_points`**, `04_splats.sql` fits each capture
 from its rows in `data/3dgs/control_points.csv`
 (`SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note`, at least three points per capture;
 `ALT` is the altitude of the file's origin, a scan's PLY `offsetz`, checked

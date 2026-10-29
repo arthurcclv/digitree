@@ -54,9 +54,9 @@ the development database.
 It then runs `./test/process-splat.sh`, the splat processor's own suite, which runs
 the real `process-splat.sh` on captures it generates in a scratch directory. It
 needs `splat-transform` and `node`, not the database, and runs on its own too.
-Then `./test/control-points.sh` tests the control-point generator the same
-way, with only `node`; `run.sh` also loads that script's output through the
-real `04_splats.sql`. Last, `./test/build-lod.sh` runs the real `build-lod.sh`
+Then `./test/control-points.sh` and `./test/georef.sh` test the control-point
+and georef generators the same way, with only `node`; `run.sh` also loads
+both scripts' output through the real `04_splats.sql`, in each placement. Last, `./test/build-lod.sh` runs the real `build-lod.sh`
 on a capture it generates; it needs Docker, `node` and `splat-transform`.
 
 `sql/03_checks.sql` also runs as the last step of `./load.sh`, so a load that
@@ -170,9 +170,9 @@ written. `data/3dgs/source/` holds them cleaned, one `<scan>.spz` each —
 by `./scripts/process-splat.sh` (below) — `data/3dgs/lod/` holds the paged LoD tree the
 app draws for each, a header `<scan>-lod.rad` and its chunks
 `<scan>-lod-<n>.radc`, built by `./scripts/build-lod.sh` (below), and
-`data/3dgs/control_points.csv` says where each one sits. All four are
-**gitignored**. None is required: with no CSV the `splats` table is empty and
-the map shows no splats.
+`data/3dgs/georef.csv` (or, the other way, `data/3dgs/control_points.csv`)
+says where each one sits. All of them are **gitignored**. None is required:
+with no CSV the `splats` table is empty and the map shows no splats.
 
 The splat tools live in `scripts/` and, like everything here, run from
 `infra/`. To add a capture:
@@ -180,14 +180,47 @@ The splat tools live in `scripts/` and, like everything here, run from
 1. copy its scan folder into `data/3dgs/original/`;
 2. clean it into `source/` with `./scripts/process-splat.sh <scan>`;
 3. build its LoD tree with `./scripts/build-lod.sh <scan>`;
-4. give it control points — `node scripts/control-points.mjs <scan>` writes
-   them for a scan with `gnss.csv` and a georeferenced `point_cloud.ply`;
-   otherwise measure them and add the rows by hand (`File` is `<scan>.spz`);
+4. write its georeference — `node scripts/georef.mjs <scan>` copies its
+   `point_cloud.ply` header into `georef.csv` — and, for the control-point
+   way, its control points (below);
 5. run `./load.sh`.
 
-A capture without its `lod/<scan>-lod.rad` fails the splat load. The
-load prints each capture's fit (`rms_m`, `scale`, `heading_deg`) and every
-point's residual.
+A capture without its `lod/<scan>-lod.rad` fails the splat load.
+
+**Placement.** The loader places the captures one of two ways, chosen by
+`SPLATS_PLACEMENT`:
+
+```bash
+./load.sh                                   # header (the default): from georef.csv
+SPLATS_PLACEMENT=control_points ./load.sh   # fitted to control_points.csv
+```
+
+Each reads only its own CSV. **By the header**, each capture sits where its
+PLY's georeference puts it: origin `(offsetx, offsety)` in the header's UTM
+zone, facing grid north (≈ 359.38° for KZ0918), at UTM's point scale
+(≈ 1.0001). Its height is `offsetz`, the origin's RTK (ellipsoidal) height,
+less a **datum** shared by its group. The map has no terrain, so the
+captures are grouped by `offsetz` — a new group wherever sorted neighbours
+differ by more than 5 m (`-v splats_datum_gap_m=…` in `psql`) — and each
+group is lowered by its median `offsetz`. Within a group the heights stay
+exactly RTK's relative to each other; the 22 delivered scans are one group,
+datum 26.60 m. The origin is the antenna at the scan's first fix, so a
+capture's own ground lands 1.4–1.7 m below the map's. The load prints each
+capture's group, datum and height. A scan without a georeferenced PLY has
+no row and is not loaded. Spec: `specs/georef.md`.
+
+```
+SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ
+KZ0918-075047,KZ0918-075047.spz,32651,352796.8287235790048726,2770099.7470906949602067,26.9006000000000007
+```
+
+The georef load fails, naming the line or the capture, on a header other
+than that one, an empty `SplatID` or `File`, a `File` that is a path, not
+`.spz`, or not in `source/`, an `EPSG` outside WGS 84 / UTM, an offset that
+is not a number, a `SplatID` or `File` on two rows, or a capture without its
+LoD. **By the control points**, the load prints each capture's fit (`rms_m`,
+`scale`, `heading_deg`) and every point's residual, and sets each capture's
+ground on the map's.
 
 **Aligning and cleaning.** A capture straight from training sits a few
 centimetres — sometimes more — from where the scanner's own RTK and lidar put
@@ -258,8 +291,8 @@ Gaussians, and is about 1.5× the `.spz` in all, in a few hundred chunk files.
 Re-run it after re-cleaning a capture: it replaces the header and its chunks,
 and removes chunks the new tree no longer has. Spec: `specs/build-lod.md`.
 
-**Control points.** A capture file has no georeference of its own. It is
-placed from **control points**: at least three features you can find both in
+**Control points** (`SPLATS_PLACEMENT=control_points`). A capture placed
+this way needs no georeference of its own. It is placed from **control points**: at least three features you can find both in
 the capture and on a map — a building corner, a kerb corner, a post base —
 each given in the capture's own coordinates (as stored, below) and in
 latitude/longitude. The loader fits a rotation, a scale and a shift from

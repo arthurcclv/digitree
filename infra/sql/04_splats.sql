@@ -2,16 +2,32 @@
 -- reloads. Run by load.sh after 03_checks.sql, so a bad capture never blocks
 -- the trees: they are already committed when this starts.
 --
--- A capture file carries no georeference, so each one is placed from control
--- points: features recognisable both in the capture and on a map, each given
--- in the capture's own coordinates (as stored, z-up, see below) and in
--- WGS84. This file solves the placement
--- from them. The app's contract for the result is
--- app/src/layers/splat/specs/spec.md, *Control points CSV → `splats` table*.
+-- Two ways to place a capture, chosen by splats_placement
+-- (app/src/layers/splat/specs/spec.md, *Placement*):
 --
--- Four inputs, all overridable with `psql -v`, which is how infra/test/run.sh
--- points this same file at fixtures. Defaults are the paths docker-compose
--- mounts.
+--   header (default)  from its scan's PLY georeference, through georef.csv,
+--                     height included. In 04_splats_header.sql, included below.
+--   control_points    from control points: features recognisable both in the
+--                     capture and on a map, each given in the capture's own
+--                     coordinates (as stored, z-up, see below) and in WGS84.
+--                     This file solves the placement from them (*Control
+--                     points CSV → `splats` table*).
+--
+-- Each reads only its own CSV. The inputs are all overridable with `psql -v`,
+-- which is how infra/test/run.sh points this same file at fixtures. Defaults
+-- are the paths docker-compose mounts.
+\if :{?splats_placement}
+\else
+  \set splats_placement 'header'
+\endif
+\if :{?splats_georef}
+\else
+  \set splats_georef '/data/3dgs/georef.csv'
+\endif
+\if :{?splats_datum_gap_m}
+\else
+  \set splats_datum_gap_m 5
+\endif
 \if :{?splats_csv}
 \else
   \set splats_csv '/data/3dgs/control_points.csv'
@@ -28,6 +44,66 @@
 \else
   \set splats_max_rms_m 1.0
 \endif
+
+SET splats.placement TO :'splats_placement';
+DO $$
+BEGIN
+  IF current_setting('splats.placement') NOT IN ('header', 'control_points') THEN
+    RAISE EXCEPTION 'splats: splats_placement is %; it must be header or control_points',
+      quote_literal(current_setting('splats.placement'));
+  END IF;
+END $$;
+SELECT :'splats_placement' = 'header' AS splats_by_header \gset
+
+-- The rules on a capture's File, held here once for both placements, each
+-- returning its problems as messages without the line (the caller adds it):
+--
+--   File      required, and a bare name inside the captures directory: a '/'
+--             would let a row point anywhere the database can read, and the
+--             files service serves only that one directory.
+--   extension .spz, and only that: build-lod.sh reads <scan>.spz alone, and
+--             the app draws the LoD tree, never the file. A .ply row would pass
+--             here and then always fail the LoD check, which names the wrong
+--             cause.
+--   the file  must exist. pg_stat_file is the database's own view of the
+--             mounted directory, the same one the files service serves.
+--   its LoD   <stem>-lod.rad (File less its extension) is in the LoD
+--             directory. The app draws that tree, not File, and derives its
+--             name this way (app/src/layers/splat/schema.ts, lodUrlOf). A
+--             capture without one would load and never draw; build it with
+--             ./scripts/build-lod.sh <stem>. Only the header is checked: its
+--             chunk files (<stem>-lod-<n>.radc) are named inside it, and
+--             build-lod.sh checks every one before it writes the header.
+--
+-- Temporary functions: they live as long as this session, and the schema
+-- (01_schema.sql) stays the tables alone.
+CREATE OR REPLACE FUNCTION pg_temp.splat_file_problems(file text, dir text) RETURNS SETOF text
+LANGUAGE sql AS $$
+  SELECT 'File is empty' WHERE file IS NULL
+  UNION ALL
+  SELECT format('File %L must be a bare file name, without "/"', file) WHERE file ~ '/'
+  UNION ALL
+  SELECT format('File %L is not .spz', file) WHERE file !~ '\.spz$'
+  UNION ALL
+  SELECT format('File %L is not in %s', file, dir)
+  WHERE file IS NOT NULL AND file !~ '/'
+    AND (pg_stat_file(dir || '/' || file, true)).isdir IS DISTINCT FROM false
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.splat_lod_problems(splat_id text, file text, lod_dir text) RETURNS SETOF text
+LANGUAGE sql AS $$
+  SELECT format('%s: its LoD %s is not in %s (run ./scripts/build-lod.sh %s)', splat_id, lod, lod_dir, stem)
+  FROM (SELECT stem, stem || '-lod.rad' AS lod
+        FROM (SELECT regexp_replace(file, '\.[^.]*$', '') AS stem) s) l
+  WHERE file IS NOT NULL AND file !~ '/'
+    AND (pg_stat_file(lod_dir || '/' || lod, true)).isdir IS DISTINCT FROM false
+$$;
+
+\if :splats_by_header
+\echo 'splats: placed by each scan''s PLY header (georef.csv)'
+\ir 04_splats_header.sql
+\else
+\echo 'splats: placed by the control points (control_points.csv)'
 
 BEGIN;
 
@@ -131,15 +207,8 @@ UPDATE stg_splat_points SET file_x = x, file_y = y, file_z = z;
 -- The row rules. Every problem is collected before anything is raised: a
 -- hand-filled file with three mistakes should report three, not one per run.
 --
---   SplatID, File, Point   required. File is a bare name inside the captures
---             directory: a '/' would let a row point anywhere the database
---             can read, and the files service serves only that one directory.
---   extension .spz, and only that: build-lod.sh reads <scan>.spz alone, and
---             the app draws the LoD tree, never the file. A .ply row would pass
---             here and then always fail the LoD check, which names the wrong
---             cause.
---   the file  must exist. pg_stat_file is the database's own view of the
---             mounted directory, the same one the files service serves.
+--   SplatID, Point   required.
+--   File      the File rules above (splat_file_problems).
 --   X Y Z LAT LON   numbers; LAT in [-90, 90], LON in [-180, 180]. A LAT/LON
 --             pair the other way round is a header error above, not a range
 --             error here.
@@ -154,22 +223,11 @@ BEGIN
     SELECT csv_line, format('line %s: SplatID is empty', csv_line) AS msg
       FROM stg_splat_points WHERE splat_id IS NULL
     UNION ALL
-    SELECT csv_line, format('line %s (%s): File is empty', csv_line, splat_id)
-      FROM stg_splat_points WHERE file IS NULL
-    UNION ALL
     SELECT csv_line, format('line %s (%s): Point is empty', csv_line, splat_id)
       FROM stg_splat_points WHERE point IS NULL
     UNION ALL
-    SELECT csv_line, format('line %s (%s): File %L must be a bare file name, without "/"', csv_line, splat_id, file)
-      FROM stg_splat_points WHERE file ~ '/'
-    UNION ALL
-    SELECT csv_line, format('line %s (%s): File %L is not .spz', csv_line, splat_id, file)
-      FROM stg_splat_points WHERE file !~ '\.spz$'
-    UNION ALL
-    SELECT csv_line, format('line %s (%s): File %L is not in %s', csv_line, splat_id, file, dir)
-      FROM stg_splat_points
-      WHERE file IS NOT NULL AND file !~ '/'
-        AND (pg_stat_file(dir || '/' || file, true)).isdir IS DISTINCT FROM false
+    SELECT csv_line, format('line %s (%s): %s', csv_line, splat_id, problem)
+      FROM stg_splat_points, pg_temp.splat_file_problems(file, dir) AS problem
     UNION ALL
     SELECT csv_line, format('line %s (%s): %s %L is not a number', csv_line, splat_id, col, raw)
       FROM stg_splat_points,
@@ -209,13 +267,7 @@ END $$;
 --   not in a line   the smallest singular value of the centred file x/y must
 --              be at least 2 m. Points along one line fix the rotation and the
 --              scale along it, and nothing across it.
---   its LoD    <stem>-lod.rad (File less its extension) is in the LoD
---              directory. The app draws that tree, not File, and derives its
---              name this way (app/src/layers/splat/schema.ts, lodUrlOf). A
---              capture without one would load here and never draw; build it
---              with ./scripts/build-lod.sh <stem>. Only the header is checked: its
---              chunk files (<stem>-lod-<n>.radc) are named inside it, and
---              build-lod.sh checks every one before it writes the header.
+--   its LoD    the LoD rule above (splat_lod_problems).
 DO $$
 DECLARE
   lod_dir  text := current_setting('splats.lod_dir');
@@ -270,11 +322,9 @@ BEGIN
       ) t
       WHERE sigma_min < 2
     UNION ALL
-    SELECT format('%s: its LoD %s is not in %s (run ./scripts/build-lod.sh %s)', splat_id, lod, lod_dir, stem)
-      FROM (SELECT DISTINCT splat_id, stem, stem || '-lod.rad' AS lod
-            FROM (SELECT splat_id, regexp_replace(file, '\.[^.]*$', '') AS stem
-                  FROM stg_splat_points WHERE file IS NOT NULL) f) l
-      WHERE (pg_stat_file(lod_dir || '/' || lod, true)).isdir IS DISTINCT FROM false
+    SELECT DISTINCT problem
+      FROM (SELECT DISTINCT splat_id, file FROM stg_splat_points) c,
+           pg_temp.splat_lod_problems(splat_id, file, lod_dir) AS problem
   ) p;
 
   IF problems IS NOT NULL THEN
@@ -426,6 +476,7 @@ DROP TABLE stg_splat_csv, stg_splat_points, stg_splat_en, stg_splat_fit, stg_spl
 ANALYZE splats;
 
 COMMIT;
+\endif
 
 \echo ''
 \echo '--- splats: loaded ---'

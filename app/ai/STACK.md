@@ -92,7 +92,7 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | OpenFreeMap — `https://tiles.openfreemap.org/planet` | OSM vector tiles, OpenMapTiles schema, both basemap and `building` source layer | no |
 | OpenFreeMap styles — `/styles/{dark,fiord,liberty,positron}` | the four basemaps | no |
 | Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `TILES_PROXY_TARGET` (default `http://localhost:3000`) | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
-| Martin — `/tiles/splats/{z}/{x}/{y}`, same proxy | the splat captures' placements, solved from control points in `infra/` | no |
+| Martin — `/tiles/splats/{z}/{x}/{y}`, same proxy | the splat captures' placements, from their PLY headers (or fitted to control points) in `infra/` | no |
 | infra `files` (nginx) — `/files/3dgs-lod/<scan>-lod.rad`, proxied to `FILES_PROXY_TARGET` (default `http://localhost:3080`) | the splat captures' paged LoD trees: a `.rad` header (read by byte range) and its `<scan>-lod-<n>.radc` chunk files; the `.spz` themselves are at `/files/3dgs/` | no |
 
 Every endpoint above except the basemap styles is configured in one file,

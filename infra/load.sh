@@ -28,8 +28,10 @@ if [ "${status:-}" != "healthy" ]; then
   echo " failed"; echo "postgres did not become healthy; try: docker compose logs db" >&2; exit 1
 fi
 
+# psql_run <file> [psql args…]: the extra arguments go before -f, e.g. -v name=value.
 psql_run() {
-  docker compose exec -T db psql -v ON_ERROR_STOP=1 -U taipei -d taipei -f "$1"
+  local file=$1; shift
+  docker compose exec -T db psql -v ON_ERROR_STOP=1 -U taipei -d taipei "$@" -f "$file"
 }
 
 echo "==> schema"
@@ -48,12 +50,15 @@ echo "==> checks"
 psql_run /sql/03_checks.sql
 
 # The splat captures load after the trees are committed and checked, in their
-# own transaction: a control point typed wrong fails this step and leaves the
-# trees, and the rest of the bring-up, alone. The report prints each capture's
-# fit (rms_m, scale, heading_deg) and every point's residual.
-echo "==> splat captures"
+# own transaction: a bad row fails this step and leaves the trees, and the rest
+# of the bring-up, alone. SPLATS_PLACEMENT picks how they are placed: `header`
+# (the default) from data/3dgs/georef.csv, or `control_points` from
+# data/3dgs/control_points.csv, whose report prints each capture's fit
+# (rms_m, scale, heading_deg) and every point's residual.
+placement=${SPLATS_PLACEMENT:-header}
+echo "==> splat captures (placed by $placement)"
 splats_ok=1
-psql_run /sql/04_splats.sql || splats_ok=0
+psql_run /sql/04_splats.sql -v splats_placement="$placement" || splats_ok=0
 
 # Martin reads each table's columns and types once, at startup, so it must be
 # restarted after a load — otherwise a schema change leaves it serving HTTP 500
@@ -81,6 +86,10 @@ fi
 if [ "$splats_ok" = 0 ]; then
   echo
   echo "error: the splat captures did not load (see above); the trees did." >&2
-  echo "Fix data/3dgs/control_points.csv and re-run ./load.sh." >&2
+  if [ "$placement" = control_points ]; then
+    echo "Fix data/3dgs/control_points.csv and re-run ./load.sh." >&2
+  else
+    echo "Fix data/3dgs/georef.csv (node scripts/georef.mjs writes it) and re-run ./load.sh." >&2
+  fi
   exit 1
 fi

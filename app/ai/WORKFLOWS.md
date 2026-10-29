@@ -257,14 +257,19 @@ The layer is reachable as
 
 ## Checking the Gaussian splats
 
-The captures are placed from control points in
-`infra/data/3dgs/control_points.csv` (`infra/README.md`). `./load.sh` prints
-each capture's fit (`rms_m`, `scale`, `heading_deg`) and rejects a bad one, so
-start there if a capture is missing. Then, at z15+ over a capture, turn on
-**Gaussian splats → Captures** and check:
+By default the captures are placed by their PLY headers, from
+`infra/data/3dgs/georef.csv`; `SPLATS_PLACEMENT=control_points ./load.sh`
+fits them to `infra/data/3dgs/control_points.csv` instead (`infra/README.md`).
+`./load.sh` prints each capture's placement (and, fitted, its `rms_m`) and
+rejects a bad row, so start there if a capture is missing. Then, at z15+ over
+a capture, turn on **Gaussian splats → Captures** and check:
 - **Placement.** The capture's buildings and kerbs sit on the OSM extrusions
-  and the basemap's roads. A capture off by a rotation or mirrored means wrong
-  control points, not a layer bug: the loader's fit should have refused it.
+  and the basemap's roads. Placed by the header, a capture's ground sits
+  1.4–1.7 m below the map's (its origin, the antenna, is near 0 m, give or
+  take its group's spread in height): that is expected, so judge it from
+  straight above. Overlapping captures should meet without a step. Fitted, a capture off by a
+  rotation or mirrored means wrong control points, not a layer bug: the
+  loader's fit should have refused it.
 - **Shape at every angle.** Splats keep their shape at high pitch and any
   bearing, with the panel open (padding moves the principal point). Stretched
   or exploding splats mean `decomposeCamera` was bypassed.
