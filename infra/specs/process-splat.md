@@ -1,7 +1,9 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 8, approved 2026-10-24**: an align step runs before the
-cuts; see *Changes from revision 7* and its own spec, `specs/splat-align.md`.
+Status: **revision 9, approved 2026-10-29**: splat-transform 3.10.x instead
+of 3.4.x; see *Changes from revision 8*. Revision 8 (approved 2026-10-24) runs
+an align step before the cuts; see *Changes from revision 7* and its own spec,
+`specs/splat-align.md`.
 Revision 7 (approved 2026-10-24) renamed `clean-splat.sh` to
 `process-splat.sh`. Revision 6 (approved
 2026-10-23) moved the script to `infra/scripts/`. Revision 5 and revision 3
@@ -61,9 +63,9 @@ was delivered.
 The two directories are variables for the same reason the loader's inputs are
 psql variables: the test points the real script at a scratch directory.
 
-Requires `splat-transform` 3.4.x, installed globally (`npm install -g
-@playcanvas/splat-transform`), and `node` on `PATH`; fails with a clear message
-if either is missing or the version is not 3.4.x. The output is always
+Requires `splat-transform` 3.10.x, installed globally (`npm install -g
+@playcanvas/splat-transform@3.10`), and `node` on `PATH`; fails with a clear
+message if either is missing or the version is not 3.10.x. The output is always
 `source/<scan>.spz`, so a scan's `control_points.csv` rows name `<scan>.spz`
 and its `SplatID` is naturally `<scan>`. A `<scan>` that is a path or is not a
 folder in `original/` is refused, naming what is missing.
@@ -157,9 +159,11 @@ script, each with a comment, and each has a test.
 - **Every `node -e` / `node <script>` argument goes after `--`**: node reads a
   negative number such as `-26.86` as one of its own options.
 - The density step reads and writes through splat-transform's library
-  (`readFile`, `materializeToDataTable`, `DataTable.clone({ rows })`,
-  `writeFile`) with its in-memory file systems, because the library exports no
-  Node file system. A whole capture is held in memory: the density step peaks
+  (`readFile`, `materializeToDataTable`, `dataTableToChunkSource` with the kept
+  rows' indices, `writeSource`) with its in-memory file systems, because the
+  library exports no Node file system. 3.10 has no `writeFile`: a table is
+  written by turning it back into a chunk source. A whole capture is held in
+  memory; as measured on 3.4.x, the density step peaks
   at 2.6 GB and the splat-transform run at 3.5 GB for KZ0918-075047 (19.3M
   Gaussians, a 222 MB `.sog`), which takes ~2.5 min and serves 269 MB. A
   937 MB `.ply` (KZ0918-090946, 13.8M) peaks at 2.2 GB in the density step.
@@ -221,6 +225,8 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   naming both, and so is one with only a `point_cloud.mjs`;
 - a missing scan, a folder with no `point_cloud.<ext>`, a path in `<scan>`,
   and a non-positive `--cell`, `--min-density` or `--max-scale` are refused;
+- a `splat-transform` that reports a version other than 3.10.x (a shim
+  printing `splat-transform v3.4.0`) is refused, naming the version found;
 - the `.sog` scene is skipped by the align step as not a `point_cloud.ply`,
   and its `.align.json` says so;
 - with scans from `test/splat-align-scene.mjs`: a misplaced one is served
@@ -239,6 +245,19 @@ The align step's own cases are in `test/splat-align.sh`
 step reads any more), the splat layer spec's served counts, and the 2026-10-21
 decision entry in `app/ai/DECISIONS.md`, which has not landed yet and is
 rewritten for the density rule rather than superseded.
+
+## Changes from revision 8
+
+- The required splat-transform is 3.10.x, not 3.4.x; the version check holds
+  it there. 3.10's library dropped `writeFile`, so the density step writes
+  through `writeSource`, gathering the kept rows with `dataTableToChunkSource`
+  instead of `DataTable.clone({ rows })`. What it keeps and what it writes do
+  not change: every existing case passes on 3.10.3 unchanged.
+- New test: a version other than 3.10.x is refused.
+- Docs: `infra/README.md` and `infra/CLAUDE.md` name 3.10.x; a decision entry
+  in `app/ai/DECISIONS.md` records the move, as the 2026-10-21 entry asked to
+  revisit when splat-transform's library changed.
+- The memory and time figures were measured on 3.4.x and are not re-measured.
 
 ## Changes from revision 7
 
@@ -305,7 +324,8 @@ on 2026-10-22, the day it was approved.
   takes up to ~2.5 min and 3.5 GB per scan and needs a GPU-capable
   `splat-transform`.
 - Pinning splat-transform in an `infra/package.json`. The script checks the
-  global version instead; a pinned copy is the next step if 3.5 breaks it.
+  global version instead. (3.5–3.10 did change the library; it was ported,
+  and the global check kept.)
 - Connectivity (`-C`), box (`-B`) or opacity cuts, SH or decimation.
 - Converting the capture's frame. (The SOG first delivered was y-up; the
   PLYs now delivered are z-up and georeferenced, and `control-points.mjs`

@@ -189,6 +189,12 @@ if log=$(process ../original/scene); then bad "refuses a path" "it succeeded"; e
 if log=$(process scene --cell 0); then bad "refuses a zero cell" "it succeeded"; else expect_contains "refuses a zero cell" "$log" "--cell must be a positive number"; fi
 if log=$(process scene --min-density -1); then bad "refuses a negative density" "it succeeded"; else expect_contains "refuses a negative density" "$log" "--min-density must be a positive fraction"; fi
 if log=$(process scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
+# The density step is written against 3.10's library, so another version is
+# refused before anything runs.
+mkdir -p "$work/old"
+printf '#!/usr/bin/env bash\necho "splat-transform v3.4.0"\n' > "$work/old/splat-transform"
+chmod +x "$work/old/splat-transform"
+if log=$(PATH=$work/old:$PATH process scene); then bad "refuses another splat-transform version" "it succeeded"; else expect_contains "refuses another splat-transform version" "$log" "needs splat-transform 3.10.x, found 'splat-transform v3.4.0'"; fi
 
 # Scans with everything the align step reads, from splat-align-scene.mjs (its
 # own suite, test/splat-align.sh, tests the step itself). nomap is unreliable

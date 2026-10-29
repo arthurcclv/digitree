@@ -6,6 +6,30 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-29 — `process-splat.sh` moves to splat-transform 3.10.x
+
+**Decision.** The script requires splat-transform 3.10.x, installed globally,
+and refuses any other version, where it required 3.4.x. 3.10's library has no
+`writeFile`, so the density cut writes the kept rows through `writeSource`,
+gathering them with `dataTableToChunkSource` instead of
+`DataTable.clone({ rows })`. `infra/specs/process-splat.md` revision 9. This
+acts on the "revisit if splat-transform changes the library API" clause of
+the 2026-10-21 cleaning entry; the rest of that entry stands.
+
+**Why.** 3.10.3 is the version installed, and 3.4.x is no longer where
+splat-transform's development is. Every existing `test/process-splat.sh` case
+passes on 3.10.3 unchanged, so what is kept and written does not change.
+
+**Rules out.**
+- Supporting 3.4.x and 3.10.x side by side: the write call differs, and two
+  library paths would need two test runs.
+- Pinning a copy in an `infra/package.json`: the global check is still
+  enough while one person runs the script.
+
+**Revisit if** splat-transform changes the library API again (the version
+check fails first), or the memory and time figures, measured on 3.4.x, turn
+out materially different on 3.10.
+
 ## 2026-10-29 — A header-placed capture's height is its `offsetz` less its group's median
 
 **Decision.** In `header` mode, `altitude_m` is `OFFSETZ − datum`. The

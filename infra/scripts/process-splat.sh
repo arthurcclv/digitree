@@ -69,8 +69,8 @@ done
 # the version is held to the one it was written against.
 version=$(splat-transform --version 2>&1)
 case $version in
-  "splat-transform v3.4."*) ;;
-  *) die "process-splat.sh needs splat-transform 3.4.x, found '$version'" ;;
+  "splat-transform v3.10."*) ;;
+  *) die "process-splat.sh needs splat-transform 3.10.x, found '$version'" ;;
 esac
 lib=$(npm root -g)/@playcanvas/splat-transform/dist/index.mjs
 [ -f "$lib" ] || die "splat-transform's library is not at $lib; install it globally with npm"

@@ -268,7 +268,7 @@ apart from the alignment it only removes Gaussians — the control points
 stay valid.
 
 With the defaults the KY0917 captures lost 3.7–5.3%. It needs
-`splat-transform` 3.4.x installed globally with npm (the density step uses its
+`splat-transform` 3.10.x installed globally with npm (the density step uses its
 library) and `node`. It holds a scan in memory: KZ0918-075047 (19.3M
 Gaussians, a 222 MB `.sog`) peaks at 3.5 GB, takes ~2.5 min and serves
 269 MB. Its specs are `specs/process-splat.md` and `specs/splat-align.md`,

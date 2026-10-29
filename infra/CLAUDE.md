@@ -148,7 +148,7 @@ right way to start over.
   into a filter argument must negate it). Its output is SPZ v3 because Spark
   2.3.1 recognises an SPZ only by gzip magic, and v4 is not gzipped. The
   density step uses splat-transform's library API, so the script refuses any
-  version but 3.4.x. Its spec is `specs/process-splat.md`.
+  version but 3.10.x. Its spec is `specs/process-splat.md`.
 
 ## The contract with `app/`
 

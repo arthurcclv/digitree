@@ -24,7 +24,8 @@ const inName = basename(inPath);
 const readFs = new lib.MemoryReadFileSystem();
 readFs.set(inName, new Uint8Array(await readFile(inPath)));
 const [source] = await lib.readFile({ filename: inName, inputFormat: lib.getInputFormat(inName), fileSystem: readFs });
-const table = await lib.materializeToDataTable(source, lib.createChunkDataPool());
+const pool = lib.createChunkDataPool();
+const table = await lib.materializeToDataTable(source, pool);
 source.close?.();
 
 const n = table.numRows;
@@ -62,12 +63,14 @@ for (let i = 0; i < n; i++) if (perGaussian[i] >= threshold) keep.push(i);
 console.log(JSON.stringify({ before: n, typical, kept: keep.length }));
 if (keep.length === 0) process.exit(3);
 
+// 3.10 writes chunk sources only, so the kept rows are gathered into one.
 const outName = basename(outPath);
 const writeFs = new lib.MemoryFileSystem();
-await lib.writeFile({
+await lib.writeSource({
   filename: outName,
   outputFormat: lib.getOutputFormat(outName, {}),
-  dataTable: table.clone({ rows: keep }),
+  source: lib.dataTableToChunkSource(table, undefined, Uint32Array.from(keep)),
+  pool,
   options: {},
 }, writeFs);
 await writeFile(outPath, writeFs.results.get(outName));
