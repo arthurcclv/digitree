@@ -223,6 +223,7 @@ georef NOZ    'epsg 32651' 'offsetx 0' 'offsety 0'
 georef TWD97  'epsg 3826' 'offsetx 0' 'offsety 0' 'offsetz 0'
 georef SHIFT  'epsg 32651' 'offsetx 0' 'offsety 0' 'offsetz 0' 'shiftx 1'
 georef SCALE  'epsg 32651' 'offsetx 0' 'offsety 0' 'offsetz 0' 'scalez 2'
+georef EPSGDOT 'epsg 32651.0' 'offsetx 0' 'offsety 0' 'offsetz 0'
 scan50 HOLES '"ground":9'
 scan50 LOW '"depth":0.7'
 scan50 NOOPAC '"noOpacity":true'
@@ -245,6 +246,8 @@ refuses "a CRS that is not UTM"       "TWD97: point_cloud.ply is in EPSG:3826"  
 refuses "a shift"                     "SHIFT: point_cloud.ply has shiftx 1"          SHIFT
 refuses "a scale"                     "SCALE: point_cloud.ply has scalez 2"          SCALE
 refuses "a path as the scan"          "must be a bare scan folder name"              ../T1
+refuses "an epsg that is not a whole number" "EPSGDOT: point_cloud.ply has epsg 32651.0; it must be a whole number" EPSGDOT
+refuses "a scan given twice"          "'T1' is given twice"                          T1 T1
 refuses "a missing scan"              "ABSENT: $SPLATS_ORIGINAL_DIR/ABSENT/gnss.csv is missing" ABSENT
 printf 'SplatID,File,Point,X,Y,Z,LON,LAT,H,Note\n' > "$SPLATS_CONTROL_POINTS"
 refuses "a file with another header"  "does not start with the header"               T1

@@ -9,9 +9,11 @@
 // original/. Replaces only the given scans' rows of control_points.csv and
 // keeps every other row byte for byte. The rules and their numbers are in
 // specs/control-points.md.
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { open, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { PLY, georeference, num } from './ply-header.mjs';
+import { fail, otherRows, replaceFile, scansToRun } from './scan-csv.mjs';
 import { utm } from './utm.mjs';
 
 const ORIGINAL = process.env.SPLATS_ORIGINAL_DIR ?? 'data/3dgs/original';
@@ -31,87 +33,8 @@ const BIN_M = 0.05;
 const MIN_SAMPLES = 10;
 const HEIGHT_M = [1.0, 2.5];
 const CHUNK = 64 << 20;
-// process-splat.sh's single-file formats: a scan has exactly one of them.
-const CAPTURES = ['ply', 'compressed.ply', 'sog', 'spz', 'splat', 'ksplat'].map((e) => `point_cloud.${e}`);
-const PLY = 'point_cloud.ply';
-
-const fail = (msg) => { console.error(`error: ${msg}`); process.exit(1); };
-
-const hasBoth = (scan) => ['gnss.csv', PLY].every((f) => existsSync(join(ORIGINAL, scan, f)));
-
-function scansToRun() {
-  const given = process.argv.slice(2).filter((a) => a !== '--');
-  if (given.length === 0) {
-    if (!existsSync(ORIGINAL)) fail(`${ORIGINAL} does not exist`);
-    const all = readdirSync(ORIGINAL).filter((d) => statSync(join(ORIGINAL, d)).isDirectory() && hasBoth(d)).sort();
-    if (all.length === 0) fail(`no scan folder in ${ORIGINAL} has both gnss.csv and ${PLY}`);
-    return all;
-  }
-  for (const scan of given) {
-    if (scan.includes('/') || scan === '.' || scan === '..') fail(`'${scan}' must be a bare scan folder name, not a path`);
-    const gnss = join(ORIGINAL, scan, 'gnss.csv');
-    if (!existsSync(gnss)) fail(`${scan}: ${gnss} is missing`);
-  }
-  return given;
-}
 
 const lines = (text) => text.split(/\r?\n/).filter((l) => l.trim() !== '');
-
-function num(raw, what) {
-  const v = Number(raw);
-  if (raw === undefined || raw.trim() === '' || !Number.isFinite(v)) fail(`${what}: '${raw}' is not a number`);
-  return v;
-}
-
-// The PLY header's comments, read without the vertices (the files are ~1 GB):
-// `comment <key> <value>` lines up to end_header.
-async function plyComments(path) {
-  const fh = await open(path, 'r');
-  try {
-    const buf = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-    const text = buf.subarray(0, bytesRead).toString('latin1');
-    const end = text.indexOf('end_header');
-    if (!text.startsWith('ply') || end < 0) return null;
-    const comments = new Map();
-    for (const l of text.slice(0, end).split(/\r?\n/)) {
-      const [kw, key, value, ...rest] = l.trim().split(/\s+/);
-      if (kw === 'comment' && key && value !== undefined && rest.length === 0) comments.set(key, value);
-    }
-    return comments;
-  } finally {
-    await fh.close();
-  }
-}
-
-// The capture's georeference: file (x, y, z) = (E, N, h) − offset, in the UTM
-// zone `epsg` names. Verified on the KZ0918 scans, where the offset is the
-// first GNSS fix to under 1 mm (specs/control-points.md). A shift or scale
-// other than the identity is refused: what it would mean is unverified.
-async function georeference(scan) {
-  const found = CAPTURES.filter((f) => existsSync(join(ORIGINAL, scan, f)));
-  if (found.length === 0) fail(`${scan}: no ${PLY} in ${join(ORIGINAL, scan)}`);
-  if (found.length > 1) fail(`${scan}: more than one capture (${found.join(', ')}); keep one of them`);
-  if (found[0] !== PLY) fail(`${scan}: ${found[0]} carries no georeference; only a ${PLY} with one can be placed from GNSS`);
-  const c = await plyComments(join(ORIGINAL, scan, PLY));
-  if (!c) fail(`${scan}: ${PLY} has no PLY header`);
-  const field = (key) => {
-    if (!c.has(key)) fail(`${scan}: ${PLY} has no 'comment ${key}' georeference`);
-    return num(c.get(key), `${scan}: ${PLY} comment ${key}`);
-  };
-  const epsg = field('epsg');
-  const north = epsg >= 32601 && epsg <= 32660;
-  if (!north && !(epsg >= 32701 && epsg <= 32760)) fail(`${scan}: ${PLY} is in EPSG:${c.get('epsg')}; only WGS 84 / UTM (32601–32660, 32701–32760) is supported`);
-  for (const axis of 'xyz') {
-    if (c.has(`shift${axis}`) && field(`shift${axis}`) !== 0) fail(`${scan}: ${PLY} has shift${axis} ${c.get(`shift${axis}`)}; only 0 is supported`);
-    if (c.has(`scale${axis}`) && field(`scale${axis}`) !== 1) fail(`${scan}: ${PLY} has scale${axis} ${c.get(`scale${axis}`)}; only 1 is supported`);
-  }
-  return {
-    epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')],
-    // ALT: the file origin's altitude, written as the header gives it.
-    offsetzRaw: c.get('offsetz'),
-  };
-}
 
 // gnss.csv: #timestamp,status,latitude,longitude,altitude,… A fix without a
 // solution writes `nan` (1,966 of KZ0918-075047's, none of them status 4), so
@@ -287,7 +210,7 @@ async function antennaHeight(scan, candidates) {
 const fixed3 = (v) => { const r = Math.round(v * 1000) / 1000; return (r === 0 ? 0 : r).toFixed(3); };
 
 async function rowsFor(scan) {
-  const [geo, fixes] = await Promise.all([georeference(scan), readFixes(scan)]);
+  const [geo, fixes] = await Promise.all([georeference(ORIGINAL, scan), readFixes(scan)]);
   const [ox, oy, oz] = geo.offset;
   console.log(`${scan}: EPSG:${geo.epsg}, offset ${ox} ${oy} ${oz}`);
   // The fix in the file's coordinates. 04_splats.sql reads X, Y, Z as file
@@ -301,42 +224,40 @@ async function rowsFor(scan) {
   // ground on the map's through mean(H − scale·Z).
   const a = await antennaHeight(scan, candidates);
   return points.map((p, i) =>
-    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, geo.offsetzRaw, fixed3(a.h),
+    [scan, `${scan}.spz`, i + 1, fixed3(p.x), fixed3(p.y), fixed3(p.z), p.lat, p.lon, geo.raw.offsetz, fixed3(a.h),
       `gnss ${p.tRaw}; EPSG:${geo.epsg}; antenna over ${a.kept} of ${a.of} samples`].join(','));
 }
 
-const scans = scansToRun();
+const scans = scansToRun(ORIGINAL, ['gnss.csv', PLY]);
+for (const scan of scans) {
+  const gnss = join(ORIGINAL, scan, 'gnss.csv');
+  if (!existsSync(gnss)) fail(`${scan}: ${gnss} is missing`);
+}
 
 // Every other capture's rows are kept as they are, in order.
-let kept = [];
-if (existsSync(OUT)) {
-  const [head, ...rest] = (await readFile(OUT, 'utf8')).split('\n');
-  const h = head.replace(/\r$/, '');
-  if (h !== HEADER && h !== OLD_HEADER) fail(`${OUT} does not start with the header ${HEADER}; left untouched`);
-  kept = rest.filter((l) => l.trim() !== '' && !scans.includes(l.slice(0, l.indexOf(','))));
-  // An old file gains an empty ALT after LON, its eighth field. The first
-  // eight hold no free text, so the eighth comma is LON's end.
-  if (h === OLD_HEADER) {
-    kept = kept.map((l) => {
-      let at = -1;
-      for (let k = 0; k < 8 && (at = l.indexOf(',', at + 1)) >= 0; k++);
-      if (at < 0) fail(`${OUT}: row '${l}' has fewer than nine fields; left untouched`);
-      return `${l.slice(0, at + 1)},${l.slice(at + 1)}`;
-    });
-    console.log(`upgrading ${OUT} to the header with ALT`);
+let { head, kept } = await otherRows(OUT, [HEADER, OLD_HEADER], scans);
+// An old file gains an empty ALT after LON, its eighth field. The first
+// eight hold no free text, so the eighth comma is LON's end.
+if (head === OLD_HEADER) {
+  kept = kept.map((l) => {
+    let at = -1;
+    for (let k = 0; k < 8 && (at = l.indexOf(',', at + 1)) >= 0; k++);
+    if (at < 0) fail(`${OUT}: row '${l}' has fewer than nine fields; left untouched`);
+    return `${l.slice(0, at + 1)},${l.slice(at + 1)}`;
+  });
+  console.log(`upgrading ${OUT} to the header with ALT`);
+}
+
+// A refusal thrown while reading a scan (its header, a number in gnss.csv or
+// the PLY) names the scan and stops the run, as fail() does.
+const generated = [];
+for (const scan of scans) {
+  try {
+    generated.push(...await rowsFor(scan));
+  } catch (e) {
+    fail(e.message);
   }
 }
 
-const generated = [];
-for (const scan of scans) generated.push(...await rowsFor(scan));
-
-// Every scan succeeded: only now is the file replaced, through a rename.
-const tmp = join(dirname(OUT), `.control_points.${process.pid}.tmp`);
-try {
-  await writeFile(tmp, [HEADER, ...kept, ...generated].join('\n') + '\n');
-  await rename(tmp, OUT);
-} catch (e) {
-  await rm(tmp, { force: true });
-  fail(`could not write ${OUT}: ${e.message}`);
-}
+await replaceFile(OUT, [HEADER, ...kept, ...generated]);
 console.log(`wrote ${generated.length} rows for ${scans.length} scan(s) to ${OUT}; kept ${kept.length} other row(s)`);

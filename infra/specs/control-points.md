@@ -1,7 +1,7 @@
 # Spec — `control-points.mjs`: control points from a scan's georeference
 
-Status: **revision 9 — approved 2026-10-25.** See *Changes from
-revision 8*. Revision 8 — approved 2026-10-25. Revision 7 — approved
+Status: **revision 10 — approved 2026-10-29.** See *Changes from
+revision 9*. Revision 9 — approved 2026-10-25. Revision 8 — approved 2026-10-25. Revision 7 — approved
 2026-10-23.
 
 ## What it is
@@ -37,7 +37,7 @@ splat file is not in it — see *Changes from revision 3*.
 
 | input | default | meaning |
 | --- | --- | --- |
-| `<scan>…` | every folder in `original/` with both `gnss.csv` and `point_cloud.ply` | bare scan folder names; a path, or a folder missing either file, is refused, naming it |
+| `<scan>…` | every folder in `original/` with both `gnss.csv` and `point_cloud.ply` | bare scan folder names; a path, a scan given twice, or a folder missing either file, is refused, naming it |
 | `SPLATS_ORIGINAL_DIR` | `data/3dgs/original` | env: where the scan folders are |
 | `SPLATS_CONTROL_POINTS` | `data/3dgs/control_points.csv` | env: the file written |
 
@@ -84,10 +84,12 @@ status 4); only status-4 fixes need numbers.
 
 ## What it does, per scan
 
-1. **Georeference.** Read the PLY header. Refuse the scan, naming it and the
+1. **Georeference.** Read the PLY header (`scripts/ply-header.mjs`, shared
+   with `georef.mjs` since 2026-10-29). Refuse the scan, naming it and the
    problem, when: the capture is not a `.ply`, or there is more than one
    `point_cloud.*` (as `process-splat.sh` refuses it); `epsg` or any of
-   `offsetx/y/z` is missing or not a number; `epsg` is not WGS 84 / UTM
+   `offsetx/y/z` is missing or not a number; `epsg` is not a whole number
+   (digits only, as the loader reads `georef.csv`'s) in WGS 84 / UTM
    (32601–32660 north, 32701–32760 south); a `shift*` is present and not 0, or
    a `scale*` is present and not 1 (their meaning is unverified, so they are
    refused rather than guessed).
@@ -294,9 +296,10 @@ that ground.
 - refused, leaving the file untouched: a wrong header; collinear fixes; a thin
   triangle (100 m base, apex 2.2 m off it, which is 1.80 m across by the
   loader's measure); fewer
-  than 3 candidates; a path as `<scan>`; a folder without `gnss.csv`; a
-  folder without `point_cloud.ply`; a `point_cloud.sog` instead; a header
-  without `epsg`, or without `offsetz`; `epsg 3826`; `shiftx 1`; `scalez 2`.
+  than 3 candidates; a path as `<scan>`; a scan given twice; a folder
+  without `gnss.csv`; a folder without `point_cloud.ply`; a
+  `point_cloud.sog` instead; a header without `epsg`, or without `offsetz`;
+  `epsg 3826`; `epsg 32651.0`; `shiftx 1`; `scalez 2`.
 - through the real `04_splats.sql` (`test/run.sh`'s scratch database): `T1`'s
   output (fixes spread ~50 m) loads with the origin within 5 mm of the fix at
   the offset, the heading within 0.01° of 360° minus the grid convergence at
@@ -353,7 +356,9 @@ Earlier revisions:
 - More than three points.
 - Reading the georeference in `04_splats.sql` or the app instead of going
   through control points: the loader's fit and checks stay the one path every
-  capture takes.
+  capture takes. *(Superseded 2026-10-29: the loader places by the header by
+  default, through `georef.csv` (`specs/georef.md`); this script and the fit
+  are the `splats_placement=control_points` way.)*
 - Captures without a georeference (`.sog`, `.spz`, a PLY without the
   comments): they are refused, and placed by hand-measured points as before.
 - Terrain: a map ground other than 0 m.
@@ -365,6 +370,14 @@ Earlier revisions:
 - The 3dgs-viewer (another repository) uses `U = s·Z` and ignores `H`. It
   stays an antenna height low until it adds the loader's
   `mean(H − s·Z)`.
+
+## Changes from revision 9
+
+- A scan given twice is refused, naming it: its rows would be written twice.
+- `epsg` must be digits only (`32651.0` is refused), the header rule
+  `georef.mjs` shares through `scripts/ply-header.mjs`.
+- The scan list, the kept rows and the rename move to `scripts/scan-csv.mjs`,
+  shared with `georef.mjs`. The output is unchanged.
 
 ## Changes from revision 8
 
