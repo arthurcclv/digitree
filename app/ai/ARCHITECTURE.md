@@ -181,7 +181,7 @@ owner's `schema.ts`, the single reading every consumer shares:
 `src/lib/place` (its own spec) is generic: `Place`, `Viewpoint`, and local
 time at a fixed UTC offset (`localDate`, `localMinutes`, `fromLocal`,
 `noonToday`, `offsetLabel`). `src/place.ts` holds the app's `PLACE`: Taipei,
-UTC+8, the Xinyi home view, and the panel's 05:00–19:00. `useMapEngine`
+UTC+8, the Da'an home view, and the panel's 05:00–19:00. `useMapEngine`
 starts the camera at `PLACE.home`. `App.tsx` gives the sunlight layer its
 moment (`noonToday(PLACE)`) and builds the time labels from `PLACE`. The
 layers name no city: the sunlight layer has no default moment, and the
@@ -407,7 +407,7 @@ scale of a mesh's matrix, so the per-axis part is a world modifier
 | `src/layers/<name>/usd.ts` | that layer's USD package (buildings, tree, sunlight, temperature, basemaps), exposed as a mount's `exportUsd(frame)` or, for the two mount-less folders, as `exportBuildingsUsd` / `exportBasemapUsd` |
 | `src/sources.ts` | the app's datasets: `TREES`, `BUILDINGS`, `TREES_SURVEYED`, `SPLATS`. The only place an endpoint lives |
 | `src/lib/place/` | `Place`, `Viewpoint`, local time at a fixed offset; its own spec |
-| `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Xinyi home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |
+| `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Da'an home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |

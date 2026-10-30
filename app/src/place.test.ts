@@ -1,21 +1,20 @@
 import { describe, expect, test } from "vitest";
 import { PLACE } from "./place";
 
-// Pins what the app showed before the place moved out of the layers.
 describe("PLACE", () => {
   test("is Taipei, at a fixed UTC+8", () => {
     expect(PLACE).toMatchObject({ name: "Taipei", timeZone: "Asia/Taipei", utcOffsetMin: 480 });
   });
 
-  test("starts at the Xinyi view", () => {
+  test("starts at the Da'an view, facing north", () => {
     expect(PLACE.home).toEqual({
-      id: "xinyi",
-      label: "Xinyi",
-      sub: "信義 · Taipei 101",
-      center: [121.5608, 25.0345],
-      zoom: 15.4,
+      id: "daan",
+      label: "Da'an",
+      sub: "大安 · Taipei",
+      center: [121.539873, 25.039784],
+      zoom: 17.36,
       pitch: 66,
-      bearing: -28,
+      bearing: 0,
     });
   });
 

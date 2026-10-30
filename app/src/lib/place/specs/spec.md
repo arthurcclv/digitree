@@ -70,7 +70,7 @@ app. A place that observes DST needs a zone-aware form of these helpers (via
 | `name` | `"Taipei"` |
 | `timeZone` | `"Asia/Taipei"` |
 | `utcOffsetMin` | `480` |
-| `home` | Xinyi: `[121.5608, 25.0345]`, z15.4, pitch 66, bearing −28 (the old `HOME`, unchanged) |
+| `home` | `id` `"daan"`, `label` `"Da'an"`, `sub` `"大安 · Taipei"`; `[121.539873, 25.039784]`, z17.36, pitch 66, bearing 0 (facing due north). Moved from the Xinyi view on 2026-10-30 (`ai/DECISIONS.md`) |
 | `daylight` | `{ fromMin: 300, toMin: 1140 }` (05:00–19:00, the old `SUN_TIME_MIN`/`MAX`) |
 
 `useMapEngine` starts the camera at `PLACE.home`. `App.tsx` builds the sunlight
@@ -81,7 +81,8 @@ labels the panel from `PLACE`:
 - the readout `HH:MM +08`.
 
 The 15-minute slider step is the panel's own, so `SUN_TIME_STEP` moves into
-`App.tsx`. Everything the user sees is unchanged.
+`App.tsx`. The extraction itself changed nothing the user sees; `home` moved
+later, as its own decision (2026-10-30, `ai/DECISIONS.md`).
 
 ## What the layers give up
 
@@ -113,8 +114,8 @@ All asserted by vitest.
    at −05:00 and at +05:30. A late-evening UTC instant is already tomorrow at
    +08:00. `noonToday` is noon of the local date.
 2. `offsetLabel` gives `+08`, `-05` and `+05:30`.
-3. `PLACE` holds the Taipei values above. That pins `home` and `daylight` to
-   what the app showed before.
+3. `PLACE` holds the Taipei values above, `home` and `daylight` included, so
+   any change to them shows up as a test change.
 4. The records take `name` and `sourceKind` from their descriptor. A fixture
    descriptor's values appear unchanged in the record.
 5. No non-test file under `src/layers/` or `src/lib/` contains a quoted

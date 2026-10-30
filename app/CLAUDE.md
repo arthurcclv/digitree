@@ -153,7 +153,7 @@ src/
   App.tsx           the interface: control state, panel, status bar, telemetry
   sources.ts        the app's datasets (TREES, BUILDINGS, SPLATS) — the only place
                     an endpoint lives; layers take them as descriptors
-  place.ts          the app's PLACE (Taipei, UTC+8, the Xinyi home view) —
+  place.ts          the app's PLACE (Taipei, UTC+8, the Da'an home view) —
                     with sources.ts, the only place the city is named
   main.tsx          React root
   styles.css        the design system (all styling lives here; no CSS modules)

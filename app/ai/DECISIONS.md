@@ -6,6 +6,23 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-30 — The home view moves to Da'an, facing north, at z17.36
+
+**Decision.** `PLACE.home` is `[121.539873, 25.039784]` (6 decimals, ~0.1 m),
+z17.36, pitch 66, bearing 0, named `daan` / "Da'an" / "大安 · Taipei". It was the Xinyi view
+(`[121.5608, 25.0345]`, z15.4, bearing −28). Only `src/place.ts` changes;
+`src/lib/place/specs/spec.md` records the new value.
+
+**Why.** Asked for: the app should open on this block in Da'an, on Jianguo
+S Rd just south of Zhongxiao E Rd, north up, at z17.36.
+
+**Rules out.** Keeping Taipei 101 in the opening frame.
+
+**Revisit if** the area of interest moves again, or several start views are
+wanted (a picker over `Viewpoint`s rather than one `home`).
+
+---
+
 ## 2026-10-29 — `process-splat.sh` moves to splat-transform 3.10.x
 
 **Decision.** The script requires splat-transform 3.10.x, installed globally,
