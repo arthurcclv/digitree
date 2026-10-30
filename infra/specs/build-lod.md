@@ -1,7 +1,9 @@
 # Spec — `build-lod.sh`: a tile's level-of-detail tree, as a paged `.rad`
 
-Status: **revision 4, approved 2026-10-29**, with `specs/splat-mosaic.md`:
-the trees are built from the mosaic's tiles, `tiles/<tile>.ply`, not from
+Status: **revision 5, approved 2026-10-30**: Spark's `build-lod` moves
+to tag `v2.4.0`, with the app's Spark (`app/src/layers/splat/specs/spec.md`
+revision 14); see *Changes from revision 4*. Revision 4 (approved
+2026-10-29, with `specs/splat-mosaic.md`): the trees are built from the mosaic's tiles, `tiles/<tile>.ply`, not from
 `source/<scan>.spz`, and `--all` builds every tile; see *Changes from
 revision 3*. Revision 3 (approved 2026-10-23) moved the script to
 `infra/scripts/`; see *Changes from revision 2*. Revision 2 made the output
@@ -66,12 +68,12 @@ the same tree from one command.
    the `.rad` header with `node`, which the mosaic, the step before, already
    needs).
 2. **Builds** with Spark's own `build-lod` (`rust/build-lod` in the Spark
-   repo) at **tag `v2.3.1`**, the version `app/package.json` pins. The `.rad`
+   repo) at **tag `v2.4.0`**, the version `app/package.json` pins. The `.rad`
    format is read by the app's Spark, so the writer is held to it. It runs
    in **`rust:1.88-bookworm`**, with nothing installed on the host for it but
    Docker. The first run clones the tag and compiles the tool, in about a
    minute. The tool and cargo's downloads are kept in the Docker volume
-   `splat-build-lod-v2.3.1`, so later runs skip that step. The crate is
+   `splat-build-lod-v2.4.0`, so later runs skip that step. The crate is
    compiled with `--no-default-features`: the default `gpu` feature only
    clusters spherical harmonics and needs a GPU the container lacks, and the
    captures have none.
@@ -165,6 +167,21 @@ has a stand-in `.rad` in `test/fixtures/splats/lod/`.
 - Building tiles in parallel. One container at a time keeps the peak memory
   that of the largest tile.
 - Spherical harmonics (`--cluster-sh`), which the captures do not have.
+
+## Changes from revision 4
+
+- Spark's `build-lod` moves from tag `v2.3.1` to `v2.4.0`, the version the
+  app now pins. The cache volume is named for the tag, so the first run
+  after the change builds the new tool in `splat-build-lod-v2.4.0`; the old
+  `splat-build-lod-v2.3.1` volume is no longer used and can be removed by
+  hand (`docker volume rm splat-build-lod-v2.3.1`).
+- 2.4.0 compresses RAD chunks with `flate2` instead of `zlib-rs` (~50%
+  faster, ~2–5% smaller). The RAD format, the method (`--quality
+  --rad-chunked`), the checks and the output contract are unchanged.
+- The image stays `rust:1.88-bookworm`: the crate's `rust-version` at
+  `v2.4.0` is 1.82.
+- Every tile's tree is rebuilt with `./scripts/build-lod.sh --all`.
+- Tests: none change; `test/build-lod.sh` runs against the new tool.
 
 ## Changes from revision 3
 

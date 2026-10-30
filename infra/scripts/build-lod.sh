@@ -20,7 +20,7 @@ lod_dir=${SPLATS_LOD_DIR:-$infra/data/3dgs/lod}
 
 # The .rad format is read by the app's Spark, so the writer is held to the same
 # version: app/package.json pins @sparkjsdev/spark at exactly this.
-spark_tag=v2.3.1
+spark_tag=v2.4.0
 rust_image=rust:1.88-bookworm
 # The compiled tool and cargo's downloads persist here between runs, so only
 # the first run builds (about a minute).

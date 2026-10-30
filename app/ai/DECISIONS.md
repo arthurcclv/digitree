@@ -6,6 +6,30 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-30 — Spark moves to 2.4.0, the app and infra's `build-lod` together
+
+**Decision.** `@sparkjsdev/spark` is pinned exactly at `2.4.0` (was
+`2.3.1`), and `infra/scripts/build-lod.sh` builds Spark's `build-lod` at tag
+`v2.4.0`, so the `.rad` writer and reader stay one version. Every tile's tree
+is rebuilt (`./scripts/build-lod.sh --all`). Splat spec revision 14,
+`infra/specs/build-lod.md` revision 5.
+
+**Why.** 2.4.0 re-sorts less when the LoD changes (less stutter while chunks
+stream), draws long thin splats at the right width, ignores a pending sort's
+errors after `SparkRenderer.dispose()`, replaces a crashed worker instead of
+reusing it, and stops retrying a failed LoD tree every frame. Everything the
+layer relies on — its options, `defaultSplatTarget()`, the page pool and
+cleanup defaults — is unchanged, checked against the package.
+
+**Rules out.** Nothing new. `covSplats` still throws on a paged mesh in
+2.4.0, so the per-axis stretch stays a world modifier (2026-10-22's
+*Revisit if* is not met).
+
+**Revisit if** a later Spark changes the RAD format or the paged API; the
+two pins move together.
+
+---
+
 ## 2026-10-30 — Splat tiles: a viewer choice between own ground and one shared ground
 
 **Decision.** `SplatSettings.snapToGround` (default `true`, the panel's

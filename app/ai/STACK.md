@@ -15,7 +15,7 @@ removing one means editing this file in the same change (and usually
 | `react` / `react-dom` | `^19.2.0` | the chrome |
 | `@mapbox/vector-tile` | `^3.0.0` | decodes the MVT tiles the sunlight layer fetches for itself; the same decoder MapLibre uses internally, which does not export it |
 | `pbf` | `^5.1.2` | the protobuf reader `@mapbox/vector-tile` reads through |
-| `@sparkjsdev/spark` | `2.3.1` (pinned) | draws the Gaussian splat captures (`SparkRenderer`, `SplatMesh`); peer `three >= 0.180`, deduped onto the app's one copy. Imported dynamically, so it is its own ~2.6 MB chunk, fetched only when a capture is due to load |
+| `@sparkjsdev/spark` | `2.4.0` (pinned) | draws the Gaussian splat captures (`SparkRenderer`, `SplatMesh`); peer `three >= 0.180`, deduped onto the app's one copy. Imported dynamically, so it is its own ~2.6 MB chunk, fetched only when a capture is due to load |
 
 The two GeoLibre packages are **pinned exactly**. They are the subject of the
 app, their external-native path is the seam the tree depends on, and

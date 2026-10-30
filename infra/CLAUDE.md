@@ -50,7 +50,7 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
   ply-header.mjs     a scan's point_cloud.ply georeference, and a PLY's body
                      layout, for the mosaic
   build-lod.sh       tiles/<tile>.ply (one, several, or --all) -> Spark's
-                     build-lod (v2.3.1, in Docker) -> lod/<tile>-lod.rad +
+                     build-lod (v2.4.0, in Docker) -> lod/<tile>-lod.rad +
                      <tile>-lod-<n>.radc, the chunked tree the app draws
 specs/               specs for the scripts (process-splat.md, splat-align.md,
                      splat-mosaic.md, voxel-quality.md, build-lod.md)

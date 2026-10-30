@@ -295,7 +295,7 @@ again in free disk, for its per-tile buckets.
 built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a
 fixed-size page pool, so it holds only what the view needs. `build-lod.sh`
 builds it from the tile's `.ply` with Spark's own `build-lod`, at the version
-the app pins (v2.3.1), in a Rust container, so it needs only Docker, plus
+the app pins (v2.4.0), in a Rust container, so it needs only Docker, plus
 `node` (to read the header it wrote):
 
 ```bash

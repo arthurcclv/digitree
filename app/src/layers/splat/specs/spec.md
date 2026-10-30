@@ -1,9 +1,12 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 13 (a "Snap tiles to
+> **Status: approved 2026-10-20, implemented. Revision 14 (Spark moves from
+> 2.3.1 to 2.4.0, pinned exactly; the layer's behaviour does not change) —
+> approved 2026-10-30, implemented;** see *Changes in revision 14*.
+> Revision 13 (a "Snap tiles to
 > ground" checkbox, `snapToGround`: checked, each tile on its own ground as
 > in revision 12; unchecked, every tile lowered by one shared height,
-> `SplatSource.sharedGroundZ`) — approved 2026-10-30, implemented;**
+> `SplatSource.sharedGroundZ`) — approved 2026-10-30, implemented;
 > see *Changes in revision 13*.
 > Revision 12 (a capture is a
 > 100 m tile of infra's mosaic, placed by its georeference only; the
@@ -61,7 +64,7 @@ plugin, was rejected (`ai/DECISIONS.md`, entry added with this layer): it
 brings a second three.js renderer and repaints every frame.
 
 `ThreeSplatLayer extends ThreeLayer` and draws with **Spark**
-(`@sparkjsdev/spark`, MIT, pinned exactly at `2.3.1`; peer `three >= 0.180.0`,
+(`@sparkjsdev/spark`, MIT, pinned exactly at `2.4.0`; peer `three >= 0.180.0`,
 which the app's `three@^0.186.0` meets). It follows every rule of
 `src/lib/three/specs/spec.md`, and portability rule 7 is unchanged:
 
@@ -268,7 +271,8 @@ two, and the layer only copies them onto the mesh and its stretch:
   visible.
 
 Spark's `covSplats` mode would carry the full matrix, but it cannot be used
-with paged meshes. In 2.3.1 a `paged: true` mesh never sets `extSplats`, so
+with paged meshes. In 2.4.0, as in 2.3.1, a `paged: true` mesh never sets
+`extSplats`, so
 `SplatMesh({ covSplats: true, paged: true })` throws `CovSplats requires
 ExtSplats`.
 
@@ -848,6 +852,33 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
    deploying.
 4. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 14
+
+- **Spark moves from `2.3.1` to `2.4.0`**, still pinned exactly
+  (`app/package.json`). Its peer stays `three >= 0.180.0`. infra's
+  `build-lod` moves to tag `v2.4.0` with it (`infra/specs/build-lod.md`,
+  revision 5), so the `.rad` writer and reader stay one version, and every
+  tile's tree is rebuilt (`./scripts/build-lod.sh --all`).
+- **What the layer relies on is unchanged in 2.4.0**, checked against the
+  package: `SplatMesh({ url, paged: true, worldModifier })`, the
+  `SparkRenderer` options the layer sets (`renderer`, `onDirty`, `enableLod`,
+  `blurAmount`, `lodSplatCount`, `lodSplatScale`), `defaultSplatTarget()`
+  (2.5 M on desktop), the page pool's default (256 pages on desktop, 128 on
+  mobile, 96 on iOS) and `lodCleanupTimeoutMs` (3 s). `covSplats` still throws on a
+  paged mesh, so the stretch stays a world modifier.
+- **What 2.4.0 brings that the layer sees**, none of which changes this
+  spec: fewer re-sorts when the LoD changes (less stutter while chunks
+  stream); long thin splats drawn at the right width; errors from a pending
+  sort after `SparkRenderer.dispose()` ignored (the layer disposes it on a
+  context change); a crashed worker replaced instead of reused; a failed LoD
+  tree no longer retried every frame; the LoD index textures freed on
+  dispose. RAD chunks use `flate2`'s deflate (~20% faster to decode); the
+  format is unchanged.
+- Tests: none change. The layer's tests inject a fake Spark
+  (`importSpark`), so the bump is verified by `npm test`, `npm run build`
+  (types) and a look in the browser: tiles stream, sharpen and unload as
+  before, and the panel's budget slider still applies.
 
 ## Changes in revision 13
 
