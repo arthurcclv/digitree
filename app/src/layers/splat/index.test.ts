@@ -3,13 +3,14 @@ import { DEFAULT_SPLAT_SETTINGS, SPLAT_MIN_ZOOM } from "./index";
 import { splatStatus } from "./state";
 
 describe("DEFAULT_SPLAT_SETTINGS", () => {
-  test("hidden, opaque, from the layer's min zoom, at Spark's platform budget", () => {
+  test("hidden, opaque, from the layer's min zoom, at Spark's platform budget, each tile on its own ground", () => {
     expect(DEFAULT_SPLAT_SETTINGS).toEqual({
       visible: false,
       opacity: 1,
       minZoom: SPLAT_MIN_ZOOM,
       lodSplatCount: null,
       lodSplatScale: 1,
+      snapToGround: true,
     });
   });
 });

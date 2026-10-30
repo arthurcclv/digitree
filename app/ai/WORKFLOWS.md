@@ -257,19 +257,41 @@ The layer is reachable as
 
 ## Checking the Gaussian splats
 
-By default the captures are placed by their PLY headers, from
-`infra/data/3dgs/georef.csv`; `SPLATS_PLACEMENT=control_points ./load.sh`
-fits them to `infra/data/3dgs/control_points.csv` instead (`infra/README.md`).
-`./load.sh` prints each capture's placement (and, fitted, its `rms_m`) and
-rejects a bad row, so start there if a capture is missing. Then, at z15+ over
+The captures are the 100 m tiles of infra's mosaic, each placed from its row
+of `infra/data/3dgs/georef.csv`, which `node scripts/splat-mosaic.mjs`
+writes (`infra/README.md`). After adding or re-cleaning a scan, rebuild the
+mosaic and then the trees (`./scripts/build-lod.sh --all`) before
+`./load.sh`. `./load.sh` prints each tile's placement and rejects a bad row,
+so start there if a tile is missing; `infra/data/3dgs/tiles/mosaic.json` says
+which scan won how many voxels of each tile. Then, at z15+ over
 a capture, turn on **Gaussian splats → Captures** and check:
-- **Placement.** The capture's buildings and kerbs sit on the OSM extrusions
-  and the basemap's roads. Placed by the header, a capture's ground sits
-  1.4–1.7 m below the map's (its origin, the antenna, is near 0 m, give or
-  take its group's spread in height): that is expected, so judge it from
-  straight above. Overlapping captures should meet without a step. Fitted, a capture off by a
-  rotation or mirrored means wrong control points, not a layer bug: the
-  loader's fit should have refused it.
+- **Placement.** The mosaic's buildings and kerbs sit on the OSM extrusions
+  and the basemap's roads, and its ground on the map's, where the trees
+  stand.
+- **Seams.** Neighbouring tiles meet with no gap at their shared edge,
+  every 100 m on the UTM grid. With **Snap tiles to ground** on (the
+  default), each tile is grounded on its own, so where
+  their grounds differ the edge shows that step; `mosaic.json`'s
+  `ground_steps` lists them, and the run prints the largest. A tile that
+  sits visibly sunk, its roads under the map, is one whose ground was
+  hidden (a roof or canopy over most of it): its `ground` in `mosaic.json`
+  shows a peak well above the ground bin. Uncheck it and the steps go:
+  every tile is lowered by `SPLATS.sharedGroundZ` (25.85 m), so the edges
+  meet flush, and each tile's ground sits up to ~0.8 m off the map's
+  instead (`specs/spec.md`, *The shared ground*).
+  *Measured on the 22 delivered scans, 2026-10-30:* 23 tiles kept and 11
+  fringe tiles of 3–517 splats dropped (1,332 splats). Grounds 25.07–26.26 m
+  (ellipsoidal); steps between neighbours up to 0.895 m
+  (`32651-352700-2770200 | 32651-352700-2770300`), six pairs over 0.5 m,
+  none over the 1 m gate. Against antenna heights (`offsetz` less
+  1.4–1.7 m, in the tile of each scan's first fix), 12 of 22 scans are
+  more than 0.5 m off; scans in one tile differ in `offsetz` by up to
+  1.3 m and share one ground, so their antennas are not all at one height.
+  Recorded only, not a gate (`infra/specs/splat-mosaic.md`, *The ground*). Within a tile, a surface stitched from
+  two scans can show a small step where neighbouring 1 m voxels were won by
+  different scans; its size is those scans' misalignment (`infra/specs/splat-mosaic.md`,
+  *Open items*). Where scans used to overlap, a wall or kerb should appear
+  once, not doubled.
 - **Shape at every angle.** Splats keep their shape at high pitch and any
   bearing, with the panel open (padding moves the principal point). Stretched
   or exploding splats mean `decomposeCamera` was bypassed.
@@ -282,14 +304,17 @@ a capture, turn on **Gaussian splats → Captures** and check:
   no `/files/` and no `spark.module` request.
 - **LoD.** A capture draws coarse at once and sharpens within a few seconds
   as its pages arrive: the network panel shows its header read by range
-  (`206`), then `.radc` chunks fetched one by one (`200`), never the
-  `.spz`. A capture that never draws but is in
+  (`206`), then `.radc` chunks fetched one by one (`200`), never a tile's
+  `.ply`. A tile that never draws but is in
   the `splats` table has no `.rad` (`infra/scripts/build-lod.sh`), which `./load.sh`
   should have refused.
-- **Bounded.** Panning between captures for a minute or two, the tab's memory
-  stays flat: about 5 GB with both KZ0918 captures, against 1.85 GB with the
-  splats off (Apple M4, 2026-10-23). Pan more than 10 km away and settle, and
-  the panel's loaded count drops to 0.
+- **Bounded.** Panning over the mosaic for a minute or two, the tab's memory
+  stays flat (before the mosaic, about 5 GB with both KZ0918 captures, against
+  1.85 GB with the splats off; Apple M4, 2026-10-23). Every tile loads (the
+  panel's loaded count reaches the tile count, at most 64), and a still view
+  sharpens within a few seconds; if it stays coarse, the page pool is short
+  (splat spec, *Open items*). Pan more than 10 km away and settle, and the
+  panel's loaded count drops to 0.
 
 The layer is reachable as `__map.getLayer("threejs-splat-native").implementation`.
 

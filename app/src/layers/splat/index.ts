@@ -25,6 +25,11 @@ export interface SplatSettings {
   lodSplatCount: number | null;
   /** Multiplies the budget, whichever it is. */
   lodSplatScale: number;
+  /**
+   * Each capture lowered by its own ground (`true`), or all by the source's
+   * `sharedGroundZ` (`false`). See *Settings*.
+   */
+  snapToGround: boolean;
 }
 
 export const DEFAULT_SPLAT_SETTINGS: SplatSettings = {
@@ -34,6 +39,7 @@ export const DEFAULT_SPLAT_SETTINGS: SplatSettings = {
   minZoom: SPLAT_MIN_ZOOM,
   lodSplatCount: null,
   lodSplatScale: 1,
+  snapToGround: true,
 };
 
 /**

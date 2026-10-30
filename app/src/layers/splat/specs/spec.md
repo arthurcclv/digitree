@@ -1,9 +1,20 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 11 (a header-placed
-> capture's height is its `offsetz` less its group's datum, the median
-> `offsetz` of the captures grouped with it) — approved 2026-10-29;** see
-> *Changes in revision 11*.
+> **Status: approved 2026-10-20, implemented. Revision 13 (a "Snap tiles to
+> ground" checkbox, `snapToGround`: checked, each tile on its own ground as
+> in revision 12; unchecked, every tile lowered by one shared height,
+> `SplatSource.sharedGroundZ`) — approved 2026-10-30, implemented;**
+> see *Changes in revision 13*.
+> Revision 12 (a capture is a
+> 100 m tile of infra's mosaic, placed by its georeference only; the
+> control-point fit is removed; `SPLAT_MAX_CAPTURES` is 256; each tile is
+> drawn with its own ground on the map's ground, the published `ground_z`
+> replacing `altitude_m`, and the datum groups are removed) — approved
+> 2026-10-29, its heights revised and approved 2026-10-30; see
+> *Changes in revision 12*.
+> Revision 11 (a header-placed capture's height is its `offsetz` less its
+> group's datum, the median `offsetz` of the captures grouped with it) —
+> approved 2026-10-29.
 > Revision 10 (a capture is placed from its PLY header's georeference by
 > default, height included; the control-point fit stays, behind
 > `splats_placement`) — approved 2026-10-29.
@@ -32,7 +43,8 @@ Modules: `src/layers/splat/` — `index.ts` (`SplatSettings`, the entry),
 constants), and `*.test.ts` beside them. Shared additions: `decomposeCamera`
 in `src/lib/three`, `trueMetreAxes` in `src/lib/tiles/grid.ts`, and a second
 proxy entry in `src/lib/tiles/proxy.ts`. Infra: a `splats` table, its loader, a Martin
-source, a static file service, and `build-lod.sh` (`infra/specs/build-lod.md`).
+source, a static file service, the mosaic (`infra/specs/splat-mosaic.md`), and
+`build-lod.sh` (`infra/specs/build-lod.md`).
 
 ## Purpose
 
@@ -73,8 +85,8 @@ which the app's `three@^0.186.0` meets). It follows every rule of
   building and tree-mesh edges at DPR 1; at DPR 2 they are not visible.
 
 The layer draws each capture's **paged LoD tree**, a `.rad` that infra builds
-from the capture's cleaned `.spz` (`infra/scripts/build-lod.sh`). Infra still
-validates the capture's own file, which must be a `.spz`: it is the only format
+from the tile's `.ply` (`infra/scripts/build-lod.sh`). Infra still validates
+the tile's own file, which must be a `.ply`: it is the only format
 `build-lod.sh` reads, so a row naming any other could never pass the LoD check.
 The layer never fetches the file.
 
@@ -136,7 +148,8 @@ unloaded both captures, and panning back loaded them again.
 While the camera keeps moving, pages are refetched continuously: about 19
 chunks a second with 128 pages and 11 with 256 (at about 1.1 MB each). In a
 still view the pool settles within 5 s. The paged `.rad` lands within 0.26 px
-(about 0.15 m) of the `.spz` drawn without LoD, so the control points hold.
+(about 0.15 m) of the `.spz` drawn without LoD, so a capture's placement holds
+for its tree.
 
 History: the load-time tree (`lod: true`) was chosen on 2026-10-21 over no
 LoD (7 fps on KY0917B) and over `"quality"` (76 s per load). It built the tree
@@ -198,7 +211,7 @@ The anchor is set when the layer first plans its tiles, as the frame at the
 view centre (`frameAt` in `lib/tiles`). It moves
 to the view centre only on `viewSettled`, and only if the centre is more than
 `SPLAT_REBASE_M` (20 km) from it (`rebased`). Each capture's mesh sits in this frame at its own offset from the
-anchor, computed in double precision on the CPU from its position and altitude,
+anchor, computed in double precision on the CPU from its position and ground,
 once when it loads and again when the anchor moves. While navigating, the
 camera is the only thing that changes.
 
@@ -219,7 +232,7 @@ Each capture is scaled by its own latitude's metre over the anchor's, so its
 size in metres is exact wherever it sits relative to the anchor.
 
 **True metres, per axis.** A capture is metric, in true (WGS 84) metres, and
-infra fits it on the ellipsoid (*Control points CSV → `splats` table*). The
+infra places it on the ellipsoid (*Georeference CSV → `splats` table*). The
 map is spherical Web Mercator: it draws a latitude/longitude as if on a sphere
 of R = 6,371,008.8 m, so a true metre is drawn as `R / N(φ)` map metres east
 and `R / M(φ)` north, N and M the prime-vertical and meridian radii of WGS 84
@@ -238,7 +251,7 @@ heights stay in metres as the map draws them. The mesh's whole transform is
 **Spark keeps one scale of a mesh's matrix.** Its default path reduces
 `mesh.matrix` to translation, rotation and the mean of the three scales
 (`SplatTransformer.updateFromMatrix`), so the per-axis part cannot ride in it.
-`placeCapture(splat, anchor)` in `frame.ts` is the one place this transform is
+`placeCapture(splat, anchor, groundZ?)` in `frame.ts` is the one place this transform is
 computed. It returns `{ matrix, origin, axes }`, the whole transform split in
 two, and the layer only copies them onto the mesh and its stretch:
 
@@ -270,19 +283,44 @@ still arrives, and sunlight and AO keep recomputing on `viewSettled`.
 
 ### The captures
 
-The files are `infra/data/3dgs/source/<scan>.spz`, and what the layer draws
-is each one's LoD tree, `infra/data/3dgs/lod/<scan>-lod.rad` and its chunks
-`<scan>-lod-<n>.radc`, built from it by
-`infra/scripts/build-lod.sh` (*Level of detail*). The scans as
-delivered sit in `infra/data/3dgs/original/<scan>/point_cloud.<ext>` and are
-never modified (`infra/CLAUDE.md`); `infra/scripts/process-splat.sh` derives each served
-file from its original by removing outlying, oversized and floating
-Gaussians, and writes it as SPZ v3 (`infra/specs/process-splat.md`). Removing
-Gaussians never moves the others, so the frame, and the control points, are
-the original's.
+What the layer draws are the **tiles of infra's mosaic**
+(`infra/specs/splat-mosaic.md`): 100 m × 100 m squares of a grid fixed in the
+UTM zone, each holding, for every 1 m voxel in it, the splats of the one scan
+judged best there (`infra/specs/voxel-quality.md`). Each tile is
+`infra/data/3dgs/tiles/<tile>.ply`, and what the layer draws is its LoD tree,
+`infra/data/3dgs/lod/<tile>-lod.rad` and its chunks `<tile>-lod-<n>.radc`,
+built by `infra/scripts/build-lod.sh` (*Level of detail*). A tile's id is
+`<EPSG>-<E0>-<N0>`, its south-west corner in whole metres, e.g.
+`32651-352600-2770000`. To the layer a tile is a capture like any other.
 
-The KY0917 captures this layer was built against were three, all SPZ v2,
-metric, **z up** with the ground at z ≈ 0, SH degree 0, anti-aliased:
+The scans as delivered sit in `infra/data/3dgs/original/<scan>/` and are never
+modified (`infra/CLAUDE.md`). Three steps derive the tiles from them, each an
+explicit command:
+
+1. `infra/scripts/process-splat.sh <scan>` aligns a scan against its RTK and
+   lidar and removes its outlying, oversized and floating Gaussians, writing
+   `clean/<scan>.ply` (`infra/specs/process-splat.md`).
+2. `node infra/scripts/splat-mosaic.mjs` moves every cleaned scan into one
+   frame, keeps one scan's splats per voxel, and writes the tiles and
+   `georef.csv`.
+3. `infra/scripts/build-lod.sh --all` builds each tile's tree.
+
+Only the align step moves Gaussians, by one rigid correction within the scan's
+own frame. The cuts and the choice between scans only remove them.
+
+**The scans.** The 22 delivered scans are **georeferenced PLY**, metric, z up,
+SH degree 0, anti-aliased. The header names a UTM zone (`comment epsg 32651`)
+and an offset (`comment offsetx/y/z`), and a point at UTM (E, N, h) is stored
+at (E − offsetx, N − offsety, h − offsetz): x east, y north of the grid,
+origin the scan's first GNSS fix. All 22 are in UTM 51N, so the mosaic moves
+each into the zone by its offset alone, with no rotation and no scale. Their
+poses are in another frame, which only the align step reads. (The positions
+as stored are what splat-transform's `.ply` output keeps; its `--stats`, its
+library and its `-V` filters see x and y negated.)
+
+Before the mosaic each scan was its own capture, served as SPZ v3. The KY0917
+captures this layer was first built against were SPZ v2, metric, z up with
+the ground at z ≈ 0:
 
 | file | splats | bytes | extent x · y · z (m, 1st–99th percentile) |
 | --- | --- | --- | --- |
@@ -290,80 +328,38 @@ metric, **z up** with the ground at z ≈ 0, SH degree 0, anti-aliased:
 | `KY0917B.spz` | 6,454,811 | 93 MB | 111 · 102 · 13 |
 | `KY0917C.spz` | 6,559,715 | 94 MB | 170 · 97 · 15 |
 
-None of them carries a georeference. Where each one sits comes from the
-metadata CSV. Cleaned with the script's defaults they served KY0917A
-2,685,252 splats (41 MB), KY0917B 6,216,275 (97 MB) and KY0917C 6,293,120
-(97 MB); as SPZ v3 they were larger than the v2 originals despite the cut.
-
-They are no longer in `original/`. The KZ0918 scans that replaced them
-(KZ0918-075047: 19.3M Gaussians; KZ0918-090946: 13.8M) were first delivered
-as SOG, stored y down and in no frame of their own. They are now delivered as
-**georeferenced PLY**, metric and z up: the header names a UTM zone
-(`comment epsg 32651`) and an offset (`comment offsetx/y/z`), and a point at
-UTM (E, N, h) is stored at (E − offsetx, N − offsety, h − offsetz) — x east,
-y north of the grid, origin the scan's first GNSS fix. Their poses are in
-another frame (turned 21.9° and 91.3° from north), which nothing reads. (The positions as stored are what
-`--stats` and splat-transform's library report; its `-V` filters and
-generator see x and y negated.)
-
-**The frame.** Every capture is drawn in **its file's frame**, as stored:
-z-up, metric. Its control points are in that frame too (*One frame, no
-conversion*). For a scan with a georeferenced PLY, `infra/scripts/control-points.mjs`
-writes them from the header's georeference and the scan's RTK fixes
-(`infra/specs/control-points.md`); hand-measured points are read in the file's
-coordinates. Where a capture sits and which way it faces come from the control
-points. A file stored any other way (y down, on its side) is a delivery to
-fix, not something infra or the layer corrects.
-
-The served file must be a **gzip-wrapped** SPZ (v2 or v3): Spark 2.3.1
-recognises an SPZ by its gzip magic alone, so an SPZ v4 — splat-transform's
-default output, not gzipped — does not load.
-
-**`infra/data/3dgs/` is not gitignored today.** `infra/data/*.csv` and
-`infra/data/custom/` are, so 228 MB of captures currently show as untracked.
-This change adds `infra/data/3dgs/` to `.gitignore`.
-
-### Placement: `splats_placement`
-
-`sql/04_splats.sql` places the captures one of two ways, chosen by the psql
-variable `splats_placement` (`load.sh` passes `SPLATS_PLACEMENT` through):
-
-| value | reads | places a capture by |
-| --- | --- | --- |
-| `header` (default) | `infra/data/3dgs/georef.csv` only | its PLY header's georeference, height included (*Georeference CSV → `splats` table*) |
-| `control_points` | `infra/data/3dgs/control_points.csv` only | the fit to its control points (*Control points CSV → `splats` table*) |
-
-Any other value fails the splat load, naming it. Each way reads only its own
-file: in `header` mode `control_points.csv` is not opened, and in
-`control_points` mode `georef.csv` is not. Both fill the same `splats` table,
-with the same file and LoD rules, so the tiles and the app do not know which
-way a capture was placed.
+**The frame.** Every tile is drawn in **its file's frame**, as stored: z-up,
+metric, its centre the origin, +y grid north, z the WGS 84 ellipsoidal
+height (`offsetz` 0). That is the delivered scans' convention, with the tile's centre as the
+offset, so a tile is placed by exactly the rule a scan was placed by
+(*Georeference CSV → `splats` table*). A file stored any other way is a
+delivery to fix, not something infra or the layer corrects.
 
 ### Georeference CSV → `splats` table
 
-A scan's `point_cloud.ply` carries its own georeference: a UTM zone and an
-offset (*The captures*). In `header` mode the loader places each capture from
-that alone. The loader cannot read a PLY header (the served `.spz` has none,
-and `original/` is not mounted), so `infra/scripts/georef.mjs` copies each
-scan's header into a CSV first (`infra/specs/georef.md`).
+Each tile carries its own georeference, a UTM zone and an offset, in its
+header (*The captures*), and the loader places it from that alone. The
+database reads no PLY, so the mosaic writes the same values into a CSV beside
+the tiles, one row per tile, and the loader reads that.
 
-**File:** `infra/data/3dgs/georef.csv`, one row per capture. The header is
-matched exactly:
+**File:** `infra/data/3dgs/georef.csv`, one row per capture, written whole
+by `splat-mosaic.mjs`. The header is matched exactly:
 
 ```
-SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ
-KZ0918-075047,KZ0918-075047.spz,32651,352796.8287235790048726,2770099.7470906949602067,26.9006000000000007
+SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ,GROUNDZ
+32651-352600-2770000,32651-352600-2770000.ply,32651,352650,2770050,0,24.98731
 ```
 
 | column | meaning | rule |
 | --- | --- | --- |
 | `SplatID` | the capture's stable id | non-empty; unique |
-| `File` | file name inside `data/3dgs/source/` | as in `control_points.csv`: no `/`; ends in `.spz`; the file exists; unique; its LoD exists |
+| `File` | file name inside `data/3dgs/tiles/` | no `/`; ends in `.ply` (lower case); the file exists; unique; its LoD exists |
 | `EPSG` | the header's `epsg`: WGS 84 / UTM | an integer in 32601–32660 or 32701–32760 |
-| `OFFSETX`, `OFFSETY` | the header's `offsetx`, `offsety`: the UTM easting and northing of the file's origin | finite |
-| `OFFSETZ` | the header's `offsetz`: the height of the file's origin, in `gnss.csv`'s datum (WGS 84 ellipsoidal) | finite |
+| `OFFSETX`, `OFFSETY` | the header's `offsetx`, `offsety`: the UTM easting and northing of the file's origin, the tile's centre | finite |
+| `OFFSETZ` | the header's `offsetz`: the height of the file's origin, in `gnss.csv`'s datum (WGS 84 ellipsoidal); 0 for a tile, whose z is that height itself | finite |
+| `GROUNDZ` | the capture's ground, in the same datum: the height drawn at the map's ground. For a tile, the mosaic's estimate (`infra/specs/splat-mosaic.md`, *The ground*) | finite |
 
-**The placement** (in `sql/04_splats_header.sql`, PostGIS, per capture),
+**The placement** (in `sql/04_splats.sql`, PostGIS, per capture),
 with `O` the origin `(OFFSETX, OFFSETY)` in `EPSG` and `P` the point 100 m
 grid-north of it, `(OFFSETX, OFFSETY + 100)`:
 
@@ -376,174 +372,59 @@ grid-north of it, `(OFFSETX, OFFSETY + 100)`:
 - `scale` = the geodesic distance from `O` to `P` (`ST_Distance` on
   `geography`), over 100: one file unit in true metres, 1/k, k UTM's point
   scale (1.00013 for KZ0918).
-- `altitude_m` = `OFFSETZ − datum`, the datum of the capture's group (*The
-  datum*, below). Local z = 0, the origin, is drawn that far above the map's
-  ground.
-- `rms_m` and `points` are NULL: nothing is fitted.
+- `ground_z` = `GROUNDZ − OFFSETZ`: the ground's height in the file's own
+  frame, as a local z (*The ground*, below). The app draws local
+  z = `ground_z` at the map's ground, so the origin lands `ground_z × scale`
+  metres below it (`scale` reaches z too).
 
-**The datum.** The map has no terrain, so an ellipsoidal height cannot be
-drawn as it is: `OFFSETZ` alone puts every capture some 25 m in the air.
-Instead the loader subtracts one height, the **datum**, from every capture
-that may meet another, so their heights relative to each other stay exactly
-RTK's. Only `OFFSETZ` is used: it is the RTK height the file's frame is
-defined by, while a capture's ground and its antenna height are estimates.
+**The ground.** The map has no terrain, so an ellipsoidal height cannot be
+drawn as it is: it puts every capture some 25 m in the air. Instead each
+capture is lowered by its own ground, `GROUNDZ`, so that ground lands on the
+map's, where the trees and buildings stand. A tile's z is the ellipsoidal
+height and its `OFFSETZ` 0, so its `ground_z` is `GROUNDZ` itself, the
+ground's ellipsoidal height, about 25 m for the delivered scans.
 
-1. **Groups.** Sort the captures by `OFFSETZ`. Where two neighbours in that
-   order differ by more than `splats_datum_gap_m` (psql variable, default
-   `5`), a new group starts (single linkage). On the 22 delivered scans the
-   largest such gap is 0.37 m, so they form one group.
-2. **The datum of a group** is the median `OFFSETZ` of its captures (the mean
-   of the middle two for an even count), computed at every load: 26.60 m for
-   the delivered scans. A capture added to a group can move every capture in
-   it by up to its share of the median.
-3. Every capture's origin is drawn `OFFSETZ − datum` above the map's ground
-   (−0.44 to +1.32 m for the delivered scans). The origin is the antenna at
-   the scan's first fix, so a capture's own ground lands about its antenna
-   height below the map's (1.4–1.7 m). Nothing corrects that: no antenna
-   height is assumed.
+Each capture is grounded on its own. Inside a capture the heights stay
+exactly RTK's; between two touching tiles whose grounds differ, the
+difference is removed, so a surface crossing their edge shows a step there
+(the mosaic spec, *The ground*, gives its size and reports the largest).
+The loader does not group, smooth or check the grounds: they are the
+mosaic's, or the hand-written CSV's.
 
-A gap over 5 m in `OFFSETZ` with nothing between is taken to mean captures
-far apart, which share no seam. Grouping looks at height only, so two
-captures that do overlap can still be split by a smaller
-`splats_datum_gap_m`: KZ0918-093638 and KZ0918-101007-1 share an origin to
-1 m and differ by 1.24 m in `OFFSETZ`. Split, they would meet with a step of
-the difference of their groups' datums.
+The load prints each capture's `OFFSETZ`, `GROUNDZ` and `ground_z`.
 
-The load prints each capture's group, its datum and its `altitude_m`.
-
-Through the same header, the control-point fit lands the same place: its
-points are the scan's own fixes, put into the file through this offset, so
-the two agree to the fit's residual (under 5 mm on KZ0918). Only the height
-differs: the fit sets each capture's ground on the map's
-(`mean(H − scale·Z)`), the header keeps the captures' heights relative to
-each other.
+**The shared ground (app only).** The steps at tile edges can be traded for
+small offsets from the map's ground: with `snapToGround` off (*Settings*),
+the app lowers every capture by one height, `SplatSource.sharedGroundZ`,
+instead of its own `ground_z`. Inside the mosaic the heights are then RTK's
+throughout, with no step at any edge, and each tile sits
+`(ground_z − sharedGroundZ) × scale` metres below the map's ground (above it
+when negative). `sharedGroundZ` is a local z, like `ground_z`; for a tile,
+whose `OFFSETZ` is 0, it is an ellipsoidal height. The app's value is the
+median of the delivered tiles' `GROUNDZ`, 25.85 m (they span 25.07–26.26 m),
+so no tile is off by more than about 0.8 m. Infra publishes nothing new for
+it: it is a fact about the dataset, a descriptor field (rule 8).
 
 **Row rules.** Every problem is collected and the whole splat load fails,
 naming the CSV line or the capture: an empty `SplatID` or `File`; a `File`
-that is a path, not `.spz`, or not in `data/3dgs/source/`; an `EPSG` that is
-not an integer in the UTM ranges; an `OFFSET*` that is not a number; a
-`SplatID` or a `File` on two rows; a capture without its LoD. A
-`splats_datum_gap_m` that is not a positive number fails too. A missing
-`georef.csv` loads an empty table and says so, as a missing
-`control_points.csv` does.
+that is a path, not `.ply`, or not in `data/3dgs/tiles/`; an `EPSG` that is
+not an integer in the UTM ranges; an `OFFSET*` or a `GROUNDZ` that is not a
+number; a `SplatID` or a `File` on two rows; a capture without its LoD. A
+missing `georef.csv` loads an empty table and says so.
 
-### Control points CSV → `splats` table
+### The `splats` table and its loader
 
-In `control_points` mode. A capture that carries no georeference (the KY0917
-captures this layer was built against) has no origin or heading to read.
-Instead, each capture is placed from **control points**:
-features recognisable both in the capture and on a map (a building corner, a
-kerb, a lamp post base), each given in local coordinates and in latitude and
-longitude. The loader solves the placement from them.
-
-**File:** `infra/data/3dgs/control_points.csv`, one row per point, at least
-three points per capture. The header is matched exactly
-(`COPY … HEADER MATCH`, as for the custom trees), so swapped LAT/LON columns
-are rejected rather than loaded:
-
-```
-SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note
-KY0917A,KY0917A.spz,1,12.40,3.85,0.02,25.034512,121.560841,,0,NE corner of the low wall
-KY0917A,KY0917A.spz,2,-18.10,-40.27,0.05,25.034790,121.560527,,0,lamp post base
-KY0917A,KY0917A.spz,3,55.62,-22.90,0.11,25.034655,121.561212,,0,gate pillar, west side
-```
-
-(The values above are made up, to show the format.)
-
-| column | meaning | rule |
-| --- | --- | --- |
-| `SplatID` | the capture's stable id; the rows of one capture share it | non-empty |
-| `File` | file name inside `data/3dgs/source/` | same on every row of the capture; no `/`; ends in `.spz` (lower case); the file exists; one capture per file |
-| `Point` | the point's label within the capture (`1`, `2`, `3`, or a name) | unique within the capture |
-| `X`, `Y`, `Z` | the point in the capture's own coordinates, **as stored** (metres): z-up, the ground is X/Y. See *One frame, no conversion* | finite |
-| `LAT`, `LON` | WGS84 of the same point, in decimal degrees | in range |
-| `ALT` | the altitude, in metres, of the capture file's origin (local `(0, 0, 0)`): for a scan, its PLY header's `offsetz`, in `gnss.csv`'s altitude datum. The same on every row of the capture. A record only: not used to place the capture | blank, or a number, the same on every row of the capture |
-| `H` | the point's height above the ground, in metres | finite; blank = 0 (a point on the ground) |
-| `Note` | what the point is, for whoever checks it later | free text, ignored by the loader |
-
-**Choosing points.** Three points spread across the capture, not in a line, on
-features that are sharp in both the capture and the map imagery. Points on the
-ground (`H` blank) are best. That is for points measured by hand. A scan's
-generated points are its GNSS antenna, and their `H` is the antenna's
-measured height above the capture's ground (`infra/specs/control-points.md`,
-revision 8). A fourth or fifth point is accepted and makes
-the fit more robust.
-
-**One frame, no conversion.** A capture's file and its rows of
-`control_points.csv` share one frame: the file's coordinates as stored, z-up,
-the ground on x/y. A scan's `poses.csv` is not in it and is not read. `X, Y, Z` are read in it directly, and the
-loader fits on them as they are:
-
-```
-file x = X     file y = Y     file z = Z
-```
-
-Nothing in the loader or the layer turns, mirrors or re-axes a capture, so a
-file that is not stored in this frame renders wrong, and nothing catches it
-(*The captures*). A point measured by hand is read in the file's stored
-coordinates — not in a viewer that turns or tilts the file on open (the
-PlayCanvas/SuperSplat family turns it 180° about up, and shows it y-up), which
-would need undoing first.
-
-A reading turned about up cannot be caught by the fit: turning every local
-coordinate about up is itself a valid rotation, so the fit absorbs it and the
-capture lands turned around its control points with a good RMS (found by eye
-on KY0917A, 2026-10-20). A reading mirrored or tilted (a y-up one) does not
-fit a rotation of the ground, and the fit checks below reject it.
-
-**The solve** (in `sql/04_splats.sql`, set-based SQL, per capture):
-
-1. Project each point's `LAT, LON` to true metres east and north of the
-   points' centroid, equirectangular on the **WGS 84 ellipsoid** with the radii
-   at the centroid's latitude φ0: `east = N(φ0)·cos φ0·Δλ`,
-   `north = M(φ0)·Δφ`, with `a = 6378137` and `f = 1/298.257223563`, written
-   once in the SQL. The capture is metric, so the fit is in true metres, and the
-   app draws each axis with its own map-metres-per-metre (*The frame*). Over
-   ~300 m the equirectangular error is under 5 mm. For a georeferenced scan the
-   fit gives `scale` ≈ 1/k, k being the UTM point scale (0.99987 for KZ0918, so
-   `scale` ≈ 1.00013), and `heading_deg` ≈ 360° plus the grid convergence
-   (359.38°).
-2. Fit a 2D similarity, `(file x, file y) → (east, north)`: a rotation about up, a uniform
-   scale and a translation. Least squares, closed form (the 2D Helmert
-   solution). Three points give six equations for four unknowns, so the fit
-   has a residual to check.
-3. The vertical offset is `mean(H − scale · file z)`: the capture's ground is set on
-   the map's ground.
-4. Store the capture's origin (where local `(0, 0)` lands), projected back
-   through the same radii (`lat = φ0 + tN / M(φ0)`,
-   `lon = λ0 + tE / (N(φ0)·cos φ0)`), as the point geometry, `heading_deg` (the angle of the capture's +y axis, clockwise from
-   north), `scale`, `altitude_m` (the vertical offset), and `rms_m`, the
-   horizontal RMS residual.
-
-**Fit checks.** These make the whole splat load fail, naming the capture:
-
-- fewer than 3 points, two points closer than 2 m, or points nearly in a line
-  (the smallest singular value of the centred `file x, file y` under 2 m);
-- `rms_m` above `splats_max_rms_m` (psql variable, default `1.0`). This is
-  what catches a point typed wrong, a swapped pair, or a mirrored axis
-  convention;
-- `scale` outside [0.8, 1.25]. The captures are metric, so a scale far from 1
-  means wrong points, not a real scale.
-
-`load.sh` prints each capture's `rms_m`, `scale` and `heading_deg`.
-
-All captures are assumed stored z-up, and their control points in the
-file's own coordinates (*The frame*). A capture stored any other way is out of
-scope; it is a delivery to fix.
-
-`sql/01_schema.sql` adds the table (idempotent, dropped and recreated):
+`sql/01_schema.sql` holds the table (idempotent, dropped and recreated):
 
 ```sql
 CREATE TABLE splats (
   id          integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- MVT feature id
-  splat_id    text NOT NULL UNIQUE,
-  file        text NOT NULL UNIQUE,
-  bytes       bigint NOT NULL,              -- from pg_stat_file at load
-  altitude_m  real NOT NULL,                -- vertical offset of local z = 0
-  heading_deg real NOT NULL,                -- of local +y, clockwise from north, [0, 360)
-  scale       real NOT NULL,                -- local units → metres
-  rms_m       real,                         -- the fit's horizontal RMS residual; NULL when placed by the header
-  points      integer,                      -- control points used; NULL when placed by the header
+  splat_id    text NOT NULL UNIQUE,         -- the tile's id
+  file        text NOT NULL UNIQUE CHECK (file !~ '/'), -- <tile>.ply, in data/3dgs/tiles/
+  bytes       bigint NOT NULL CHECK (bytes > 0),        -- from pg_stat_file at load
+  ground_z    double precision NOT NULL,    -- the local z drawn at the map's ground
+  heading_deg real NOT NULL CHECK (heading_deg >= 0 AND heading_deg < 360), -- of local +y, clockwise from north
+  scale       real NOT NULL CHECK (scale > 0), -- local units → metres
   geom        geometry(Point, 4326) NOT NULL, -- where local (0, 0) lands
   lng         double precision GENERATED ALWAYS AS (ST_X(geom)) STORED, -- geom's, exactly
   lat         double precision GENERATED ALWAYS AS (ST_Y(geom)) STORED  -- (*Martin*, below)
@@ -553,60 +434,46 @@ CREATE TABLE splats (
 `lng` and `lat` are generated from `geom`, so the loader writes only `geom` and
 the two can never disagree.
 
-A new `sql/04_splats.sql` loads it, with its inputs as psql variables like the
-tree loader: `splats_placement` (default `header`), `splats_georef` (default
-`/data/3dgs/georef.csv`), `splats_csv` (default
-`/data/3dgs/control_points.csv`), `splats_dir` (default `/data/3dgs/source`),
-`splats_lod_dir` (default `/data/3dgs/lod`), `splats_max_rms_m` (default
-`1.0`), and `splats_datum_gap_m` (default `5`). The `header` way lives in `sql/04_splats_header.sql`, which
-`04_splats.sql` includes; the `control_points` way stays in `04_splats.sql`.
+`sql/04_splats.sql` loads it, with its inputs as psql variables like the tree
+loader: `splats_georef` (default `/data/3dgs/georef.csv`), `splats_dir`
+(default `/data/3dgs/tiles`) and `splats_lod_dir` (default `/data/3dgs/lod`).
 
-- One transaction: truncate, `COPY` into a text staging table, validate, solve,
-  insert.
+- One transaction: truncate, `COPY` into a text staging table, validate,
+  place, insert.
 - **Optional.** A missing CSV loads an empty table and says so; it is not an
   error (the custom-trees rule).
-- **A bad row or a bad fit fails the whole splat load**, naming the CSV line or
-  the capture and the rule. The tree load, which ran before, is unaffected.
-- `load.sh` runs it after `03_checks.sql`. `test/run.sh` covers it with
-  fixtures: an exact synthetic capture (known origin, heading 30°, scale 1,
-  recovered within 1 mm and 0.01°), four points, missing CSV, wrong header,
-  swapped LAT/LON header, two points, collinear points, coincident points, a
-  mirrored capture (fails on `rms_m`), a scale of 1.5, a `File` that differs
-  between rows, a missing file, a path in `File`, a `File` that is not `.spz`
-  (a `.txt`, a `.ply`, an upper-case `.SPZ`), duplicate `Point`, blank
-  `H` taking 0, a non-numeric `ALT`, an `ALT` that differs between a
-  capture's rows, and the revision-8 header without `ALT` (refused like any
-  wrong header). Blank `ALT` loads. For the exact synthetic capture it also checks that `lng`
-  and `lat` equal `ST_X(geom)` and `ST_Y(geom)` exactly. These run with
-  `splats_placement=control_points`.
-- In `header` mode `test/run.sh` loads a `georef.csv` holding the `T1`
-  fixture's header (KZ0918-075047's) and a southern-hemisphere one, and checks
-  the placement against values computed outside PostGIS: `T1`'s origin is its
-  first fix within 5 mm, `heading_deg` 359.3823° within 0.001°, `scale`
-  1.000132 within 1e-5, `rms_m` and `points` NULL; that
-  `control_points.csv` is not read (a broken one beside it loads); and that
-  it rejects a wrong header, an empty `SplatID`, a non-numeric offset, an
-  `EPSG` outside UTM, a missing file, a `.ply` `File`, an empty `File`, a
+- **A bad row fails the whole splat load**, naming the CSV line or the
+  capture and the rule. The tree load, which ran before, is unaffected.
+- `load.sh` runs it after `03_checks.sql`. `test/run.sh` loads a
+  `georef.csv` holding KZ0918-075047's header and a southern-hemisphere one,
+  and checks the placement against values computed outside PostGIS: the
+  origin within 1 mm, `heading_deg` 359.38231° within 0.001°, `scale`
+  1.0001324 within 1e-5, `lng` and `lat` equal to `ST_X(geom)` and
+  `ST_Y(geom)` exactly, the file's size, and that a re-run gives the same
+  ids. It rejects a wrong header (the revision 12 header, without
+  `GROUNDZ`, among them), an empty `SplatID`, a non-numeric offset or
+  `GROUNDZ`,
+  an `EPSG` outside UTM, a missing file, a directory, a `File` that is not
+  `.ply` (a `.spz`, a `.txt`, an upper-case `.PLY`), an empty `File`, a
   `File` that is a path, a duplicate `SplatID`, a `File` on two rows (with
-  the row's shape as the hint), and a capture without its LoD. A missing `georef.csv` loads nothing. An
-  unknown `splats_placement` fails, and so does a `splats_datum_gap_m` of
-  `0` or `abc`.
-- The datum, in `header` mode: the two captures above, 16.9 m apart in
-  `OFFSETZ`, form two groups of one, each at `altitude_m` 0. Five captures at
-  `OFFSETZ` 10, 10.4, 11, 20 and 21 form two groups at the default gap, with
-  datums 10.4 and 20.5 (an even count's median), so `altitude_m` is −0.4, 0,
-  0.6, −0.5 and 0.5. At `splats_datum_gap_m=0.5` the first group splits
-  between 10.4 and 11 (a gap of 0.6), and at `0.6` it does not (a gap equal
-  to the threshold does not split); both split 20 from 21. The load's
-  report gives each capture's group, datum and `altitude_m` with those values.
-  `test/georef.sh` covers the generator (`infra/specs/georef.md`).
+  the row's shape as the hint), and a capture without its LoD. A missing
+  `georef.csv` loads nothing.
+- The ground: captures at (`OFFSETZ`, `GROUNDZ`) (26.9, 25.3), (0, 24.98731)
+  and (10, 10) load at `ground_z` −1.6, 24.98731 (exactly: double
+  precision) and 0, each on its own: no capture's ground moves another's.
+  The load's report gives each capture's `OFFSETZ`, `GROUNDZ` and `ground_z`
+  with those values.
+- The mosaic's own output: a `georef.csv` written by the real
+  `splat-mosaic.mjs` from two scans loads both tiles, each at its centre
+  within 1 mm (against `scripts/utm.mjs`'s inverse), facing grid north, and
+  each at `ground_z` = its `GROUNDZ`.
 
 ### Martin: the `splats` source
 
 `martin.yaml` publishes the table, explicitly, as source id **`splats`** and
 MVT layer **`splats`**: `id_column: id`, point geometry, `minzoom: 14`,
-`maxzoom: 20`, properties `splat_id`, `file`, `bytes`, `altitude_m`,
-`heading_deg`, `scale`, `lng` and `lat` (both `float8`). These names join the
+`maxzoom: 20`, properties `splat_id`, `file`, `bytes`, `ground_z`
+(`float8`), `heading_deg`, `scale`, `lng` and `lat` (both `float8`). These names join the
 published interface in `infra/CLAUDE.md`, next to `trees`.
 
 **The point geometry is not the origin.** MVT stores geometry as integers on
@@ -622,19 +489,19 @@ and nothing more.
 ### The files: a static `files` service
 
 Martin serves tiles only. A new Compose service, `files` (`nginx`, pinned
-image), serves `./data/3dgs/source` read-only at `/3dgs/`, and
+image), serves `./data/3dgs/tiles` read-only at `/3dgs/`, and
 `./data/3dgs/lod` at `/3dgs-lod/`, on `127.0.0.1:${FILES_PORT:-3080}`. Its config file is `infra/files.conf`:
 `sendfile`, byte ranges, `Cache-Control: no-cache` with ETags (a replaced file
-is refetched, an unchanged one is not), no directory listing, and no gzip (SPZ
-is already gzip).
+is refetched, an unchanged one is not), no directory listing, and no gzip.
+The layer fetches only from `/3dgs-lod/`.
 
 The app reaches it through a second same-origin proxy, exactly like `/tiles`
 (`src/lib/tiles/specs/proxy.md` gains the entry): `/files/*` →
 `FILES_PROXY_TARGET`, default `http://localhost:3080`, prefix stripped, the same
 validation rules and failure messages. It passes `Range` through and the
 `206` back: Spark reads a `.rad` header by range. The browser asks for
-`/files/3dgs-lod/KZ0918-075047-lod.rad`, then its chunks,
-`/files/3dgs-lod/KZ0918-075047-lod-<n>.radc`.
+`/files/3dgs-lod/32651-352600-2770000-lod.rad`, then its chunks,
+`/files/3dgs-lod/32651-352600-2770000-lod-<n>.radc`.
 
 ## `SplatSource` — the descriptor
 
@@ -650,13 +517,15 @@ interface SplatSource {
   lodFiles: string;       // "/files/3dgs-lod/" — what the layer draws; see lodUrlOf
   attribution: string;    // in the map's credit line while a capture is drawn
   name: string;
+  sharedGroundZ: number;  // 25.85 — the local z drawn at the map's ground for
+                          // every capture when snapToGround is off
 }
 ```
 
 `schema.ts` holds the one reading (rule 5):
 
 - `splatOf(props)` reads one feature into a `Splat` (`id`, `file`,
-  `lngLat`, `altitudeM`, `headingDeg`, `scale`, `bytes`). It returns
+  `lngLat`, `groundZ`, `headingDeg`, `scale`, `bytes`). It returns
   `null`, never a guess, for a feature with a missing or invalid property.
   `lngLat` is `[lng, lat]` from the `lng` and `lat` properties, which must be
   finite with `lng` in [−180, 180] and `lat` in [−85.06, 85.06] (Web
@@ -705,11 +574,15 @@ from it.
   diagonal; a test checks this at several latitudes). So a capture just
   loaded is never unloaded on the next settle, and one at the edge does not
   reload repeatedly.
-- **Count.** At most **`SPLAT_MAX_CAPTURES` (16)** are loaded at once. When
+- **Count.** At most **`SPLAT_MAX_CAPTURES` (256)** are loaded at once. When
   one more is due, the farthest loaded capture is unloaded if it is farther
   than the one due; otherwise the one due waits in the queue until the next
-  plan. Each paged mesh needs at least its root page, and 16 is well under the
-  smallest pool (96 pages).
+  plan. A capture is a 100 m tile, and the delivered scans cover at most 64
+  (their header extents span about 740 m × 700 m), so every tile loads; with
+  the earlier 16, only the nearest 16 drew and the mosaic had holes. Each
+  paged mesh needs at least its root page: 64 of the desktop pool's 256, and
+  64 of iOS's 96, which leaves iOS 32 pages for detail, so distant tiles are
+  coarse there. That is to be measured (*Open items*).
 - **Unloading** removes the mesh from the scene, disposes it, and forgets the
   capture (`loaded` and `known`). If its tile is planned again, it is found
   again and reloaded, which costs a header fetch and the pages the view
@@ -799,6 +672,23 @@ composite multiplies what was drawn before it, so it never darkens a splat.
 | `minZoom` | `number` | `15` (`SPLAT_MIN_ZOOM`) | none; a constant the host may pass. The panel shows it, `StatLine` "Captures from" `z15`, as the trees show theirs |
 | `lodSplatCount` | `number \| null` | `null` | checkbox "Platform budget" (checked = `null`), and when unchecked a slider "Budget", 0.25–10 M splats in 0.25 M steps |
 | `lodSplatScale` | `number` in [0.1, 4] | `1` | slider "Budget scale", ×0.1–×4 in 0.05 steps |
+| `snapToGround` | `boolean` | `true` | checkbox "Snap tiles to ground", after "Opacity" |
+
+`snapToGround` chooses the height each capture is lowered by (*The ground*,
+*The shared ground*): checked, its own `groundZ`, so each tile's ground is on
+the map's; unchecked, `SPLATS.sharedGroundZ` for all, so the tiles keep their
+relative heights and meet without steps. It moves only z: position, heading,
+scale and the stretch are the same either way.
+
+- Not a GeoLibre concept, so not on the paint bridge. The mount pushes it
+  with `layer.setSnapToGround(snap)`, only when it changed.
+- The layer keeps it, re-places every held capture with `placeCapture`, as a
+  rebase does, and requests a frame. A capture loaded later is placed with
+  the current value. Nothing is fetched or unloaded for it.
+- The checkbox's title: "Checked: each 100 m tile is lowered by its own
+  ground, so it stands on the map, with a step where neighbouring grounds
+  differ. Unchecked: all tiles are lowered by one height, so they meet
+  without steps but may float or sink up to about a metre."
 
 `lodSplatCount` and `lodSplatScale` are `SparkRenderer`'s own fields
 (<https://sparkjs.dev/docs/spark-renderer/>). Spark draws at most
@@ -838,12 +728,12 @@ capture is drawn, as it does the tree models' credit.
    comes from its `lng`/`lat` properties, never from tile geometry.
 6. The attribution is in the map's credit line whenever a capture is drawn.
 7. One copy of `three` (`npm ls three` lists one version).
-8. infra: a bad control-point row or a fit over its checks fails the whole
-   splat load, and the tree load is unaffected by it. So does a capture
-   without its `<stem>-lod.rad` header (`build-lod.sh` checks the chunks).
+8. infra: a bad `georef.csv` row fails the whole splat load, and the tree
+   load is unaffected by it. So does a capture without its `<stem>-lod.rad`
+   header (`build-lod.sh` checks the chunks).
 9. What the layer holds is bounded by Spark's page pool and
    `SPLAT_MAX_CAPTURES`, not by the captures in infra: no capture's whole file
-   is ever fetched, and no more than 16 are loaded.
+   is ever fetched, and no more than 256 are loaded.
 
 ## Tests
 
@@ -873,15 +763,20 @@ capture is drawn, as it does the tree models' credit.
   (det > 0); `placeCapture`, matrix then stretch, maps local +x to
   `east·scale` and +y to `north·scale` at heading 0, equals `translation · k ·
   diag(east, north, 1) · similarity` off the anchor, keeps up unstretched,
-  puts the origin at the capture's Mercator offset (north up, altitude times
-  `k`), leaves the origin fixed under the stretch, keeps a capture's size in
+  puts the origin at the capture's Mercator offset (north up, −`groundZ`
+  times `scale · k`), draws local z = `groundZ` on the map's ground to 1e-9
+  at scales 1, 1.00013 and 1.02, leaves the origin fixed under the stretch,
+  and with a shared ground `g` given instead puts the origin −`g · scale · k`
+  and draws local z = `g` on the map's ground, the x, y, rotation and axes
+  unchanged; keeps a capture's size in
   metres from anchors at different latitudes, and has det > 0 at any
   heading; `rebased` stays within `SPLAT_REBASE_M` and moves past it.
 - `splat/residency.test.ts`, on plain captures and views: each capture is
   queued once, in the order offered; one load at a time; a failed capture
   stays known and counted, and is not retried; past `SPLAT_MAX_CAPTURES` a
   nearer capture evicts the farthest and a farther one waits, and the
-  evicted one is found again; `settle` forgets loaded and queued captures past
+  evicted one is found again; a whole mosaic of 64 tiles, 100 m apart, loads
+  with none evicted; `settle` forgets loaded and queued captures past
   `SPLAT_KEEP_M` and keeps the rest; `clear` returns what was loaded.
 - `splat/records.test.ts`: the record's shape.
 - `splat/mount.test.ts` on the fake map, with Spark and the store stubbed:
@@ -891,7 +786,10 @@ capture is drawn, as it does the tree models' credit.
   members", nothing fetched or imported while hidden or below `minZoom`,
   one-at-a-time loading, each mesh paged from its `.rad` with Spark's pool and
   cleanup timeout left at their defaults, and status for one failure among
-  several. Unloading: a capture past `SPLAT_KEEP_M` on a settled view is
+  several. The shared ground: `update` calls `setSnapToGround` only when
+  `snapToGround` changed, and the initial value, `true` or `false`, reaches
+  the layer; the layer re-places every loaded capture, and one loaded
+  later, by z alone. Unloading: a capture past `SPLAT_KEEP_M` on a settled view is
   removed, disposed and forgotten, one within it stays, and it loads again
   when its tile returns; nothing is unloaded while hidden; past
   `SPLAT_MAX_CAPTURES` a nearer capture unloads the farthest and a farther
@@ -906,19 +804,21 @@ capture is drawn, as it does the tree models' credit.
   fake Spark's `dyno` evaluates the block on the CPU for this.
 - Structure guards: the host allowlist gains `mountSplat` and `SplatSettings`
   only; `SPLATS` is the only place `/files/` appears outside `lib/tiles`.
-- infra: `test/run.sh`, the fixtures listed under *The metadata CSV*, and a
-  capture without its LoD; in `header` mode, the cases under *Georeference
-  CSV → `splats` table*; `test/georef.sh` (`infra/specs/georef.md`);
+- infra: `test/run.sh`, the cases under *The `splats` table and its
+  loader*; `test/splat-mosaic.sh` and `test/voxel-quality.sh`
+  (`infra/specs/splat-mosaic.md`, `infra/specs/voxel-quality.md`);
   `test/build-lod.sh` (`infra/specs/build-lod.md`).
 
-In the browser: each capture renders upright at its place and keeps its shape at
-high pitch and any bearing; both KZ0918 captures match the OSM footprints at
-zoom 19 at the four edges of each capture; buildings in front hide it; it survives a basemap
-swap; after a pan the map goes idle and sunlight/AO recompute. Overlapping
-captures (KY0917A over KY0917C, and KZ0918-093638, -095308 and -101007-1/-2)
-show no seam where they meet: the same kerb, wall or pole lines up across
-them. Against the live Martin, every capture's decoded z14 `lngLat` equals the
-table's `lng`/`lat`.
+In the browser: each tile renders upright at its place and keeps its shape at
+high pitch and any bearing; the mosaic matches the OSM footprints at zoom 19;
+buildings in front hide it; it survives a basemap swap; after a pan the map
+goes idle and sunlight/AO recompute. Neighbouring tiles meet with no gap or
+step at their shared edge, and where the scans once overlapped (KY0917A over
+KY0917C, and KZ0918-093638, -095308 and -101007-1/-2) a surface is drawn once,
+not once per scan. Against the live Martin, every capture's decoded z14
+`lngLat` equals the table's `lng`/`lat`. The measurements of *Level of
+detail* (first draw, fps orbiting, memory, how coarse a still view is) are
+repeated with every tile loaded, on desktop and on iOS, and recorded here.
 
 ## Documentation changes, with the implementation
 
@@ -930,19 +830,94 @@ table's `lng`/`lat`.
 - `ai/DECISIONS.md`: Spark in a `ThreeLayer` over `maplibre-gl-splat`;
   splat metadata in PostGIS and files from a static service.
 - `ai/STACK.md`, `ai/ARCHITECTURE.md`, `ai/WORKFLOWS.md`: Spark, the `files`
-  service, adding a capture (choosing and entering control points).
-- `infra/CLAUDE.md`, `infra/README.md`: the table, the control-point CSV and
-  its fit checks, the `splats` names, `FILES_PORT`.
+  service, adding a capture (cleaning a scan, re-running the mosaic and
+  building the tiles' LoD trees).
+- `infra/CLAUDE.md`, `infra/README.md`: the table, `georef.csv` and the
+  loader's checks on it, the `splats` names, `FILES_PORT`.
 
 ## Open items
 
-1. **The control points.** Three or more per capture, in
-   `infra/data/3dgs/control_points.csv`, filled by hand.
-2. **`FILES_PORT` default `3080`** (decided). Free on the development machine;
+1. **The page pool with the mosaic.** Every tile loaded holds a root page.
+   Measure as *Tests* says; if the pool starves (iOS first), the options are
+   a larger `maxPagedSplats` or larger tiles, each a spec change.
+2. **Seams between voxel winners** (`infra/specs/splat-mosaic.md`, *Open
+   items*): neighbouring 1 m voxels won by different scans show those scans'
+   misalignment as a step.
+3. **`FILES_PORT` default `3080`** (decided). Free on the development machine;
    it avoids `3000` and the remote host's `3001`. Check the remote host before
    deploying.
-3. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
+4. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 13
+
+- **`snapToGround`, a new setting, default `true`**, the panel's checkbox
+  "Snap tiles to ground". Checked is revision 12's placement, unchanged.
+  Unchecked lowers every capture by `SplatSource.sharedGroundZ` instead of
+  its own `groundZ` (*The shared ground*).
+- **`SplatSource` gains `sharedGroundZ`**; `SPLATS` sets it to 25.85, the
+  median of the delivered tiles' `GROUNDZ`. Infra and the `splats` table do
+  not change.
+- **`placeCapture(splat, anchor, groundZ?)`** takes the height to lower by;
+  omitted, it is the capture's own. The layer gains `setSnapToGround`,
+  which the mount calls; the mount's members do not change.
+- Tests: `frame.test.ts` (the shared ground, above); `mount.test.ts`
+  (`update` calls `setSnapToGround` only when `snapToGround` changed, and
+  the initial value reaches the layer; the layer re-places every loaded
+  capture, and one loaded later, by z alone); `index.test.ts` (the default);
+  `src/sources.test.ts` (`SPLATS.sharedGroundZ` is 25.85).
+- **Why.** Revision 12 traded steps at tile edges for each tile's ground on
+  the map's. Which is worse depends on what is looked at: a street crossing
+  tiles shows the steps, a tree or a kerb against the map shows the offset.
+  The checkbox lets the viewer choose, with today's look the default.
+- Not done: a slider for the shared height, a shared height computed from
+  the loaded tiles (it would move as tiles stream in), and a per-tile choice.
+
+## Changes in revision 12
+
+- **A capture is a tile of infra's mosaic** (`infra/specs/splat-mosaic.md`):
+  every cleaned scan moved into one UTM frame, cut into 100 m tiles, and in
+  each 1 m voxel the splats of the one scan judged best there
+  (`infra/specs/voxel-quality.md`). Where scans overlapped, a surface was
+  drawn once per scan, one through the other; it is now drawn once.
+- **Placed by its georeference only.** `splats_placement` and the control-point
+  fit are removed, with `control_points.csv`, `control-points.mjs` and
+  `georef.mjs`: a tile has no control points, and the mosaic writes
+  `georef.csv`. `rms_m` and `points` leave the `splats` table.
+- **`File` is `.ply`**, in `data/3dgs/tiles/`, which the `files` service
+  serves at `/3dgs/`. `build-lod.sh` builds each tile's tree from its
+  `.ply`, so nothing is written as SPZ any more.
+- **`SPLAT_MAX_CAPTURES` is 256**, up from 16, so every tile loads
+  (*Which captures load*).
+- **Each capture is drawn with its own ground on the map's ground.**
+  `georef.csv` gains `GROUNDZ`, after `OFFSETZ`. A tile's z is the
+  ellipsoidal height and its `OFFSETZ` 0 (`infra/specs/splat-mosaic.md`,
+  *The ground*).
+- **`ground_z` replaces `altitude_m`**, in the `splats` table, in Martin's
+  properties and in `Splat` (`groundZ` for `altitudeM`). It is
+  `GROUNDZ − OFFSETZ`, the ground's local z, and `double precision` where
+  `altitude_m` was `real`, so a tile's `ground_z` is its ground's
+  ellipsoidal height exactly as the mosaic wrote it (about 25 m). The app
+  places the origin `groundZ × scale` metres below the map's ground, since
+  the scale reaches z: local z = `groundZ` lands on it exactly. A property says where the ground is,
+  not how far the origin is moved, because that is what a reader of the
+  tiles wants to know.
+- **The datum groups are removed**, with `splats_datum_gap_m`. The loader
+  computes nothing across captures.
+- **Why.** One height per group put only that group's median on the map's
+  ground: at city scale the ground spans tens to hundreds of metres, and
+  the delivered scans' own ground sat 1.4–1.7 m below the map's, because
+  the datum was the antennas'. Grounding each tile on its own fits it to
+  the trees and buildings, which stand on 0, at the cost of steps at tile
+  edges where the ground changes.
+- The layer's code changes only for the rename: `schema.ts` reads
+  `ground_z` into `groundZ`, and `placeCapture` negates it. A capture's
+  origin is now about 25 m below the map, which nothing depends on
+  (residency measures distance in 2D, `mercatorDistance`). Otherwise a
+  tile is read, placed and drawn as a header-placed scan was.
+- Not done: grouping touching tiles under one ground, a smooth ground field
+  subtracted per splat, and a DEM (the mosaic spec, *Why each tile has its
+  own ground*).
 
 ## Changes in revision 11
 

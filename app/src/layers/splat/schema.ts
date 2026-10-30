@@ -24,16 +24,21 @@ export interface SplatSource {
   /** Rendered by the host whenever a capture is drawn. */
   attribution: string;
   name: string;
+  /**
+   * The local z drawn at the map's ground for every capture when the layer's
+   * `snapToGround` is off. A dataset fact; see *The shared ground*.
+   */
+  sharedGroundZ: number;
 }
 
-/** One capture, as infra placed it from its control points. */
+/** One capture, a tile of infra's mosaic, as infra placed it from its georeference. */
 export interface Splat {
   id: string;
   file: string;
   /** Where the capture's local (0, 0) lands: exact, from `lng`/`lat`. */
   lngLat: [number, number];
-  /** The local z = 0 plane, in metres above the map's ground. */
-  altitudeM: number;
+  /** The capture's ground as a local z, in capture units: drawn at the map's ground. */
+  groundZ: number;
   /** Of the capture's local +y, degrees clockwise from north. */
   headingDeg: number;
   /** Capture units to metres. */
@@ -46,7 +51,7 @@ export const SPLAT_PROPS = {
   id: "splat_id",
   file: "file",
   bytes: "bytes",
-  altitudeM: "altitude_m",
+  groundZ: "ground_z",
   headingDeg: "heading_deg",
   scale: "scale",
   lng: "lng",
@@ -70,16 +75,16 @@ export function splatOf(props: Record<string, unknown>): Splat | null {
   const id = props[SPLAT_PROPS.id];
   const file = props[SPLAT_PROPS.file];
   const bytes = props[SPLAT_PROPS.bytes];
-  const altitudeM = props[SPLAT_PROPS.altitudeM];
+  const groundZ = props[SPLAT_PROPS.groundZ];
   const headingDeg = props[SPLAT_PROPS.headingDeg];
   const scale = props[SPLAT_PROPS.scale];
   const lng = props[SPLAT_PROPS.lng];
   const lat = props[SPLAT_PROPS.lat];
   if (typeof id !== "string" || id === "") return null;
   if (typeof file !== "string" || file === "" || file.includes("/")) return null;
-  if (!finite(bytes) || !finite(altitudeM) || !finite(headingDeg) || !finite(scale) || scale <= 0) return null;
+  if (!finite(bytes) || !finite(groundZ) || !finite(headingDeg) || !finite(scale) || scale <= 0) return null;
   if (!finite(lng) || !finite(lat) || Math.abs(lng) > 180 || Math.abs(lat) > MAX_LAT) return null;
-  return { id, file, lngLat: [lng, lat], altitudeM, headingDeg, scale, bytes };
+  return { id, file, lngLat: [lng, lat], groundZ, headingDeg, scale, bytes };
 }
 
 /**

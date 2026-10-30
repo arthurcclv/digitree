@@ -76,4 +76,6 @@ export const SPLATS: SplatSource = {
   lodFiles: "/files/3dgs-lod/",
   attribution: "3DGS captures",
   name: "Gaussian splat captures",
+  // The median GROUNDZ of the delivered mosaic's tiles (25.07–26.26 m).
+  sharedGroundZ: 25.85,
 };

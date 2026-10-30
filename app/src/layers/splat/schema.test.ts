@@ -14,9 +14,9 @@ const LNG = 121.5403129;
 const LAT = 25.04008900123;
 const PROPS = {
   splat_id: "KY0917A",
-  file: "KY0917A.spz",
+  file: "KY0917A.ply",
   bytes: 40422461,
-  altitude_m: 0.4,
+  ground_z: 24.98731,
   heading_deg: 30,
   scale: 1.01,
   lng: LNG,
@@ -65,9 +65,9 @@ function splatsTile(t: TileId, props: Record<string, string | number>): ArrayBuf
 
 const splat = (id: string, lng: number, lat: number): Splat => ({
   id,
-  file: `${id}.spz`,
+  file: `${id}.ply`,
   lngLat: [lng, lat],
-  altitudeM: 0,
+  groundZ: 0,
   headingDeg: 0,
   scale: 1,
   bytes: 1,
@@ -77,9 +77,9 @@ describe("splatOf", () => {
   test("reads every published property", () => {
     expect(splatOf(PROPS)).toEqual({
       id: "KY0917A",
-      file: "KY0917A.spz",
+      file: "KY0917A.ply",
       lngLat: [LNG, LAT],
-      altitudeM: 0.4,
+      groundZ: 24.98731,
       headingDeg: 30,
       scale: 1.01,
       bytes: 40422461,
@@ -90,9 +90,10 @@ describe("splatOf", () => {
     ["no id", { ...PROPS, splat_id: undefined }],
     ["an empty id", { ...PROPS, splat_id: "" }],
     ["no file", { ...PROPS, file: undefined }],
-    ["a path for a file", { ...PROPS, file: "../KY0917A.spz" }],
+    ["a path for a file", { ...PROPS, file: "../KY0917A.ply" }],
     ["a text heading", { ...PROPS, heading_deg: "30" }],
-    ["a non-finite altitude", { ...PROPS, altitude_m: Number.NaN }],
+    ["a non-finite ground", { ...PROPS, ground_z: Number.NaN }],
+    ["the old altitude_m in place of ground_z", { ...PROPS, ground_z: undefined, altitude_m: 0 }],
     ["a zero scale", { ...PROPS, scale: 0 }],
     ["no bytes", { ...PROPS, bytes: undefined }],
     ["no lng", { ...PROPS, lng: undefined }],
@@ -118,7 +119,7 @@ describe("splatOf", () => {
     const [s] = decodeMvt(buf, t, "splats", splatOf);
     expect(s.lngLat[0]).toBe(LNG);
     expect(s.lngLat[1]).toBe(LAT);
-    expect(s).toMatchObject({ id: "KY0917A", file: "KY0917A.spz", bytes: 40422461 });
+    expect(s).toMatchObject({ id: "KY0917A", file: "KY0917A.ply", bytes: 40422461 });
     // The point itself is on the 4096 grid, centimetres off: what the origin
     // used to be read from.
     const [g] = decodeMvt(buf, t, "splats", (_, geometry) => geometry());
@@ -137,17 +138,17 @@ describe("lodUrlOf", () => {
   const url = (file: string) => lodUrlOf(source, { file });
 
   test("is the descriptor's lodFiles plus <stem>-lod.rad", () => {
-    expect(url("KZ0918-075047.spz")).toBe("/files/3dgs-lod/KZ0918-075047-lod.rad");
+    expect(url("32651-352600-2770000.ply")).toBe("/files/3dgs-lod/32651-352600-2770000-lod.rad");
   });
   test("drops only the last extension", () => {
     expect(url("scan.ply")).toBe("/files/3dgs-lod/scan-lod.rad");
-    expect(url("a.b.spz")).toBe("/files/3dgs-lod/a.b-lod.rad");
+    expect(url("a.b.ply")).toBe("/files/3dgs-lod/a.b-lod.rad");
   });
   test("keeps a stem that already says -lod", () => {
-    expect(url("x-lod.spz")).toBe("/files/3dgs-lod/x-lod-lod.rad");
+    expect(url("x-lod.ply")).toBe("/files/3dgs-lod/x-lod-lod.rad");
   });
   test("encodes the name", () => {
-    expect(url("KY 0917A.spz")).toBe("/files/3dgs-lod/KY%200917A-lod.rad");
+    expect(url("KY 0917A.ply")).toBe("/files/3dgs-lod/KY%200917A-lod.rad");
   });
 });
 

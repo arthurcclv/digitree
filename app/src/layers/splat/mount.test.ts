@@ -30,14 +30,15 @@ const SOURCE: SplatSource = {
   lodFiles: "/files/3dgs-lod/",
   attribution: "",
   name: "",
+  sharedGroundZ: 10,
 };
 const SHOWN: SplatSettings = { ...DEFAULT_SPLAT_SETTINGS, visible: true };
 
 const splat = (id: string, lng: number, lat: number): Splat => ({
   id,
-  file: `${id}.spz`,
+  file: `${id}.ply`,
   lngLat: [lng, lat],
-  altitudeM: 0,
+  groundZ: 0,
   headingDeg: 0,
   scale: 1,
   bytes: 1,
@@ -228,6 +229,33 @@ describe("mountSplat", () => {
     vi.restoreAllMocks();
   });
 
+  test("pushes snapToGround only when it changed", () => {
+    const setSnap = vi.spyOn(ThreeSplatLayer.prototype, "setSnapToGround");
+    const f = fakeMap();
+    const m = mountSplat({ map: f.map, graph: createGraph() }, { splats: SOURCE }, DEFAULT_SPLAT_SETTINGS);
+    expect(setSnap).toHaveBeenCalledWith(true);
+    setSnap.mockClear();
+    m.update({ ...DEFAULT_SPLAT_SETTINGS, opacity: 0.5, lodSplatScale: 2 });
+    expect(setSnap).not.toHaveBeenCalled();
+    m.update({ ...DEFAULT_SPLAT_SETTINGS, snapToGround: false });
+    expect(setSnap).toHaveBeenCalledWith(false);
+    m.dispose();
+    vi.restoreAllMocks();
+  });
+
+  // `false` is not the layer's own default, so only the push can set it.
+  test("pushes an initial snapToGround of false", () => {
+    const setSnap = vi.spyOn(ThreeSplatLayer.prototype, "setSnapToGround");
+    const f = fakeMap();
+    const m = mountSplat({ map: f.map, graph: createGraph() }, { splats: SOURCE }, {
+      ...DEFAULT_SPLAT_SETTINGS,
+      snapToGround: false,
+    });
+    expect(setSnap).toHaveBeenCalledExactlyOnceWith(false);
+    m.dispose();
+    vi.restoreAllMocks();
+  });
+
   test("pushes the min zoom only when it changed, and visibility only through the bridge", () => {
     const setMinZoom = vi.spyOn(ThreeSplatLayer.prototype, "setMinZoom");
     const setVisibility = vi.spyOn(ThreeSplatLayer.prototype, "setVisibility");
@@ -332,6 +360,37 @@ describe("ThreeSplatLayer", () => {
     layer.dispose();
   });
 
+  // *The shared ground* in the spec.
+  test("snapToGround re-places every loaded capture, and one loaded later, by z alone", async () => {
+    const spark = fakeSpark();
+    const a = { ...splat("a", 121.5391, 25.0386), groundZ: 25.2 };
+    const b = { ...splat("b", 121.5395, 25.0387), groundZ: 26.1 };
+    const { d } = deps({ "14/13723/7014": [a, b] }, spark);
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onAdd(attached().map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    await spark.finishNext();
+    const position = (id: string) => new THREE.Vector3().setFromMatrixPosition(loadedOf(layer).get(id)!.mesh.matrix);
+    const snapped = position("a");
+    // Scale 1, and the anchor's latitude to ~1e-4°: k is 1 to about 1e-6.
+    expect(snapped.z).toBeCloseTo(-25.2, 4);
+
+    layer.setSnapToGround(false);
+    const shared = position("a");
+    expect(shared.z).toBeCloseTo(-SOURCE.sharedGroundZ, 4);
+    expect([shared.x, shared.y]).toEqual([snapped.x, snapped.y]);
+
+    await spark.finishNext();
+    expect(position("b").z).toBeCloseTo(-SOURCE.sharedGroundZ, 4);
+
+    layer.setSnapToGround(true);
+    expect(position("a").z).toBeCloseTo(-25.2, 4);
+    expect(position("b").z).toBeCloseTo(-26.1, 4);
+    layer.dispose();
+  });
+
   // *Level of detail* in the spec.
   test("draws each capture's paged LoD tree, with Spark's pool and cleanup timeout", async () => {
     const spark = fakeSpark();
@@ -413,7 +472,7 @@ describe("ThreeSplatLayer", () => {
   // The whole chain, with nothing extra and nothing missing: points of a
   // capture, through the layer's projection, view and mesh matrices and the
   // mesh's world modifier, land where MapLibre's own mainMatrix puts them,
-  // from the capture's lng/lat, altitude, heading and scale alone. The
+  // from the capture's lng/lat, ground, heading and scale alone. The
   // capture's metres are true (WGS 84) metres, drawn with the map's metres per
   // true metre on each axis.
   test.each(fixtures.captures.filter((_, i) => i % 3 === 0).map((c) => [`pitch ${c.view.pitch} bearing ${c.view.bearing}`, c] as const))(
@@ -421,7 +480,7 @@ describe("ThreeSplatLayer", () => {
     async (_, c) => {
       // The spike's view centre, which the fixture's origin is the Mercator of.
       const centre = { lng: 121.5608, lat: 25.0345 };
-      const s = { ...splat("a", 121.5611, 25.0347), altitudeM: 7.5, headingDeg: 130, scale: 1.02 };
+      const s = { ...splat("a", 121.5611, 25.0347), groundZ: 24.5, headingDeg: 130, scale: 1.02 };
       const tile = tileKey({ ...lngLatToMercatorTile(s.lngLat), z: 14 });
       const spark = fakeSpark();
       const { d } = deps({ [tile]: [s] }, spark);
@@ -456,7 +515,8 @@ describe("ThreeSplatLayer", () => {
           .applyMatrix4(camera.projectionMatrix);
         const east = axes.east * s.scale * (x * Math.cos(h) + y * Math.sin(h));
         const north = axes.north * s.scale * (-x * Math.sin(h) + y * Math.cos(h));
-        const up = s.altitudeM + s.scale * z;
+        // Local z = groundZ is the map's ground.
+        const up = s.scale * (z - s.groundZ);
         const theirs = new THREE.Vector4(m.x + east * metre, m.y - north * metre, up * metre, 1).applyMatrix4(main);
         expect(ours.x / ours.w).toBeCloseTo(theirs.x / theirs.w, 9);
         expect(ours.y / ours.w).toBeCloseTo(theirs.y / theirs.w, 9);
@@ -652,7 +712,7 @@ describe("ThreeSplatLayer unloading", () => {
   test("past SPLAT_MAX_CAPTURES a nearer capture unloads the farthest, and a farther one waits", async () => {
     // A row of captures 5 m apart, eastwards, all in one tile.
     const row = Array.from({ length: SPLAT_MAX_CAPTURES + 1 }, (_, i) =>
-      splat(`c${String(i).padStart(2, "0")}`, 121.5385 + i * 0.00005, 25.0386),
+      splat(`c${String(i).padStart(3, "0")}`, 121.5385 + i * 0.00005, 25.0386),
     );
     const west = { lng: row[0].lngLat[0], lat: 25.0386 };
     const { layer, spark, view } = await shownAt({ "14/13723/7014": row }, west);

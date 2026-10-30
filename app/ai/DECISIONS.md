@@ -6,6 +6,50 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-10-30 — Splat tiles: a viewer choice between own ground and one shared ground
+
+**Decision.** `SplatSettings.snapToGround` (default `true`, the panel's
+"Snap tiles to ground") chooses how far each tile is lowered: by its own
+`ground_z` (revision 12's placement), or all by one height,
+`SplatSource.sharedGroundZ` (25.85, the median of the delivered tiles'
+`GROUNDZ`). The shared height is a descriptor field in `src/sources.ts`, not
+something infra publishes or the layer computes.
+
+**Why.** Own grounds put every tile on the map but leave steps at tile edges;
+one ground removes the steps but leaves each tile up to ~0.8 m off the map.
+Which is worse depends on what is being looked at.
+
+**Rules out.** Computing the shared height from the loaded tiles (it would
+move as tiles stream in), and a per-tile choice.
+
+**Revisit if** infra publishes a smooth ground field or a DEM, which would
+remove both the steps and the offsets.
+
+---
+
+## 2026-10-30 — `load.sh` restarts the `files` service on every load
+
+**Decision.** `infra/load.sh` runs `docker compose restart files` after the
+load, beside the Martin restart it already did. Every `./load.sh` now
+restarts both.
+
+**Why.** On Docker Desktop for Mac, a running nginx container kept serving
+the `tiles/` and `lod/` bind mounts as they were before `splat-mosaic.mjs`
+and `build-lod.sh` renamed new files in. The fresh `ground_z` from the load
+then placed a stale LoD tree, and the capture drew 25 m under the map. A
+restart remounts the folders. It costs a second or two, and the service
+holds no state.
+
+**Rules out.** Leaving the `files` service running across loads. Also rules
+out serving `data/3dgs/` through anything that keeps its own copy of it.
+
+**Revisit if** the restart stops being enough, which would mean the stale
+mount is not the cause. Also revisit if the bind mounts are replaced, for
+example by copying the files into the image, or if Docker Desktop fixes the
+stale bind mount.
+
+---
+
 ## 2026-10-30 — The home view moves to Da'an, facing north, at z17.36
 
 **Decision.** `PLACE.home` is `[121.539873, 25.039784]` (6 decimals, ~0.1 m),
@@ -20,6 +64,92 @@ S Rd just south of Zhongxiao E Rd, north up, at z17.36.
 
 **Revisit if** the area of interest moves again, or several start views are
 wanted (a picker over `Viewpoint`s rather than one `home`).
+
+---
+
+## 2026-10-29 — The splat captures become a mosaic: 100 m tiles, the best scan per 1 m voxel
+
+**Decision.**
+- **One mosaic replaces the per-scan captures.** `infra/scripts/splat-mosaic.mjs`
+  moves every cleaned scan into its UTM zone by its PLY header's offset (a
+  translation: every delivered scan is x east, y north of the grid, in UTM
+  51N), heights left ellipsoidal, as RTK gave them. It cuts the
+  area into **100 m × 100 m tiles** on a grid fixed in the zone, and in each
+  **1 m voxel** keeps the splats of the one scan of best quality there and
+  drops every other scan's. Each tile is a capture to the loader and the app.
+  `infra/specs/splat-mosaic.md`.
+- **Each tile is grounded on its own** (revised 2026-10-30, before the
+  mosaic landed). A tile stores ellipsoidal heights (`offsetz` 0) and
+  records its ground: the lowest 0.1 m height bin holding at least a fifth
+  of the peak bin's splats, its median. `georef.csv` gains `GROUNDZ`, the
+  published `altitude_m` becomes `ground_z` (`GROUNDZ − OFFSETZ`, the
+  ground's local z, `double precision`), and the app draws that z on the
+  map's ground. The datum groups and `splats_datum_gap_m` are removed.
+  `mosaic.json` reports each tile's ground and the steps between
+  neighbours. A tile left with fewer than **10,000 splats** is dropped: on
+  the delivered scans those were 11 fringe tiles of 3–517 splats whose
+  grounds came out up to 97 m, against 25,588 for the next smallest.
+  Steps up to **1 m** between neighbours are accepted as the ground's own
+  slope; the antenna-height comparison is recorded, not a gate, since the
+  scans' antennas are not all at one height.
+- **Which scan is best is a module of its own**, `voxel-quality.mjs`, behind
+  a seam (`name`, `version`, `score`, `choose`) the mosaic knows nothing
+  else about. Method 1, `coverage-sharpness`: the fraction of the voxel's
+  0.25 m sub-cells its opaque splats fill, times the inverse of their median
+  largest axis; within 10% of the best, the denser scan.
+  `infra/specs/voxel-quality.md`.
+- **PLY end to end, no SPZ.** `process-splat.sh` writes `clean/<scan>.ply`,
+  the mosaic writes `tiles/<tile>.ply`, and `build-lod.sh` builds each
+  tree from the `.ply` directly (Spark's `build-lod` reads PLY).
+- **Header placement only.** The control-point fit, `splats_placement`,
+  `control_points.csv`, `control-points.mjs`, `georef.mjs` and
+  `scan-csv.mjs` are removed; the mosaic writes `georef.csv`, one row per
+  tile. `rms_m` and `points` leave the `splats` table.
+- **`SPLAT_MAX_CAPTURES` is 256**, from 16, so every tile (at most 64 for
+  the delivered scans) loads. Splat spec revision 12.
+
+**Why.** Where scans overlapped, every surface was drawn once per scan, one
+through the other, and the scans' misalignment showed as doubled walls and
+kerbs. Choosing one scan per voxel draws each surface once. 1 m voxels are
+fine enough to follow a building's edge, and coarse enough to hold tens of
+splats to judge by. 100 m tiles keep a tile's tree small while keeping the
+tile count (and so the root pages Spark holds) at most 64. The choice uses
+the splats alone, by design: the same rule then works for any scan, however
+it was captured. SPZ existed only for the browser, which now reads LoD trees
+built from the PLY, so it only lost precision. A tile has no control points,
+and the header placement already agreed with the fit to under 5 mm, so the
+fit had no job left. One datum for the whole mosaic would put only the
+ground near its median height on the map's ground, and a city's ground
+spans tens to hundreds of metres; even the delivered scans' ground lay
+1.4–1.7 m below the map's, since the median `offsetz` is the antennas'
+height. Grounding each tile on its own fits it to the trees and buildings,
+which stand on 0. The lowest dense layer, not the lowest splats, because
+3DGS grows sparse layers below the ground (reflections in puddles and
+glass) that a low percentile lands in.
+
+**Rules out.**
+- Blending scans within a voxel; using poses, RTK quality or the camera path
+  in the choice.
+- Per-scan captures drawn one through another.
+- Scans in different UTM zones, or without a PLY georeference, in the mosaic.
+- Placing a capture by control points.
+- One ground for touching tiles (no steps, but at city scale one height
+  again), a smooth ground field subtracted per splat (it bends the splats
+  and needs a ground under every tile), and a DEM, for now.
+
+**Revisit if** the seams between voxels won by different scans show (a
+smoothing of winners across neighbouring voxels is the open item), the page
+pool starves with every tile loaded (iOS first: 64 root pages of 96), a
+scan arrives in another zone, the steps between tiles' grounds show
+(`mosaic.json`'s `ground_steps`), or a tile whose ground is hidden sinks.
+
+This supersedes the 2026-10-29 entry "A header-placed capture's height is
+its `offsetz` less its group's median": a capture is grounded on its own,
+by its `GROUNDZ`.
+
+This supersedes the 2026-10-23 entry "The splat loader owns the capture
+contract: `.spz` only", in its first half: the loader now takes `.ply` only,
+for the same reason, that `build-lod.sh` reads nothing else.
 
 ---
 
@@ -48,6 +178,13 @@ check fails first), or the memory and time figures, measured on 3.4.x, turn
 out materially different on 3.10.
 
 ## 2026-10-29 — A header-placed capture's height is its `offsetz` less its group's median
+
+> **Superseded** by "The splat captures become a mosaic" (2026-10-29,
+> heights revised 2026-10-30): each tile is grounded on its own, by the
+> `GROUNDZ` the mosaic estimates from its splats, and the datum groups are
+> removed. What this entry ruled out, "setting each capture's own ground on
+> the map's", is now the rule: steps between neighbouring tiles are the
+> accepted cost.
 
 **Decision.** In `header` mode, `altitude_m` is `OFFSETZ − datum`. The
 captures are sorted by `OFFSETZ` and split wherever neighbours differ by more
@@ -80,6 +217,9 @@ group while still touching them, or when the map gains terrain.
 ---
 
 ## 2026-10-29 — A splat capture is placed by its PLY header by default, height and all
+
+> **Superseded in part** by "The splat captures become a mosaic" (2026-10-29):
+> the header is now the only placement; the control-point fit is removed.
 
 *Superseded in part by "A header-placed capture's height is its `offsetz`
 less its group's median" (above), 2026-10-29: `altitude_m` is no longer
@@ -149,6 +289,9 @@ costs frames on a full 20,000-instance view.
 ---
 
 ## 2026-10-25 — A scan's control-point `H` is its antenna height, measured on its own Gaussians
+
+> **Superseded** by "The splat captures become a mosaic" (2026-10-29): the
+> control points and their generator are removed.
 
 **Decision.** `control-points.mjs` writes `H` as the scan's GNSS antenna
 height above the capture's ground. It takes 50 RTK fixes spread through the
@@ -270,6 +413,9 @@ again, and this entry is superseded.
 ---
 
 ## 2026-10-23 — The splat loader owns the capture contract: `.spz` only, one line measure
+
+> **Superseded in part** by "The splat captures become a mosaic" (2026-10-29):
+> the loader takes `.ply` only, and the control-point generator is gone.
 
 **Decision.**
 - **`04_splats.sql` accepts `File` only as `.spz`**, in lower case. It used
@@ -405,6 +551,10 @@ of its own.
 
 ## 2026-10-23 — Splat captures are fitted on WGS 84 and drawn with per-axis metres
 
+> **Superseded in part** by "The splat captures become a mosaic" (2026-10-29):
+> the loader no longer fits; each tile is placed by its header. The per-axis
+> metres the layer draws with stand.
+
 **Decision.**
 - **`04_splats.sql` fits on the WGS 84 ellipsoid**, equirectangular at the
   points' centroid with its radii N and M, not on the map's sphere. `scale`
@@ -499,6 +649,10 @@ or `SPLAT_MAX_CAPTURES` is reached in practice.
 ---
 
 ## 2026-10-22 — A scan's control points come from its PLY's georeference
+
+> **Superseded** by "The splat captures become a mosaic" (2026-10-29):
+> the control points, `control-points.mjs` and the fit they fed are removed.
+> The PLY's georeference stays: the mosaic places each scan by it.
 
 **Decision.** `infra/control-points.mjs` writes a scan's control points from
 its RTK-fixed GNSS fixes (status 4) and the georeference in
@@ -653,6 +807,10 @@ it draws.
 
 ## 2026-10-21 — Splat captures are cleaned before they are served; `raw/` is now `source/`
 
+> **Superseded in part** by "The splat captures become a mosaic" (2026-10-29):
+> the cleaned scans are `clean/<scan>.ply`, and `source/` is no longer read
+> or written. The cleaning stands.
+
 **Decision.** `infra/clean-splat.sh` turns a capture as delivered, in
 `infra/data/3dgs/original/`, into the file the `files` service serves, in
 `infra/data/3dgs/source/` (formerly `raw/`). Outliers are found from the
@@ -751,6 +909,10 @@ Spark's paged LoD files instead, which is out of scope today
 ---
 
 ## 2026-10-20 — Gaussian splats: Spark inside a `ThreeLayer`, placed from control points in PostGIS
+
+> **Superseded in part** by "The splat captures become a mosaic" (2026-10-29):
+> captures are placed by their header, not from control points. Spark inside
+> a `ThreeLayer` stands.
 
 *Superseded in part by "Splat captures are drawn from paged LoD trees built
 in infra" (above), 2026-10-23: captures no longer stay loaded, and evicting

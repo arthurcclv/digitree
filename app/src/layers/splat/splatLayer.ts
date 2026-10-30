@@ -78,6 +78,7 @@ export class ThreeSplatLayer extends ThreeLayer {
   private visible = false;
   private opacity = 1;
   private minZoom = SPLAT_MIN_ZOOM;
+  private snapToGround = true;
   /** Spark's LoD budget: `null` is its platform default. See *Settings*. */
   private lodSplatCount: number | null = null;
   private lodSplatScale = 1;
@@ -125,6 +126,13 @@ export class ThreeSplatLayer extends ThreeLayer {
       this.sparkRenderer.lodSplatScale = lodSplatScale;
     }
     this.repaint();
+  }
+
+  /** Re-place every held capture on its own ground or the shared one. */
+  setSnapToGround(snap: boolean): void {
+    if (snap === this.snapToGround) return;
+    this.snapToGround = snap;
+    if (this.anchor) this.replaceHeld(this.anchor);
   }
 
   setMinZoom(minZoom: number): void {
@@ -187,8 +195,18 @@ export class ThreeSplatLayer extends ThreeLayer {
     const next = rebased(this.anchor, c.lng, c.lat);
     if (!next) return;
     this.anchor = next;
-    for (const { splat, value } of this.residency.held()) this.apply(value, placeCapture(splat, next));
+    this.replaceHeld(next);
+  }
+
+  /** Re-place every held capture from `anchor`, and ask for a frame. */
+  private replaceHeld(anchor: Anchor): void {
+    for (const { splat, value } of this.residency.held()) this.apply(value, this.place(splat, anchor));
     this.repaint();
+  }
+
+  /** `placeCapture` with the ground `snapToGround` chooses. */
+  private place(splat: Splat, anchor: Anchor): Placed {
+    return placeCapture(splat, anchor, this.snapToGround ? splat.groundZ : this.source.sharedGroundZ);
   }
 
   /** Put a capture's mesh and its stretch where `placeCapture` says. */
@@ -253,7 +271,7 @@ export class ThreeSplatLayer extends ThreeLayer {
       const spark = await this.ensureSpark();
       // The paged LoD tree built in infra: Spark fetches its chunks as the view
       // needs them, into a pool of fixed size. See *Level of detail*.
-      const stretch = makeStretch(spark.dyno, placeCapture(splat, this.anchor!).axes);
+      const stretch = makeStretch(spark.dyno, this.place(splat, this.anchor!).axes);
       const mesh = new spark.SplatMesh({
         url: lodUrlOf(this.source, splat),
         paged: true,
@@ -268,7 +286,7 @@ export class ThreeSplatLayer extends ThreeLayer {
       mesh.opacity = this.opacity;
       const drawn: Drawn = { mesh, stretch };
       // Placed from the anchor now, which may have moved during the load.
-      this.apply(drawn, placeCapture(splat, this.anchor!));
+      this.apply(drawn, this.place(splat, this.anchor!));
       this.scene.add(mesh);
       this.residency.done(splat, drawn);
     } catch (e) {

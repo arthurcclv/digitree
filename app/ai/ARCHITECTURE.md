@@ -386,7 +386,9 @@ layer asks what to load and unload. A capture is fitted in true (WGS 84) metres 
 metres per true metre on each axis (`trueMetreAxes`): Spark keeps only one
 scale of a mesh's matrix, so the per-axis part is a world modifier
 (`stretch.ts`). The whole transform is computed in one pure function,
-`placeCapture` (`frame.ts`), which the layer only applies. It is stacked last. Full contract:
+`placeCapture` (`frame.ts`); the layer only chooses the ground it lowers by
+(each capture's own, or `sharedGroundZ` when "Snap tiles to ground" is off)
+and applies the result. It is stacked last. Full contract:
 `src/layers/splat/specs/spec.md`.
 
 ## Module inventory

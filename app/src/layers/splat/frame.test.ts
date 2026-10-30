@@ -62,9 +62,9 @@ describe("axesOf", () => {
 });
 
 describe("placeCapture", () => {
-  const capture = (over: Partial<{ lngLat: [number, number]; altitudeM: number; headingDeg: number; scale: number }> = {}) => ({
+  const capture = (over: Partial<{ lngLat: [number, number]; groundZ: number; headingDeg: number; scale: number }> = {}) => ({
     lngLat: TAIPEI,
-    altitudeM: 0,
+    groundZ: 0,
     headingDeg: 0,
     scale: 1,
     ...over,
@@ -84,7 +84,7 @@ describe("placeCapture", () => {
 
   test("is translation · k · diag(east, north, 1) · similarity, with up not stretched", () => {
     const at: [number, number] = [TAIPEI[0] + 0.01, TAIPEI[1] + 0.03];
-    const s = capture({ lngLat: at, altitudeM: 4, headingDeg: 130, scale: 1.02 });
+    const s = capture({ lngLat: at, groundZ: 4, headingDeg: 130, scale: 1.02 });
     const anchor = frameAt(...TAIPEI);
     const placed = placeCapture(s, anchor);
     const k = metreInMercator(at[1]) / anchor.metre;
@@ -103,18 +103,41 @@ describe("placeCapture", () => {
     expect(up.z).toBeCloseTo(5 * 1.02 * k, 12);
   });
 
-  test("puts the origin at the capture's Mercator offset from the anchor, north up", () => {
+  test("puts the origin at the capture's Mercator offset from the anchor, north up, its ground below", () => {
     const at: [number, number] = [TAIPEI[0] + 0.002, TAIPEI[1] + 0.001];
     const anchor = frameAt(...TAIPEI);
-    const { matrix, origin } = placeCapture(capture({ lngLat: at, altitudeM: 7 }), anchor);
+    const { matrix, origin } = placeCapture(capture({ lngLat: at, groundZ: 7 }), anchor);
     const m = lngLatToMercator(...at);
     expect(origin.x).toBeCloseTo((m.x - anchor.origin.x) / anchor.metre, 9);
     expect(origin.y).toBeCloseTo((anchor.origin.y - m.y) / anchor.metre, 9);
     expect(origin.x).toBeGreaterThan(0);
     expect(origin.y).toBeGreaterThan(0);
-    expect(origin.z).toBeCloseTo((7 * metreInMercator(at[1])) / anchor.metre, 12);
+    expect(origin.z).toBeCloseTo((-7 * metreInMercator(at[1])) / anchor.metre, 12);
     // The mesh's translation is the origin: the stretch is about it.
     expect(new THREE.Vector3().setFromMatrixPosition(matrix).toArray()).toEqual(origin.toArray());
+  });
+
+  test("draws local z = groundZ on the map's ground exactly, whatever the scale", () => {
+    for (const scale of [1, 1.00013, 1.02]) {
+      const placed = placeCapture(capture({ lngLat: eastOf(TAIPEI, 300), groundZ: 24.98731, headingDeg: 70, scale }), frameAt(...TAIPEI));
+      expect(whole(placed, new THREE.Vector3(12, -30, 24.98731)).z).toBeCloseTo(0, 9);
+    }
+  });
+
+  test("with a shared ground, draws that local z on the map's ground and moves nothing else", () => {
+    const s = capture({ lngLat: eastOf(TAIPEI, 300), groundZ: 26.1, headingDeg: 70, scale: 1.00013 });
+    const anchor = frameAt(...TAIPEI);
+    const own = placeCapture(s, anchor);
+    const shared = placeCapture(s, anchor, 25.85);
+    const k = metreInMercator(s.lngLat[1]) / anchor.metre;
+    expect(shared.origin.z).toBeCloseTo(-25.85 * s.scale * k, 12);
+    expect(whole(shared, new THREE.Vector3(12, -30, 25.85)).z).toBeCloseTo(0, 9);
+    expect([shared.origin.x, shared.origin.y]).toEqual([own.origin.x, own.origin.y]);
+    expect(shared.axes).toEqual(own.axes);
+    // The same rotation and scale: only the translation's z differs.
+    const rotationAndScale = (p: Placed) => new THREE.Matrix3().setFromMatrix4(p.matrix).toArray();
+    expect(rotationAndScale(shared)).toEqual(rotationAndScale(own));
+    expect(placeCapture(s, anchor, s.groundZ).matrix.toArray()).toEqual(own.matrix.toArray());
   });
 
   test("leaves the origin fixed under the stretch", () => {

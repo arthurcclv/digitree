@@ -104,8 +104,8 @@ Martin serves tiles only, so infra serves the splat captures from a static
 Martin.
 
 1. **One more setting, `FILES_PROXY_TARGET`.** `/files/*` is forwarded to it,
-   with the `/files` prefix stripped: `/files/3dgs/KY0917A.spz` →
-   `/3dgs/KY0917A.spz`.
+   with the `/files` prefix stripped: `/files/3dgs/32651-352600-2770000.ply` →
+   `/3dgs/32651-352600-2770000.ply`.
 2. **The default is `http://localhost:3080`**, infra's `FILES_PORT` default.
 3. **Everything else is the `/tiles` rules**: read with `loadEnv`, no `VITE_`
    prefix, validated the same way with the same messages naming

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { OSM_ATTRIBUTION, OSM_TILEJSON } from "./layers/basemaps";
-import { BUILDINGS, TREES, TREES_SURVEYED } from "./sources";
+import { BUILDINGS, SPLATS, TREES, TREES_SURVEYED } from "./sources";
 
 describe("TREES_SURVEYED", () => {
   test("is the size of the surveyed inventory infra/ loads", () => {
@@ -37,5 +37,12 @@ describe("BUILDINGS", () => {
 
   test("names the extrusion as the app always has", () => {
     expect(BUILDINGS).toMatchObject({ name: "OSM Buildings", sourceKind: "osm-openfreemap" });
+  });
+});
+
+describe("SPLATS", () => {
+  // *The shared ground* in the splat spec: "Snap tiles to ground" off.
+  test("shares the median ground of the delivered mosaic's tiles", () => {
+    expect(SPLATS.sharedGroundZ).toBe(25.85);
   });
 });

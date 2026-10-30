@@ -12,9 +12,9 @@ const DEG_PER_M = 360 * metreInMercator(LAT);
 /** A capture `m` metres east of (LNG, LAT). */
 const at = (id: string, m: number): Splat => ({
   id,
-  file: `${id}.spz`,
+  file: `${id}.ply`,
   lngLat: [LNG + m * DEG_PER_M, LAT],
-  altitudeM: 0,
+  groundZ: 0,
   headingDeg: 0,
   scale: 1,
   bytes: 1,
@@ -64,7 +64,7 @@ describe("Residency", () => {
 
   test("past SPLAT_MAX_CAPTURES a nearer capture evicts the farthest, and a farther one waits", () => {
     const r = new Residency<string>();
-    const row = Array.from({ length: SPLAT_MAX_CAPTURES + 1 }, (_, i) => at(`c${String(i).padStart(2, "0")}`, i * 5));
+    const row = Array.from({ length: SPLAT_MAX_CAPTURES + 1 }, (_, i) => at(`c${String(i).padStart(3, "0")}`, i * 5));
     r.offer(row);
     // From the west end the last is the farthest: it waits.
     expect(drain(r, viewAt(0))).toEqual(row.slice(0, SPLAT_MAX_CAPTURES).map((s) => s.id));
@@ -72,11 +72,24 @@ describe("Residency", () => {
     // From the east end it is the nearest, and the first is the farthest.
     const next = r.next(viewAt(SPLAT_MAX_CAPTURES * 5))!;
     expect(next.load.id).toBe(row.at(-1)!.id);
-    expect(next.evicted).toEqual({ splat: row[0], value: "mesh:c00" });
+    expect(next.evicted).toEqual({ splat: row[0], value: "mesh:c000" });
     r.done(next.load, "mesh");
     expect(r.held().map((h) => h.splat.id).sort()).toEqual(row.slice(1).map((s) => s.id));
     // The evicted one is forgotten, so its tile finds it again.
     expect(r.offer([row[0]])).toBe(true);
+  });
+
+  test("a whole mosaic of 64 tiles, 100 m apart, loads with none evicted", () => {
+    const r = new Residency<string>();
+    const tiles = Array.from({ length: 64 }, (_, i) => at(`t${String(i).padStart(2, "0")}`, i * 100));
+    r.offer(tiles);
+    const loaded: string[] = [];
+    for (let n = r.next(viewAt(3200)); n; n = r.next(viewAt(3200))) {
+      expect(n.evicted).toBeNull();
+      r.done(n.load, "mesh");
+      loaded.push(n.load.id);
+    }
+    expect(loaded.sort()).toEqual(tiles.map((t) => t.id));
   });
 
   test("settle forgets loaded and queued captures past SPLAT_KEEP_M, and keeps the rest", () => {

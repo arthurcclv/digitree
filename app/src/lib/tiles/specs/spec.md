@@ -78,6 +78,8 @@ interface SplatSource {
   lodFiles: string;       // where its paged LoD tree is: lodFiles + <stem>-lod.rad (lodUrlOf)
   attribution: string;    // in the map's credit line while a capture is drawn
   name: string;
+  sharedGroundZ: number;  // the local z drawn at the map's ground for every
+                          // capture when the layer's snapToGround is off
 }
 ```
 
@@ -194,7 +196,7 @@ store.dispose()                      // aborts in-flight fetches; the store is d
 | `TREES: TreeSource` | `tiles: "/tiles/trees/{z}/{x}/{y}"` (relative, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"`, `name: "Taipei Trees"`, `sourceKind: "postgis-martin"`, `fallbackHeightM: 9.1` (the inventory's measured median height) |
 | `TREES_SURVEYED` | `162_930`, the panel's "Surveyed trees", formerly `TREES_TOTAL` |
 | `BUILDINGS: BuildingSource` | `tileJson: OSM_TILEJSON`, `sourceLayer: "building"`, `attribution: OSM_ATTRIBUTION`, `name: "OSM Buildings"`, `sourceKind: "osm-openfreemap"` |
-| `SPLATS: SplatSource` | `tiles: "/tiles/splats/{z}/{x}/{y}"`, `sourceLayer: "splats"`, `files: "/files/3dgs/"`, `lodFiles: "/files/3dgs-lod/"` (both through the `/files` proxy, `specs/proxy.md`), `attribution: "3DGS captures"` (a placeholder until the captures' credit is known), `name: "Gaussian splat captures"` |
+| `SPLATS: SplatSource` | `tiles: "/tiles/splats/{z}/{x}/{y}"`, `sourceLayer: "splats"`, `files: "/files/3dgs/"`, `lodFiles: "/files/3dgs-lod/"` (both through the `/files` proxy, `specs/proxy.md`), `attribution: "3DGS captures"` (a placeholder until the captures' credit is known), `name: "Gaussian splat captures"`, `sharedGroundZ: 25.85` (the median of the delivered tiles' `GROUNDZ`) |
 
 - `BUILDINGS` is built from `basemaps`' `OSM_TILEJSON` and `OSM_ATTRIBUTION`,
   so the basemap and the buildings still share one OSM snapshot (DECISIONS

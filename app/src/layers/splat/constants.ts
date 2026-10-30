@@ -30,14 +30,16 @@ export const SPLAT_KEEP_M = 10_000;
 
 /**
  * At most this many captures are loaded at once; a nearer one unloads the
- * farthest. Each needs at least its root page in Spark's pool (96 pages at
- * the least, on iOS).
+ * farthest. A capture is a 100 m tile of infra's mosaic, and the cap is set
+ * well above the tiles the delivered scans make, so every tile loads. Each
+ * needs at least its root page in Spark's pool (256 pages on desktop, 96 on
+ * iOS). See *Which captures load*.
  */
-export const SPLAT_MAX_CAPTURES = 16;
+export const SPLAT_MAX_CAPTURES = 256;
 
 /**
  * Spark's covariance blur for captures trained with anti-aliasing, as every
- * current one is (the SPZ header's `antialiased` flag). See *Renderer*.
+ * current one is (the scans' `antialiased` flag). See *Renderer*.
  */
 export const SPLAT_BLUR_AMOUNT = 0.3;
 

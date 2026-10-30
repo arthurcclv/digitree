@@ -45,13 +45,21 @@ export interface Placed {
  * carries the rest, and the stretch (`makeStretch`) moves each splat to
  * `origin + diag(axes)·(c − origin)`. The two agree because `k` is uniform.
  * The offset from the anchor is in double precision, so it stays exact far
- * from it. See *The frame*.
+ * from it. `groundZ`, the local z drawn on the map's ground, defaults to the
+ * capture's own. See *The frame* and *The shared ground*.
  */
-export function placeCapture(splat: Pick<Splat, "lngLat" | "altitudeM" | "headingDeg" | "scale">, anchor: Anchor): Placed {
+export function placeCapture(
+  splat: Pick<Splat, "lngLat" | "groundZ" | "headingDeg" | "scale">,
+  anchor: Anchor,
+  groundZ = splat.groundZ,
+): Placed {
   const [lng, lat] = splat.lngLat;
   const k = metreInMercator(lat) / anchor.metre;
   const [east, north] = mercatorToLocal(anchor, lngLatToMercator(lng, lat));
-  const at = new THREE.Vector3(east, north, splat.altitudeM * k);
+  // The origin goes groundZ capture units, scale metres each, below the
+  // map's ground, so local z = groundZ lands on it exactly. groundZ is the
+  // capture's own, or the shared ground (*The shared ground*).
+  const at = new THREE.Vector3(east, north, -groundZ * splat.scale * k);
   const matrix = new THREE.Matrix4().makeTranslation(at).multiply(new THREE.Matrix4().makeScale(k, k, k)).multiply(similarity(splat));
   return { matrix, origin: at, axes: axesOf(splat) };
 }

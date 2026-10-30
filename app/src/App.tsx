@@ -525,6 +525,12 @@ export default function App() {
               onChange={(v) => patchSplat({ opacity: v / 100 })}
             />
             <CheckboxRow
+              label="Snap tiles to ground"
+              checked={splat.snapToGround}
+              onChange={(snapToGround) => patchSplat({ snapToGround })}
+              title="Checked: each 100 m tile is lowered by its own ground, so it stands on the map, with a step where neighbouring grounds differ. Unchecked: all tiles are lowered by one height, so they meet without steps but may float or sink up to about a metre."
+            />
+            <CheckboxRow
               label="Platform budget"
               checked={splat.lodSplatCount === null}
               // Unchecking starts the slider from what was being drawn.

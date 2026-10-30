@@ -37,6 +37,7 @@ export function mountSplat(
     if (changed(settings, next, "lodSplatCount", "lodSplatScale")) {
       layer.setLod(next.lodSplatCount, next.lodSplatScale);
     }
+    if (changed(settings, next, "snapToGround")) layer.setSnapToGround(next.snapToGround);
     settings = next;
   };
   update(initial);
