@@ -48,9 +48,9 @@ services:
     command: ["--config", "/config/martin.yaml"]
 
   # The Gaussian splat capture files, which Martin cannot serve: Martin serves
-  # tiles from the database, and a capture is a 40-500 MB binary on disk. A
-  # plain static server, read-only, over the cleaned captures (source/) and
-  # their LoD trees (lod/, which the app draws). The app reaches it
+  # tiles from the database, and a capture is a binary of hundreds of MB on
+  # disk. A plain static server, read-only, over the mosaic's tiles (tiles/)
+  # and their LoD trees (lod/, which the app draws). The app reaches it
   # through its /files proxy (FILES_PROXY_TARGET, app/src/lib/tiles/specs/proxy.md),
   # so the browser asks for /files/3dgs/<file>. FILES_PORT moves the host side
   # only, as MARTIN_PORT does for Martin; 3080 avoids 3000 and the 3001 a
@@ -60,7 +60,7 @@ services:
     ports:
       - "127.0.0.1:${FILES_PORT:-3080}:80"
     volumes:
-      - ./data/3dgs/source:/srv/3dgs:ro
+      - ./data/3dgs/tiles:/srv/3dgs:ro
       - ./data/3dgs/lod:/srv/3dgs-lod:ro
       - ./files.conf:/etc/nginx/conf.d/default.conf:ro
 

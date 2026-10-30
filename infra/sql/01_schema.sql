@@ -51,12 +51,12 @@ CREATE TABLE trees (
 CREATE INDEX trees_geom_idx ON trees USING GIST (geom);
 CREATE INDEX trees_kind_idx ON trees (kind);
 
--- Gaussian splat captures (3DGS): one row per capture file in data/3dgs/source/,
--- placed on the map by its PLY header's georeference (data/3dgs/georef.csv,
--- the default) or by the control points in data/3dgs/control_points.csv.
--- Loaded by 04_splats.sql, which computes each placement; nothing here is
--- typed in by hand. The app's spec for these columns is
--- app/src/layers/splat/specs/spec.md, *Placement* and the two sections after it.
+-- Gaussian splat captures (3DGS): one row per tile of the mosaic, a file in
+-- data/3dgs/tiles/, placed on the map by its georeference
+-- (data/3dgs/georef.csv, which scripts/splat-mosaic.mjs writes). Loaded by
+-- 04_splats.sql, which computes each placement; nothing here is typed in by
+-- hand. The app's spec for these columns is app/src/layers/splat/specs/spec.md,
+-- *Georeference CSV → `splats` table*.
 DROP TABLE IF EXISTS splats;
 
 CREATE TABLE splats (
@@ -64,25 +64,21 @@ CREATE TABLE splats (
   -- the real key.
   id          integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   splat_id    text NOT NULL UNIQUE,
-  -- A bare file name inside data/3dgs/source/, which the files service serves at
-  -- /3dgs/<file>. One capture per file.
+  -- A bare file name inside data/3dgs/tiles/, a tile of the mosaic, which the
+  -- files service serves at /3dgs/<file>. One capture per file.
   file        text NOT NULL UNIQUE CHECK (file !~ '/'),
   -- From pg_stat_file at load, so the app can show how much a capture costs
   -- before fetching it.
   bytes       bigint NOT NULL CHECK (bytes > 0),
-  -- Vertical offset of local z = 0 above the map's ground plane, in metres:
-  -- placed by the header, OFFSETZ less its datum group's median OFFSETZ
-  -- (04_splats_header.sql); fitted, mean(H − scale·Z) over its points.
-  altitude_m  real NOT NULL,
+  -- The capture's ground as a local z, in metres: GROUNDZ − OFFSETZ
+  -- (04_splats.sql). The app draws this z at the map's ground. For a tile of
+  -- the mosaic, whose z is the ellipsoidal height, it is the ground's
+  -- ellipsoidal height, exactly as the mosaic wrote it.
+  ground_z    double precision NOT NULL,
   -- The capture's local +y axis, degrees clockwise from north.
   heading_deg real NOT NULL CHECK (heading_deg >= 0 AND heading_deg < 360),
-  -- Local units -> metres. The fit rejects anything outside [0.8, 1.25].
+  -- Local units -> metres: UTM's 1/k at the origin.
   scale       real NOT NULL CHECK (scale > 0),
-  -- The fit's horizontal RMS residual over the control points, in metres,
-  -- and how many it used. NULL for a capture placed by its header: nothing
-  -- is fitted.
-  rms_m       real CHECK (rms_m >= 0),
-  points      integer CHECK (points >= 3),
   -- Where local (0, 0) lands.
   geom        geometry(Point, 4326) NOT NULL,
   -- geom's longitude and latitude, exactly, for the app to read as the

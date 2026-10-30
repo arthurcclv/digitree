@@ -1,8 +1,12 @@
 # Spec — `splat-align.mjs`: correct a capture's placement against RTK and lidar
 
-Status: **revision 1 — approved 2026-10-24.** Implemented the same day; what
-the implementation settled that the approved text left open is listed under
-*Settled in implementation*.
+Status: **revision 2 — approved 2026-10-29**, with `specs/splat-mosaic.md`:
+the step is unchanged, but its scan is written to `clean/<scan>.ply` and its
+report to `clean/<scan>.align.json`, and what reads its frame downstream is
+the mosaic, not the control-point fit; see *Changes in revision 2*. Revision 1
+was approved 2026-10-24 and implemented the same day; what the implementation
+settled that the approved text left open is listed under *Settled in
+implementation*.
 
 ## What it is
 
@@ -15,8 +19,8 @@ stays in the PLY's own frame** (UTM grid less the header's `offsetx/y/z`),
 not converted to ENU. See *Why the frame does not change*.
 
 ```
-original/<scan>/point_cloud.ply ─▶ splat-align.mjs ─▶ (aligned .ply) ─▶ density ─▶ size ─▶ floaters ─▶ source/<scan>.spz
-                                                   └▶ source/<scan>.align.json
+original/<scan>/point_cloud.ply ─▶ splat-align.mjs ─▶ (aligned .ply) ─▶ density ─▶ size ─▶ floaters ─▶ clean/<scan>.ply
+                                                   └▶ clean/<scan>.align.json
 ```
 
 It is never run by hand in normal use; `process-splat.sh` calls it as
@@ -49,7 +53,7 @@ unaligned, in the same frame as the aligned ones, just uncorrected.
 A file that is **present but wrong** fails the scan instead, naming the file:
 a PLY that is not `binary_little_endian 1.0`, or lacks `epsg`, `offsetx/y/z`,
 `x y z`, `rot_0..3`, `scale_0..2` or `opacity`; an `epsg` outside WGS 84 /
-UTM (as `control-points.mjs` refuses it); a Potree `encoding` other than
+UTM (as `ply-header.mjs` refuses it); a Potree `encoding` other than
 `DEFAULT`; a `map_config.json` without a 3-number `rtk_external_param`; a
 `gnss.csv` without the expected header.
 
@@ -61,8 +65,7 @@ offset, so nothing is ever near 3 × 10⁶ m in float32.
 1. **Poses → PLY frame, from RTK.** Match each pose to the nearest GNSS fix
    by timestamp, within 0.05 s (half the GNSS interval); keep pairs whose fix
    is status 4. Project each fix's latitude/longitude to UTM in the header's
-   zone (the same Krüger series `control-points.mjs` uses, moved to a shared
-   `scripts/utm.mjs`), less the offset; the fix's `altitude` (ellipsoidal) less
+   zone (the Krüger series in the shared `scripts/utm.mjs`), less the offset; the fix's `altitude` (ellipsoidal) less
    `offsetz` is its z. The antenna is the pose position plus the lever arm
    rotated by the pose quaternion. Fit a rigid transform (Kabsch, no scale)
    antenna → fix, drop pairs with a residual over median + 6 · MAD (false
@@ -130,24 +133,24 @@ the handoff, not a port.
 `align.py` goes on to convert every Gaussian to a local ENU frame. Here it
 does not, and nothing downstream has to change:
 
-- `control-points.mjs` keeps reading the header's georeference and projecting
-  GNSS fixes through it. After the correction the Gaussians agree with RTK to
-  the fit's residual, so those control points now land on the splats *more*
-  exactly, rather than being undone by them.
-- Skipped scans and aligned scans share one frame, so `source/` is uniform.
-- `04_splats.sql`'s similarity fit already absorbs the grid's −0.62°
-  convergence and 0.99987 point scale (`control-points.md`), which is all
-  ENU would have removed.
+- The mosaic (`specs/splat-mosaic.md`) moves each cleaned scan into the
+  common frame by its original's header offset alone. That holds only because
+  the correction keeps the header's frame: after it, the Gaussians agree with
+  RTK to the fit's residual, in that frame.
+- Skipped scans and aligned scans share one frame, so `clean/` is uniform.
+- The loader places each tile through UTM itself, the grid's −0.62°
+  convergence and 0.99987 point scale included, which is all ENU would have
+  removed.
 
 ## Output
 
 - `<out.ply>`: a binary little-endian PLY with the input's properties in the
   input's order, read next by the density step. It lives in `process-splat.sh`'s
-  temporary directory in `source/`, like `dense.ply`: about as large as the
+  temporary directory in `clean/`, like `dense.ply`: about as large as the
   original (0.9–1.3 GB). It is deleted as soon as the density step has read
   it, so the two are never on disk together for long.
-- `<out.json>`, renamed by `process-splat.sh` to `source/<scan>.align.json`
-  alongside the `.spz`, and only when the whole run succeeds:
+- `<out.json>`, renamed by `process-splat.sh` to `clean/<scan>.align.json`
+  alongside the `.ply`, and only when the whole run succeeds:
 
   ```json
   {
@@ -167,8 +170,8 @@ does not, and nothing downstream has to change:
   A `fail` is written the same way, with `correction_applied: false` and a
   `reason` (`"ICP inliers 0.22 <= 0.4"`, `"RTK p95 0.14 m > 0.10 m"`). A
   scan skipped for a missing file gets `{"scan": …, "status": "skipped",
-  "reason": "no map_config.json"}`. So `source/` always says what was done to
-  each `.spz`. No `created`
+  "reason": "no map_config.json"}`. So `clean/` always says what was done to
+  each `.ply`. No `created`
   timestamp: re-running must give the same file.
 - On stdout, one JSON line for `process-splat.sh` (`status`, the two RTK
   residuals, `correction_max_m`, `correction_rot_deg`, `correction_applied`),
@@ -177,8 +180,8 @@ does not, and nothing downstream has to change:
   (the `.json` is still written); anything else is an error and fails the
   scan.
 
-The `files` service serves `source/` at `/3dgs/`, so the `.align.json` is
-served too. Nothing reads it but people.
+Nothing reads the `.align.json` but people. It is not served: the `files`
+service serves `tiles/`, not `clean/`.
 
 ## Memory and time
 
@@ -196,6 +199,10 @@ the script's peak does not rise. End to end, `process-splat.sh` on KY0917B
 took 2 min 13 s.
 
 ## Changes to `process-splat.md` (its revision 8)
+
+Revision 1's changes, kept as history. `control_points.csv`,
+`control-points.mjs` and `specs/control-points.md` were removed in revision 2
+(*Changes in revision 2*), so the lines naming them no longer apply.
 
 - **Step 0, align**, before the density cut, as above. The density step reads
   the aligned `.ply` when alignment ran, the original when it was skipped.
@@ -215,6 +222,16 @@ took 2 min 13 s.
   place only on success.
 - *Report* gains the align line.
 - *Out of scope* loses "the scan's `gnss.csv`".
+
+## Changes in revision 2
+
+- Paths only: `process-splat.sh` writes the scan to `clean/<scan>.ply` and
+  this step's report to `clean/<scan>.align.json`, instead of
+  `source/<scan>.spz` and `source/<scan>.align.json`.
+- *Why the frame does not change*: its downstream reader is the mosaic, which
+  places each scan by its header offset, and no longer `control-points.mjs`
+  and the fit, which are removed (`specs/splat-mosaic.md`).
+- The step, its rules and its tests do not change.
 
 ## Tests
 
@@ -243,7 +260,7 @@ The cases that need `process-splat.sh` itself (and so splat-transform) are in
 - **False fixes:** one status-4 fix 5 m off is dropped and counted.
 - **Not reliable:** lidar unrelated to the Gaussians gives `fail`, exit 4, no
   `.ply`. *In `process-splat.sh`:* it prints the error naming the scan and the
-  reason, exits 0, its `.spz` is byte-identical to a skipped scan's of the
+  reason, exits 0, its `.ply` is byte-identical to a skipped scan's of the
   same `point_cloud.ply` (no Gaussian moved), and the `.align.json` says
   `fail`.
 - **RTK fit fails:** GNSS fixes scattered 0.3 m around the trajectory give
@@ -252,13 +269,12 @@ The cases that need `process-splat.sh` itself (and so splat-transform) are in
   `map_config.json` the log names both and the `.align.json` says `skipped`;
   a `.sog` is skipped as not a `point_cloud.ply`, and the existing format
   cases give the counts they gave before.
-- **Applied** *(in `process-splat.sh`)*: a misplaced scan is served put
+- **Applied** *(in `process-splat.sh`)*: a misplaced scan is written put
   back — ~10,000 Gaussians past an end wall before, under 200 after.
 - **Present but wrong:** a non-`DEFAULT` Potree encoding, a PLY with no
   `epsg`, a `map_config.json` without `rtk_external_param`: each refused,
   naming the file.
-- A re-run gives a byte-identical `.align.json` and `.spz`.
-- `test/control-points.sh` still passes after `utm()` moves to `utm.mjs`.
+- A re-run gives a byte-identical `.align.json` and `.ply`.
 
 **Against `align.py`, once, by hand** (Python 3.13, numpy/pandas/pyproj/scipy
 in a scratch venv; not a test, as it needs pyproj):
@@ -282,6 +298,9 @@ flip between `pass` and `corrected` with the seed, in `align.py` as here, and
 either way the correction is applied.
 
 ## Docs
+
+Revision 1's doc changes, kept as history: the `source/` paths and
+`specs/control-points.md` are revision 2's `clean/` and gone, respectively.
 
 - `infra/CLAUDE.md`: layout table gains `splat-align.mjs` and `utm.mjs`;
   `process-splat.sh`'s line reads `original/<scan>/ -> align -> density, size

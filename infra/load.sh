@@ -49,16 +49,13 @@ psql_run /sql/02_load.sql
 echo "==> checks"
 psql_run /sql/03_checks.sql
 
-# The splat captures load after the trees are committed and checked, in their
-# own transaction: a bad row fails this step and leaves the trees, and the rest
-# of the bring-up, alone. SPLATS_PLACEMENT picks how they are placed: `header`
-# (the default) from data/3dgs/georef.csv, or `control_points` from
-# data/3dgs/control_points.csv, whose report prints each capture's fit
-# (rms_m, scale, heading_deg) and every point's residual.
-placement=${SPLATS_PLACEMENT:-header}
-echo "==> splat captures (placed by $placement)"
+# The splat captures, the mosaic's tiles, load after the trees are committed
+# and checked, in their own transaction: a bad row fails this step and leaves
+# the trees, and the rest of the bring-up, alone. Each tile is placed from its
+# row of data/3dgs/georef.csv, which scripts/splat-mosaic.mjs writes.
+echo "==> splat captures (the mosaic's tiles)"
 splats_ok=1
-psql_run /sql/04_splats.sql -v splats_placement="$placement" || splats_ok=0
+psql_run /sql/04_splats.sql || splats_ok=0
 
 # Martin reads each table's columns and types once, at startup, so it must be
 # restarted after a load — otherwise a schema change leaves it serving HTTP 500
@@ -67,15 +64,20 @@ echo "==> starting martin"
 docker compose up -d martin
 docker compose restart martin
 
+# The files service is restarted too: on Docker Desktop for Mac a running
+# container can keep serving a bind-mounted tiles/ or lod/ from before
+# splat-mosaic.mjs or build-lod.sh renamed new files in, so a fresh
+# ground_z would place a stale tree (25 m under the map, 2026-10-30).
 echo "==> starting the files service (splat captures)"
 docker compose up -d files
+docker compose restart files
 
 echo
 echo "done. verify with:"
 echo "  curl -s localhost:${MARTIN_PORT:-3000}/catalog | jq"
 echo "  curl -s localhost:${MARTIN_PORT:-3000}/trees | jq"
-echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs/<file>.spz"
-echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs-lod/<scan>-lod.rad"
+echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs/<tile>.ply"
+echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs-lod/<tile>-lod.rad"
 if [ "${MARTIN_PORT:-3000}" != "3000" ]; then
   echo "and start the app with TILES_PROXY_TARGET=http://localhost:${MARTIN_PORT}"
 fi
@@ -86,10 +88,6 @@ fi
 if [ "$splats_ok" = 0 ]; then
   echo
   echo "error: the splat captures did not load (see above); the trees did." >&2
-  if [ "$placement" = control_points ]; then
-    echo "Fix data/3dgs/control_points.csv and re-run ./load.sh." >&2
-  else
-    echo "Fix data/3dgs/georef.csv (node scripts/georef.mjs writes it) and re-run ./load.sh." >&2
-  fi
+  echo "Rebuild data/3dgs/georef.csv (node scripts/splat-mosaic.mjs, then ./scripts/build-lod.sh --all) and re-run ./load.sh." >&2
   exit 1
 fi

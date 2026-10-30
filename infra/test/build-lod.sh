@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # The LoD builder's test suite.
 #
-# Runs the real build-lod.sh against a capture generated here — written with
-# splat-transform's .mjs generator input and saved as <scan>.spz — in a scratch
-# directory, so no binary fixture is checked in and data/ is never touched.
-# Needs Docker, as the script does, and splat-transform to make the capture;
-# no database. The first run builds Spark's build-lod (about a minute).
+# Runs the real build-lod.sh against tiles generated here — written with
+# splat-transform's .mjs generator input and saved as <tile>.ply, as the
+# mosaic writes them — in a scratch directory, so no binary fixture is checked
+# in and data/ is never touched. Needs Docker, as the script does, and
+# splat-transform to make the tiles; no database. The first run builds Spark's
+# build-lod (about a minute).
 #
 #   ./test/build-lod.sh   # from infra/; test/run.sh also runs it
 set -euo pipefail
@@ -37,8 +38,8 @@ done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-export SPLATS_SOURCE_DIR=$work/source SPLATS_LOD_DIR=$work/lod
-mkdir -p "$SPLATS_SOURCE_DIR" "$work/gen"
+export SPLATS_TILES_DIR=$work/tiles SPLATS_LOD_DIR=$work/lod
+mkdir -p "$SPLATS_TILES_DIR" "$work/gen"
 
 sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
 build() { ./scripts/build-lod.sh "$@" 2>&1; }
@@ -61,8 +62,8 @@ export class Generator {
   }
 }
 EOF
-splat-transform -q --no-tty -w "$work/gen/grid.mjs" --spz-version 3 "$SPLATS_SOURCE_DIR/grid.spz"
-before=$(sum "$SPLATS_SOURCE_DIR/grid.spz")
+splat-transform -q --no-tty -w "$work/gen/grid.mjs" "$SPLATS_TILES_DIR/grid.ply"
+before=$(sum "$SPLATS_TILES_DIR/grid.ply")
 out=$SPLATS_LOD_DIR/grid-lod.rad
 
 # Reads the header: RAD0, a little-endian u32 length, then that much JSON.
@@ -72,30 +73,30 @@ meta() { node -e '
   console.log(eval(process.argv[2]));' -- "$1" "$2"; }
 # The header's chunk files, one per line.
 chunks() { meta "$out" 'm.chunks.map((c) => c.filename).join("\n")'; }
-# Everything in lod/ but the dot-free names of other scans planted below.
+# Everything in lod/ but the dot-free names of other tiles planted below.
 listing() { ls -A "$SPLATS_LOD_DIR" | grep -v -e '^other' -e '^grid-lod-1-lod' | sort; }
 
-# Another scan's tree, and one whose name starts with this one's: a rebuild of
-# grid must touch neither.
+# Another tile's tree, and one whose name starts with this one's: a rebuild of
+# grid must touch neither. Neither has a tile in tiles/, so --all removes both.
 for f in other-lod.rad other-lod-0.radc grid-lod-1-lod.rad grid-lod-1-lod-0.radc; do
-  mkdir -p "$SPLATS_LOD_DIR" && echo "another scan's" > "$SPLATS_LOD_DIR/$f"
+  mkdir -p "$SPLATS_LOD_DIR" && echo "another tile's" > "$SPLATS_LOD_DIR/$f"
 done
 
 case_ "the tree"
 log=$(build grid) || { echo "$log"; echo "build-lod.sh failed unexpectedly" >&2; exit 1; }
-expect "writes lod/<scan>-lod.rad"              "$([ -s "$out" ] && echo yes)" yes
+expect "reads tiles/<tile>.ply, and writes lod/<tile>-lod.rad"              "$([ -s "$out" ] && echo yes)" yes
 expect "  a RAD header"                         "$(head -c 4 "$out")" RAD0
 expect "  of an LoD tree, at least the input's splats" "$(meta "$out" 'm.lodTree === true && m.count >= 108000')" true
 expect "  in more than one chunk"               "$(meta "$out" 'm.chunks.length > 1')" true
-expect "  each a file, <scan>-lod-<n>.radc"     "$(meta "$out" 'm.chunks.every((c, i) => c.filename === `grid-lod-${i}.radc`)')" true
+expect "  each a file, <tile>-lod-<n>.radc"     "$(meta "$out" 'm.chunks.every((c, i) => c.filename === `grid-lod-${i}.radc`)')" true
 missing=""
 while IFS= read -r c; do [ -s "$SPLATS_LOD_DIR/$c" ] || missing="$missing $c"; done < <(chunks)
 expect "  every chunk it names is in lod/, non-empty" "$missing" ""
 expect_contains "reports the counts"            "$log" "108000 splats → "
 expect_contains "  and the chunks"              "$log" "$(chunks | wc -l | tr -d ' ') chunks"
-expect "leaves the source as it was"            "$(sum "$SPLATS_SOURCE_DIR/grid.spz")" "$before"
+expect "leaves the tile as it was"              "$(sum "$SPLATS_TILES_DIR/grid.ply")" "$before"
 expect "leaves nothing in lod/ but the header and its chunks" "$(listing)" "$( (echo grid-lod.rad; chunks) | sort)"
-expect "leaves other scans' trees alone"        "$(cat "$SPLATS_LOD_DIR"/other-lod-0.radc "$SPLATS_LOD_DIR"/grid-lod-1-lod-0.radc | sort -u)" "another scan's"
+expect "leaves other tiles' trees alone"        "$(cat "$SPLATS_LOD_DIR"/other-lod-0.radc "$SPLATS_LOD_DIR"/grid-lod-1-lod-0.radc | sort -u)" "another tile's"
 
 # The header records how long the build took, so a re-run is not byte for byte
 # the same file; the tree is.
@@ -105,18 +106,36 @@ build grid > /dev/null
 expect "a re-run replaces the tree with the same one" "$(meta "$out" m.count)" "$first"
 expect "  and removes a stale chunk past the new count" "$([ -e "$SPLATS_LOD_DIR/grid-lod-99.radc" ] && echo kept || echo removed)" removed
 expect "  leaving the header and its chunks"    "$(listing)" "$( (echo grid-lod.rad; chunks) | sort)"
-expect "  and other scans' trees"               "$(ls "$SPLATS_LOD_DIR" | grep -c -e '^other' -e '^grid-lod-1-lod')" 4
+expect "  and other tiles' trees"               "$(ls "$SPLATS_LOD_DIR" | grep -c -e '^other' -e '^grid-lod-1-lod')" 4
+
+case_ "several tiles, and --all"
+# A second, smaller tile: one chunk.
+sed 's/i < 60; i++) for (let j = 0; j < 60/i < 10; i++) for (let j = 0; j < 10/' "$work/gen/grid.mjs" > "$work/gen/small.mjs"
+splat-transform -q --no-tty -w "$work/gen/small.mjs" "$SPLATS_TILES_DIR/small.ply"
+log=$(build grid small) || { echo "$log"; echo "build-lod.sh failed unexpectedly" >&2; exit 1; }
+expect "builds every tile it is given"          "$([ -s "$SPLATS_LOD_DIR/grid-lod.rad" ] && [ -s "$SPLATS_LOD_DIR/small-lod.rad" ] && echo yes)" yes
+expect "  and still leaves other tiles' trees"  "$(ls "$SPLATS_LOD_DIR" | grep -c -e '^other' -e '^grid-lod-1-lod')" 4
+log=$(build --all) || { echo "$log"; echo "build-lod.sh --all failed unexpectedly" >&2; exit 1; }
+expect_contains "--all builds every tile in tiles/" "$log" "2 tiles built"
+expect "  and removes the trees of tiles not in tiles/" "$(ls "$SPLATS_LOD_DIR" | grep -c -e '^other' -e '^grid-lod-1-lod')" 0
+expect_contains "  saying how many files"       "$log" "4 files of tiles no longer in"
+small_chunks=$(meta "$SPLATS_LOD_DIR/small-lod.rad" 'm.chunks.map((c) => c.filename).join("\n")')
+expect "  leaving only the tiles' headers and chunks" "$(ls -A "$SPLATS_LOD_DIR" | sort)" "$( (echo grid-lod.rad; chunks; echo small-lod.rad; echo "$small_chunks") | sort)"
+rm "$SPLATS_TILES_DIR/small.ply" "$SPLATS_LOD_DIR"/small-lod*
 
 case_ "refusals"
-if log=$(build absent); then bad "refuses a missing scan" "it succeeded"; else expect_contains "refuses a missing scan" "$log" "'absent' has no absent.spz in"; fi
-if log=$(build ../source/grid); then bad "refuses a path" "it succeeded"; else expect_contains "refuses a path" "$log" "must be a bare scan name"; fi
-if log=$(build -x); then bad "refuses an option for a scan" "it succeeded"; else expect_contains "refuses an option for a scan" "$log" "must be a bare scan name"; fi
-if log=$(build); then bad "refuses no scan" "it succeeded"; else expect_contains "refuses no scan" "$log" "usage:"; fi
+if log=$(build absent); then bad "refuses a missing tile" "it succeeded"; else expect_contains "refuses a missing tile" "$log" "'absent' has no absent.ply in"; fi
+if log=$(build grid absent); then bad "refuses a missing tile among others" "it succeeded"; else expect_contains "refuses a missing tile among others, before building any" "$log" "'absent' has no absent.ply in"; fi
+if log=$(build ../tiles/grid); then bad "refuses a path" "it succeeded"; else expect_contains "refuses a path" "$log" "must be a bare tile name"; fi
+if log=$(build -x); then bad "refuses an option for a tile" "it succeeded"; else expect_contains "refuses an option for a tile" "$log" "must be a bare tile name"; fi
+if log=$(build); then bad "refuses no tile" "it succeeded"; else expect_contains "refuses no tile" "$log" "usage:"; fi
+if log=$(build --all grid); then bad "refuses --all with a tile" "it succeeded"; else expect_contains "refuses --all with a tile" "$log" "usage:"; fi
+if log=$(SPLATS_TILES_DIR=$work/none build --all); then bad "refuses --all with no tiles" "it succeeded"; else expect_contains "refuses --all with no tiles" "$log" "no tiles in $work/none"; fi
 # Without the overrides, the default folders are found from the script's own
-# location, not the working directory. A missing scan is refused before
+# location, not the working directory. A missing tile is refused before
 # anything is written, so data/ is only read.
-if log=$(here=$PWD; cd "$work" && env -u SPLATS_SOURCE_DIR -u SPLATS_LOD_DIR "$here/scripts/build-lod.sh" no-such-scan 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "no no-such-scan.spz in $PWD/data/3dgs/source"; fi
-echo "not a splat" > "$SPLATS_SOURCE_DIR/junk.spz"
+if log=$(here=$PWD; cd "$work" && env -u SPLATS_TILES_DIR -u SPLATS_LOD_DIR "$here/scripts/build-lod.sh" no-such-tile 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "no no-such-tile.ply in $PWD/data/3dgs/tiles"; fi
+echo "not a splat" > "$SPLATS_TILES_DIR/junk.ply"
 if log=$(build junk); then bad "fails on a file build-lod cannot read" "it succeeded"; else expect_contains "fails on a file build-lod cannot read" "$log" "junk: build-lod wrote no junk-lod.rad"; fi
 expect "  leaves no output or temporary"        "$(listing)" "$( (echo grid-lod.rad; chunks) | sort)"
 

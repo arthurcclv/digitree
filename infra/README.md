@@ -2,12 +2,13 @@
 
 Postgres + PostGIS behind a [Martin](https://github.com/maplibre/martin) tile
 server, serving Taipei's tree inventory to `app/` as vector tiles — plus the
-Gaussian splat captures: where each one sits as vector tiles from Martin, and
-the capture files themselves from a static `files` service.
+Gaussian splat captures, tiles of a mosaic of every scan: where each tile sits
+as vector tiles from Martin, and the tiles and their LoD trees from a static
+`files` service.
 
 ```bash
 cd infra
-./load.sh                    # bring up, create schema, load, start Martin and files
+./load.sh                    # bring up, create schema, load, (re)start Martin and files
 ```
 
 Then:
@@ -15,7 +16,7 @@ Then:
 ```bash
 curl -s localhost:3000/catalog | jq        # the published sources
 curl -s localhost:3000/trees | jq          # TileJSON
-curl -sI localhost:3080/3dgs/KY0917A.spz   # a splat capture file
+curl -sI localhost:3080/3dgs-lod/32651-352600-2770000-lod.rad   # a tile's LoD tree
 ```
 
 Martin is published on `127.0.0.1:3000`. If that port is taken on the host,
@@ -51,13 +52,13 @@ covers the transform, the cleaning rules, the drop-in contract and the three
 ways a drop-in is rejected, in a second or two and without touching `data/` or
 the development database.
 
-It then runs `./test/process-splat.sh`, the splat processor's own suite, which runs
-the real `process-splat.sh` on captures it generates in a scratch directory. It
-needs `splat-transform` and `node`, not the database, and runs on its own too.
-Then `./test/control-points.sh` and `./test/georef.sh` test the control-point
-and georef generators the same way, with only `node`; `run.sh` also loads
-both scripts' output through the real `04_splats.sql`, in each placement. Last, `./test/build-lod.sh` runs the real `build-lod.sh`
-on a capture it generates; it needs Docker, `node` and `splat-transform`.
+It then runs each splat tool's own suite, each of which runs the real script on
+scans or tiles it generates in a scratch directory, and runs on its own too:
+`./test/process-splat.sh` (needs `splat-transform` and `node`),
+`./test/splat-align.sh`, `./test/voxel-quality.sh` and
+`./test/splat-mosaic.sh` (`node` only), and `./test/build-lod.sh` (Docker,
+`node` and `splat-transform`). `run.sh` also loads a `georef.csv` the real
+mosaic wrote through the real `04_splats.sql`.
 
 `sql/03_checks.sql` also runs as the last step of `./load.sh`, so a load that
 produces a structurally wrong table fails there rather than on the map.
@@ -165,69 +166,40 @@ exceeds its instance budget, so those rows are never the ones culled.
 
 `data/3dgs/original/` holds the scans as delivered, one folder per scan with
 the splat in one `point_cloud.<ext>` (beside `gnss.csv` and `poses.csv`), and
-is never
-written. `data/3dgs/source/` holds them cleaned, one `<scan>.spz` each —
-by `./scripts/process-splat.sh` (below) — `data/3dgs/lod/` holds the paged LoD tree the
-app draws for each, a header `<scan>-lod.rad` and its chunks
-`<scan>-lod-<n>.radc`, built by `./scripts/build-lod.sh` (below), and
-`data/3dgs/georef.csv` (or, the other way, `data/3dgs/control_points.csv`)
-says where each one sits. All of them are **gitignored**. None is required:
-with no CSV the `splats` table is empty and the map shows no splats.
+is never written. From it, three explicit steps build what the app draws, each
+owning its own folder:
+
+| step | writes | spec |
+| --- | --- | --- |
+| `./scripts/process-splat.sh <scan>` | `data/3dgs/clean/<scan>.ply` (+ `.align.json`): one scan, aligned and cleaned | `specs/process-splat.md`, `specs/splat-align.md` |
+| `node scripts/splat-mosaic.mjs` | `data/3dgs/tiles/<tile>.ply` (+ `mosaic.json`) and `data/3dgs/georef.csv`: every clean scan in one frame, in 100 m tiles, the best scan per 1 m voxel | `specs/splat-mosaic.md`, `specs/voxel-quality.md` |
+| `./scripts/build-lod.sh --all` | `data/3dgs/lod/<tile>-lod.rad` + `<tile>-lod-<n>.radc`: each tile's paged LoD tree | `specs/build-lod.md` |
+
+All of them are **gitignored**. None is required: with no `georef.csv` the
+`splats` table is empty and the map shows no splats.
 
 The splat tools live in `scripts/` and, like everything here, run from
-`infra/`. To add a capture:
+`infra/`. To add a scan:
 
 1. copy its scan folder into `data/3dgs/original/`;
-2. clean it into `source/` with `./scripts/process-splat.sh <scan>`;
-3. build its LoD tree with `./scripts/build-lod.sh <scan>`;
-4. write its georeference — `node scripts/georef.mjs <scan>` copies its
-   `point_cloud.ply` header into `georef.csv` — and, for the control-point
-   way, its control points (below);
+2. clean it with `./scripts/process-splat.sh <scan>`;
+3. rebuild the mosaic with `node scripts/splat-mosaic.mjs` (every tile, from
+   every clean scan);
+4. rebuild the trees with `./scripts/build-lod.sh --all`;
 5. run `./load.sh`.
 
-A capture without its `lod/<scan>-lod.rad` fails the splat load.
-
-**Placement.** The loader places the captures one of two ways, chosen by
-`SPLATS_PLACEMENT`:
-
-```bash
-./load.sh                                   # header (the default): from georef.csv
-SPLATS_PLACEMENT=control_points ./load.sh   # fitted to control_points.csv
-```
-
-Each reads only its own CSV. **By the header**, each capture sits where its
-PLY's georeference puts it: origin `(offsetx, offsety)` in the header's UTM
-zone, facing grid north (≈ 359.38° for KZ0918), at UTM's point scale
-(≈ 1.0001). Its height is `offsetz`, the origin's RTK (ellipsoidal) height,
-less a **datum** shared by its group. The map has no terrain, so the
-captures are grouped by `offsetz` — a new group wherever sorted neighbours
-differ by more than 5 m (`-v splats_datum_gap_m=…` in `psql`) — and each
-group is lowered by its median `offsetz`. Within a group the heights stay
-exactly RTK's relative to each other; the 22 delivered scans are one group,
-datum 26.60 m. The origin is the antenna at the scan's first fix, so a
-capture's own ground lands 1.4–1.7 m below the map's. The load prints each
-capture's group, datum and height. A scan without a georeferenced PLY has
-no row and is not loaded. Spec: `specs/georef.md`.
-
-```
-SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ
-KZ0918-075047,KZ0918-075047.spz,32651,352796.8287235790048726,2770099.7470906949602067,26.9006000000000007
-```
-
-The georef load fails, naming the line or the capture, on a header other
-than that one, an empty `SplatID` or `File`, a `File` that is a path, not
-`.spz`, or not in `source/`, an `EPSG` outside WGS 84 / UTM, an offset that
-is not a number, a `SplatID` or `File` on two rows, or a capture without its
-LoD. **By the control points**, the load prints each capture's fit (`rms_m`,
-`scale`, `heading_deg`) and every point's residual, and sets each capture's
-ground on the map's.
+A tile without its `lod/<tile>-lod.rad` fails the splat load. `./load.sh`
+ends by restarting both Martin and the files service: on Docker Desktop for
+Mac a running `files` container can go on serving the tiles and trees from
+before a rebuild, which the app then places by the new `ground_z`. If you
+rebuild without reloading, `docker compose restart files`.
 
 **Aligning and cleaning.** A capture straight from training sits a few
 centimetres — sometimes more — from where the scanner's own RTK and lidar put
 it, and carries Gaussians that only get in the way on the map: sparse strays
 around and above the scene, oversized blobs, and floaters.
 `process-splat.sh` corrects the first, drops the rest, and writes the result
-as SPZ v3 (Spark 2.3.1 does not load splat-transform's default v4):
+as a lossless `.ply`:
 
 ```bash
 ./scripts/process-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
@@ -235,11 +207,13 @@ as SPZ v3 (Spark 2.3.1 does not load splat-transform's default v4):
 ```
 
 It reads the scan's one `point_cloud.<ext>` — `.ply`, `.compressed.ply`,
-`.sog`, `.spz`, `.splat` or `.ksplat` — and writes `source/<scan>.spz`, with
-`source/<scan>.align.json` beside it. A folder with none, or with more than one (say a
-`.ply` and a `.sog` of the same scan), is refused: keep the one to serve. A
-`point_cloud.mjs` is never run — a generator is code, and the folder is data.
-Cleaning needs ~1 GB of free disk per 13M Gaussians for its intermediate file.
+`.sog`, `.spz`, `.splat` or `.ksplat` — and writes `clean/<scan>.ply`, with
+`clean/<scan>.align.json` beside it. A folder with none, or with more than one
+(say a `.ply` and a `.sog` of the same scan), is refused: keep the one to use.
+A `point_cloud.mjs` is never run — a generator is code, and the folder is
+data. Only a georeferenced `point_cloud.ply` can go into the mosaic, which
+refuses any other. Cleaning needs ~1 GB of free disk per 13M Gaussians for its
+intermediate file, and about as much again for the output.
 
 First it aligns (`scripts/splat-align.mjs`, a port of the XGRIDS handoff's
 `align.py`), when the splat is a `point_cloud.ply` and the folder also has
@@ -247,12 +221,12 @@ First it aligns (`scripts/splat-align.mjs`, a port of the XGRIDS handoff's
 it fits the trajectory to the RTK-fixed GNSS fixes (antenna lever arm from
 `map_config.json`), carries the lidar into the PLY's frame with that fit,
 matches it to the Gaussians by ICP, and moves every Gaussian by the rigid
-correction found — within the PLY's own frame, so the control points below
-still apply. The `.align.json` records the outcome: `pass` (moved under
-10 cm), `corrected` (more), `fail` or `skipped`. A scan missing one of those
-files is skipped, and one that fails validation (ICP matching under 40% of
-the lidar, or the RTK fit's p95 over 10 cm) prints an error and is served
-unaligned — the run still succeeds. Of the 22 scans delivered, 7 have no
+correction found — within the PLY's own frame, so the header's offset still
+places it. The `.align.json` records the outcome: `pass` (moved under 10 cm),
+`corrected` (more), `fail` or `skipped`. A scan missing one of those files is
+skipped, and one that fails validation (ICP matching under 40% of the lidar,
+or the RTK fit's p95 over 10 cm) prints an error and is written unaligned —
+the run still succeeds. Of the 22 scans delivered, 7 have no
 `map_config.json`. The step takes ~20 s and 1.3–1.8 GB, under what the
 density step needs.
 
@@ -263,114 +237,93 @@ cube holding less than 1% of that (`--min-density`). Then it drops the
 Gaussians with any axis over `--max-scale` and runs splat-transform's floater
 filter (`--floaters`, its defaults). So a long or L-shaped street is kept
 whole, and a sky floater above a dense street goes. It always reads
-`original/`, so re-running with other settings never compounds the cuts, and
-apart from the alignment it only removes Gaussians — the control points
-stay valid.
+`original/`, so re-running with other settings never compounds the cuts.
 
 With the defaults the KY0917 captures lost 3.7–5.3%. It needs
 `splat-transform` 3.10.x installed globally with npm (the density step uses its
 library) and `node`. It holds a scan in memory: KZ0918-075047 (19.3M
-Gaussians, a 222 MB `.sog`) peaks at 3.5 GB, takes ~2.5 min and serves
-269 MB. Its specs are `specs/process-splat.md` and `specs/splat-align.md`,
-and `./test/run.sh` tests both.
+Gaussians) peaks at 3.5 GB and takes ~2.5 min.
 
-**The LoD tree.** The app draws a capture through Spark's paged LoD: a tree
-built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a
-fixed-size page pool, so it holds only what the view needs. `build-lod.sh` builds it from the cleaned file
-with Spark's own `build-lod`, at the version the app pins (v2.3.1), in a Rust
-container, so it needs only Docker, plus the `node` that `process-splat.sh`
-already needs (to read the header it wrote):
+**The mosaic.** Where scans overlap, drawing each one whole draws every
+surface once per scan, one through the other. `splat-mosaic.mjs` instead
+keeps, in each 1 m voxel, the splats of the one scan of best quality there:
 
 ```bash
-./scripts/build-lod.sh KZ0918-075047                            # source/KZ0918-075047.spz → lod/KZ0918-075047-lod.rad + -lod-<n>.radc
+node scripts/splat-mosaic.mjs
+```
+
+Every delivered scan is stored in its UTM zone less its header's offset, x
+east and y north, so moving it into the zone is a translation by that offset.
+Heights are kept as RTK's ellipsoidal heights, with no datum. The area is cut into 100 m × 100 m tiles on a grid fixed in
+the zone, named by their south-west corner (`32651-352600-2770000`), and each
+splat belongs to the 1 m voxel holding its centre. In each voxel every scan
+with splats there is scored from its own splats alone — how many of the
+voxel's 0.25 m sub-cells its opaque splats fill, times how sharp they are
+(the inverse of their median largest axis) — and within 10% of the best, the
+denser scan wins. That method is `scripts/voxel-quality.mjs`, a module of its
+own behind a small seam, so it can be tuned or replaced
+(`specs/voxel-quality.md`).
+
+Because the map has no terrain, each tile also records **its own ground**:
+the lowest 0.1 m layer of its splats' heights holding at least a fifth as
+many as the densest layer, which is the ground in all but a tile whose
+ground is hidden; sparser layers below it, reflections in puddles and
+glass, are passed over.
+
+It writes each tile as `tiles/<tile>.ply`, in its own frame (its centre the
+origin, z the ellipsoidal height, the header carrying its georeference as
+the delivered scans' do, with `offsetz` 0), `tiles/mosaic.json` (which scan
+won how many voxels of each tile, each tile's ground, and the step between
+every two neighbouring tiles' grounds, the largest also printed), and
+`georef.csv`, one row per tile:
+
+```
+SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ,GROUNDZ
+32651-352600-2770000,32651-352600-2770000.ply,32651,352650,2770050,0,24.987
+```
+
+It always rebuilds every tile from every `clean/<scan>.ply`, replacing the
+previous mosaic only when the whole run succeeds; a tile that no longer has
+splats is removed. A tile left with fewer than 10,000 splats is dropped,
+listed in `mosaic.json`'s `dropped_tiles`: it is a scan's stray fringe,
+floaters and sky, with no ground to stand on. It refuses scans in different UTM zones, a clean scan
+without its original's georeferenced `point_cloud.ply`, and spherical
+harmonics beyond degree 0. While it runs it needs about the clean scans' size
+again in free disk, for its per-tile buckets.
+
+**The LoD trees.** The app draws each tile through Spark's paged LoD: a tree
+built offline, in one file per 64K-splat chunk, streamed chunk by chunk into a
+fixed-size page pool, so it holds only what the view needs. `build-lod.sh`
+builds it from the tile's `.ply` with Spark's own `build-lod`, at the version
+the app pins (v2.3.1), in a Rust container, so it needs only Docker, plus
+`node` (to read the header it wrote):
+
+```bash
+./scripts/build-lod.sh --all                   # every tile, then lod/ pruned to them
+./scripts/build-lod.sh 32651-352600-2770000    # tiles/<tile>.ply → lod/<tile>-lod.rad + -lod-<n>.radc
 ```
 
 The first run compiles the tool (about a minute, cached in a Docker volume).
-A tree takes 2.5–4 minutes and up to 5 GB of Docker's memory for 13–19M
-Gaussians, and is about 1.5× the `.spz` in all, in a few hundred chunk files.
-Re-run it after re-cleaning a capture: it replaces the header and its chunks,
-and removes chunks the new tree no longer has. Spec: `specs/build-lod.md`.
+A tree is about 1.5× its tile's splats, in chunk files of 64K. Re-run it
+after rebuilding the mosaic: it replaces each header and its chunks, removes
+chunks a new tree no longer has, and with `--all` removes the trees of tiles
+that are gone.
 
-**Control points** (`SPLATS_PLACEMENT=control_points`). A capture placed
-this way needs no georeference of its own. It is placed from **control points**: at least three features you can find both in
-the capture and on a map — a building corner, a kerb corner, a post base —
-each given in the capture's own coordinates (as stored, below) and in
-latitude/longitude. The loader fits a rotation, a scale and a shift from
-them. One row per point:
-
-```
-SplatID,File,Point,X,Y,Z,LAT,LON,ALT,H,Note
-KY0917A,KY0917A.spz,1,12.40,-3.85,0.02,25.034512,121.560841,,,NE corner of the low wall
-```
-
-| column | what to enter |
-| --- | --- |
-| `SplatID` | the capture's id; every row of one capture shares it |
-| `File` | the file name in `data/3dgs/source/`, the same on every row of the capture |
-| `Point` | a label for the point, unique within the capture (`1`, `2`, `3`, …) |
-| `X`, `Y`, `Z` | the point in the capture's own coordinates **as stored** (metres): z-up, the ground is X/Y — the frame of its scan's `poses.csv` |
-| `LAT`, `LON` | the same point in WGS84 decimal degrees |
-| `ALT` | the altitude of the capture file's origin, the same on every row (a scan's PLY `offsetz`, written by `control-points.mjs`); blank when unknown. Recorded, not used to place the capture |
-| `H` | the point's height above the ground in metres; blank for a point on the ground |
-| `Note` | what the point is, for whoever checks it later; quote it if it has a comma |
-
-**From the scan's georeference.** A scan folder that carries the scanner's
-`gnss.csv` and a georeferenced `point_cloud.ply` needs no measuring:
-
-```bash
-node scripts/control-points.mjs                  # every scan in original/
-node scripts/control-points.mjs KZ0918-075047
-```
-
-The PLY's header names a UTM zone and an offset (`comment epsg 32651`,
-`comment offsetx/y/z`): the file stores a point at UTM (E, N, h) as
-(E − offsetx, N − offsety, h − offsetz). For each scan the script takes the
-RTK-fixed fixes (status 4), puts each into the file's coordinates through
-that, picks the farthest-apart pair and the fix farthest from their line, and
-writes those three with their latitude/longitude. Their `H` is the antenna's
-height above the capture's ground (1.36–1.73 m on the delivered scans),
-measured on the Gaussians under 50 fixes, so the loader sets the capture's
-ground on the map's instead of the antenna. The loader then
-solves where the scan sits and which way it faces (for KZ0918: heading
-≈ 359.38°, the grid's turn from true north, scale ≈ 1.0001, UTM's point
-scale; RMS a few millimetres, since the loader fits on the same ellipsoid). It replaces only those scans' rows and keeps
-the rest of the file as it is. `poses.csv` is not read: it is in a frame of
-its own. The vertices are read only for that height, never to check the header, so a
-header that does not describe its file fits just as well and lands wrong; check a new capture by
-eye. A capture without a georeference (`.sog`, `.spz`) is refused. Spec:
-`specs/control-points.md`.
-
-**Measuring by hand.** Choose points **spread across the capture and not in a
-line**, on features that are sharp in both. A fourth or fifth point makes the
-fit sturdier.
-
-Read each point in the capture's own coordinates as stored —
-z-up, the same frame as its scan's `poses.csv` — and the loader fits on them
-as they are. A viewer that turns or tilts the file on open (the PlayCanvas /
-SuperSplat family turns it 180° about up and shows it y-up) has to have that
-undone first.
-
-Points read mirrored, or tilted (y-up, ground on X/Z), cannot be fitted, and
-the load rejects them. A reading **turned 180° about
-up** cannot be caught: it fits just as well, and the capture lands turned
-around its control points. If a capture renders backwards, that is the cause.
-Check it by eye after every new capture or viewer.
+**Placement.** The loader places each tile from its row of `georef.csv`:
+origin `(OFFSETX, OFFSETY)` in the row's UTM zone, the tile's centre; facing
+grid north (≈ 359.38° here); at UTM's point scale (≈ 1.0001). Its ground,
+`ground_z` = `GROUNDZ − OFFSETZ` as a local z, is drawn on the map's ground,
+so each tile sits on the map by its own ground, with no regard to its
+neighbours: where two neighbours' grounds differ, a surface crossing their
+edge shows that step. The load prints each capture's `OFFSETZ`, `GROUNDZ`
+and `ground_z`.
 
 **When the load fails.** The splat load fails — the trees still load — and
-names the capture and the rule when:
-
-- the header is not exactly the one above (so swapped `LAT`/`LON` columns are
-  rejected rather than loaded);
-- a row has a missing or non-numeric value, a `File` with a `/`, a `File`
-  that is not a `.spz` (the only format `build-lod.sh` reads), or a file that
-  is not in `data/3dgs/source/`;
-- a capture's rows name different files, two captures share a file, or a
-  `Point` label repeats;
-- a capture has fewer than 3 points, two points closer than 2 m, or points
-  spread less than 2 m across the line through them;
-- the fit's RMS residual is over 1 m (a typo, two points swapped, or points
-  read in the wrong frame), or its scale is outside 0.8–1.25 (the captures are metric, so that
-  means wrong points).
+names the line or the capture and the rule, on a header other than the one
+above, an empty `SplatID` or `File`, a `File` that is a path, not `.ply`
+(the only format `build-lod.sh` reads), or not in `tiles/`, an `EPSG` outside
+WGS 84 / UTM, an offset that is not a number, a `SplatID` or `File` on two
+rows, or a tile without its LoD.
 
 ## Attribution
 

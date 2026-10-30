@@ -53,9 +53,9 @@ postgres:
         place_note: text
         survey_date: date
     # The Gaussian splat captures, as MVT layer `splats`: one point per capture,
-    # at the origin 04_splats.sql placed it (its PLY header, or its control points). The app's
-    # splat layer fetches these on the z14 grid to learn which captures are in
-    # view, then fetches the files themselves from the `files` service. Both
+    # a tile of the mosaic, at its centre, where 04_splats.sql placed it. The
+    # app's splat layer fetches these on the z14 grid to learn which captures
+    # are in view, then fetches their LoD trees from the `files` service. Both
     # names, and the property names below, are read by
     # app/src/layers/splat/schema.ts.
     splats:
@@ -77,7 +77,9 @@ postgres:
         splat_id: text
         file: text
         bytes: int8
-        altitude_m: real
+        # The capture's ground as a local z (a tile's ground's ellipsoidal
+        # height), drawn at the map's ground.
+        ground_z: float8
         heading_deg: real
         scale: real
         # The exact origin. The point above is snapped to the 4096 grid of

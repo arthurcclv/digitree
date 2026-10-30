@@ -1,6 +1,6 @@
-// WGS 84 <-> UTM, Krüger's series to n³: under 1 mm within a zone. Shared by
-// control-points.mjs (GNSS fixes into a PLY's frame) and splat-align.mjs (the
-// same, to fit the trajectory); the inverse is for the tests' fixtures.
+// WGS 84 <-> UTM, Krüger's series to n³: under 1 mm within a zone. Used by
+// splat-align.mjs (GNSS fixes into a PLY's frame, to fit the trajectory);
+// the inverse is for the tests' fixtures.
 const A_WGS84 = 6378137, F_WGS84 = 1 / 298.257223563, K0 = 0.9996;
 const n = F_WGS84 / (2 - F_WGS84);
 const A = (A_WGS84 / (1 + n)) * (1 + n ** 2 / 4 + n ** 4 / 64);

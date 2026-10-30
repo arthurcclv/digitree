@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # Process one Gaussian splat capture for serving: correct its placement
 # against the scanner's RTK and lidar, drop the Gaussians outside the capture's
-# own distribution, the oversized ones and the floaters, and write it as SPZ v3.
+# own distribution, the oversized ones and the floaters, and write it as a
+# lossless .ply for splat-mosaic.mjs.
 #
 #   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, 0.25 m
 #   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 #
 # Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, and for the
 # align step gnss.csv, poses.csv, octree.bin, metadata.json and map_config.json
-# — and never writes it. Writes data/3dgs/source/<scan>.spz, which the files
-# service serves, and <scan>.align.json beside it. It always starts from the
-# original, so re-running never compounds the cuts. The specs are
-# specs/process-splat.md and specs/splat-align.md.
+# — and never writes it. Writes data/3dgs/clean/<scan>.ply, which the mosaic
+# reads, and <scan>.align.json beside it. It always starts from the original,
+# so re-running never compounds the cuts. The specs are specs/process-splat.md
+# and specs/splat-align.md.
 set -euo pipefail
 
 infra=$(cd "$(dirname "$0")/.." && pwd)
 original_dir=${SPLATS_ORIGINAL_DIR:-$infra/data/3dgs/original}
-source_dir=${SPLATS_SOURCE_DIR:-$infra/data/3dgs/source}
+clean_dir=${SPLATS_CLEAN_DIR:-$infra/data/3dgs/clean}
 
 cell=2
 min_density=0.01
@@ -76,13 +77,14 @@ lib=$(npm root -g)/@playcanvas/splat-transform/dist/index.mjs
 [ -f "$lib" ] || die "splat-transform's library is not at $lib; install it globally with npm"
 
 in=$original_dir/$scan/${found[0]}
-out=$source_dir/$scan.spz
-# Both temporaries sit in source/, so the final rename is atomic. The .spz one
-# must end in .spz: splat-transform picks the format from the extension.
-mkdir -p "$source_dir"
-work=$(mktemp -d "$source_dir/.process-XXXXXX")
-tmp=$source_dir/.$scan.tmp.spz
-align_out=$source_dir/$scan.align.json
+out=$clean_dir/$scan.ply
+# Both temporaries sit in clean/, so the final rename is atomic. The .ply one
+# must end in .ply: splat-transform picks the format from the extension. Its
+# leading '.' keeps it out of the mosaic's scans.
+mkdir -p "$clean_dir"
+work=$(mktemp -d "$clean_dir/.process-XXXXXX")
+tmp=$clean_dir/.$scan.tmp.ply
+align_out=$clean_dir/$scan.align.json
 trap 'rm -rf "$work" "$tmp"' EXIT
 
 # Every node argument goes after `--`: without it node reads a negative number
@@ -159,9 +161,9 @@ transform "$work/dense.ply" \
 sized=$(gaussians "$work/sized.ply")
 echo "    $sized kept by size"
 
-# 3-4. Floaters, SPZ v3. --spz-version 3 because v4 is not gzipped, and Spark
-# 2.3.1 recognises an SPZ by its gzip magic alone.
-transform "$work/sized.ply" -F "$floaters" --spz-version 3 "$tmp"
+# 3. Floaters, to the lossless .ply the mosaic reads. No SPZ: nothing fetches
+# the file itself any more, and build-lod reads the tiles' .ply.
+transform "$work/sized.ply" -F "$floaters" "$tmp"
 
 after=$(gaussians "$tmp")
 mv "$work/align.json" "$align_out"

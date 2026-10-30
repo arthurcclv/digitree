@@ -243,206 +243,67 @@ expect_contains "says so" "$out" "city trees carry a canopy_width_m"
 
 # --- the splat captures (sql/04_splats.sql) ---------------------------------
 #
-# The fixtures in test/fixtures/splats/ were generated from known placements:
-# each control point's LAT/LON is where a capture with that origin, heading and
-# scale puts its file x/y, on the WGS 84 ellipsoid, as the loader projects
-# (equirectangular at the points' centroid, with its radii N and M there). X/Y/Z are file coordinates, z-up, as the CSV takes them (the
-# capture's own frame, as stored). The loader must recover the placement, and reject every
-# file that would place a capture somewhere plausible and wrong. source/ and
-# lod/ hold small stand-ins: the loader checks that a capture file and its
-# <stem>-lod.rad exist, and never reads either.
-
-SPL=$FIX/splats
-load_splats() {
-  docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
-    -v splats_placement=control_points \
-    -v splats_csv="$SPL/$1" -v splats_dir="$SPL/source" -v splats_lod_dir="$SPL/lod" \
-    -f /sql/04_splats.sql 2>&1
-}
-
-case_ "control points from known placements"
-schema
-out=$(load_splats ok.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
-expect_query "loads both captures"              "SELECT count(*) FROM splats" 2
-expect_query "  SYN with an ALT, FOUR with it blank" "SELECT string_agg(splat_id, ',' ORDER BY splat_id) FROM splats" "FOUR,SYN"
-expect_query "ids follow splat_id"              "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
-expect_query "recovers the origin within 1 mm" \
-  "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.5608, 25.0345), 4326)::geography) < 0.001 FROM splats WHERE splat_id='SYN'" t
-expect_query "publishes the origin exactly as lng/lat" \
-  "SELECT lng = ST_X(geom) AND lat = ST_Y(geom) AND pg_typeof(lng)::text = 'double precision' FROM splats WHERE splat_id='SYN'" t
-expect_query "recovers heading 30° within 0.01°" "SELECT abs(heading_deg - 30) < 0.01 FROM splats WHERE splat_id='SYN'" t
-expect_query "recovers scale 1"                  "SELECT abs(scale - 1) < 1e-5 FROM splats WHERE splat_id='SYN'" t
-expect_query "sets the ground through H − Z"     "SELECT abs(altitude_m - 2) < 1e-3 FROM splats WHERE splat_id='SYN'" t
-expect_query "an exact fit has no residual"      "SELECT rms_m < 1e-3 FROM splats WHERE splat_id='SYN'" t
-expect_query "takes four points"                 "SELECT points FROM splats WHERE splat_id='FOUR'" 4
-expect_query "  heading 200°, past 180"          "SELECT abs(heading_deg - 200) < 0.01 FROM splats WHERE splat_id='FOUR'" t
-expect_query "  scale 1.05"                      "SELECT abs(scale - 1.05) < 1e-5 FROM splats WHERE splat_id='FOUR'" t
-# FOUR's H is blank on every row, so each point is on the ground: the offset is
-# −scale × mean(Z) = −1.05 × 0.425.
-expect_query "  blank H is a point on the ground" "SELECT abs(altitude_m + 1.05 * 0.425) < 1e-3 FROM splats WHERE splat_id='FOUR'" t
-expect_query "  trims stray spaces"              "SELECT file FROM splats WHERE splat_id='FOUR'" four.spz
-expect_query "records the file's size"           "SELECT bytes FROM splats WHERE splat_id='SYN'" 36
-expect_contains "reports each point's residual" "$out" "control point residuals"
-
-case_ "re-running the splat loader"
-out=$(load_splats ok.csv) || { echo "$out"; echo "second splat load failed" >&2; exit 1; }
-expect_query "reloads, not appends, with the same ids" "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
-
-# SYN's points turned 180° about up. A rotation is exactly what the fit solves
-# for, so it fits perfectly and lands the capture turned around: this case
-# documents that no check can catch a reading in a turned frame, and why the
-# CSV's frame has to be right by construction.
-case_ "points turned 180° about up"
-out=$(load_splats old-frame.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
-expect_query "fits, with no residual to flag it" "SELECT rms_m < 1e-3 FROM splats WHERE splat_id='OLD'" t
-expect_query "  but lands turned 180° (210°, not 30°)" "SELECT abs(heading_deg - 210) < 0.01 FROM splats WHERE splat_id='OLD'" t
-
-case_ "no control points at all"
-out=$(load_splats nothing-here.csv) || { echo "$out"; echo "splat load failed unexpectedly" >&2; exit 1; }
-expect_contains "says so"        "$out" "no captures loaded"
-expect_query   "loads nothing"   "SELECT count(*) FROM splats" 0
-
-# Each must fail, name the capture or the line and the rule, and leave the
-# table as the previous load left it: the load is one transaction.
-splat_rejects() {
-  local label=$1 file=$2 needle=$3
-  load_splats ok.csv > /dev/null
-  if out=$(load_splats "$file"); then bad "$label" "the load succeeded"; return; fi
-  expect_contains "$label" "$out" "$needle"
-  expect_query "  keeps the previous load" "SELECT count(*) FROM splats" 2
-}
-
-case_ "rejected control points"
-splat_rejects "a misspelt header"               bad-header.csv     "could not be loaded"
-splat_rejects "LAT and LON the other way round" swapped.csv        "could not be loaded"
-splat_rejects "two points"                      two-points.csv     "TWO: 2 control point(s); at least 3 are needed"
-splat_rejects "points in a line"                collinear.csv      "LINE: the points are too close to a line"
-splat_rejects "two points 0.7 m apart"          coincident.csv     "NEAR: Points 1 and 2 are 0.707 m apart"
-splat_rejects "a mirrored capture"              mirrored.csv       "MIRROR: the control points fit with an RMS of"
-# Generated with a scale of 1.5 on the map's sphere, before the loader fitted
-# on the ellipsoid; kept as it was, since it only has to stay out of range.
-splat_rejects "a scale of 1.5"                  scaled.csv         "SCALED: the fit's scale is 1.4961"
-splat_rejects "rows naming different files"     file-differs.csv   "SPLIT: its rows name 2 files"
-splat_rejects "a file that is not there"        missing-file.csv   "File 'absent.spz' is not in"
-splat_rejects "a directory, not a file"         directory.csv      "File 'folder.spz' is not in"
-splat_rejects "a path in File"                  path.csv           "must be a bare file name"
-splat_rejects "an unsupported extension"        extension.csv      "File 'syn.txt' is not .spz"
-# A format Spark could parse, but build-lod.sh reads only <scan>.spz, so its
-# LoD could never be built: refused as the format, not as a missing LoD.
-splat_rejects "a .ply capture"                  ply.csv            "File 'syn.ply' is not .spz"
-splat_rejects "an upper-case .SPZ"              upper-ext.csv      "File 'syn.SPZ' is not .spz"
-splat_rejects "a Point given twice"             dup-point.csv      "DUP: Point 1 appears 2 times (lines 2, 3)"
-splat_rejects "one file, two captures"          shared-file.csv    "shared.spz is used by 2 captures"
-splat_rejects "a coordinate that is not a number" not-a-number.csv "line 2 (NAN): X 'N/A' is not a number"
-splat_rejects "an ALT that is not a number"     alt-not-a-number.csv "line 2 (NAN): ALT 'high' is not a number"
-splat_rejects "ALTs that differ in a capture"   alt-differs.csv    "NAN: its rows give 2 different ALTs (26.9, 27.4)"
-splat_rejects "the header from before ALT"      old-header.csv     "could not be loaded"
-splat_rejects "a capture with no LoD built"      missing-lod.csv    "NOLOD: its LoD nolod-lod.rad is not in /test/fixtures/splats/lod (run ./scripts/build-lod.sh nolod)"
-# The same kind of points read y-up, as a viewer shows them (X = −x, Y = z,
-# Z = y): turned a quarter-turn on their side, they cannot be fitted by a
-# rotation of the ground.
-splat_rejects "points read y-up, not in the file's own frame" unconverted.csv "UNCONV: the control points fit with an RMS of"
-
-# control-points.mjs's output, through the real loader. T1's header is
-# KZ0918-075047's and its fixes are 30–50 m apart in UTM 51N, so the loader
-# must put the file's origin on T1's first fix, facing grid north: 360° less
-# the grid convergence there, γ = atan(tan(λ − 123°)·sin φ) = −0.6177°, at a
-# scale of 1/k, where k = 0.999868 is UTM's point scale there: a file unit is
-# a grid metre, 1/k true metres. The loader fits on the same ellipsoid as UTM,
-# so only the projections' curvature is left over: millimetres
-# (specs/control-points.md). Its ground is 1.6 m below every fix, so H is
-# 1.600 and the loader lifts the capture by it: altitude_m = H − scale·mean(Z),
-# Z of the picked fixes 0, 0.6 and 0.7.
-# The CSV and a stand-in T1.spz go into the container's /tmp: /test is
-# read-only, and the loader only checks that the file exists.
-case_ "control points generated from a scan's georeference"
-cp_work=$(mktemp -d)
-mkdir -p "$cp_work/original" && cp -R test/fixtures/control-points/T1 "$cp_work/original/"
-node test/control-points-scene.mjs -- "$cp_work/original/T1"
-SPLATS_ORIGINAL_DIR=$cp_work/original SPLATS_CONTROL_POINTS=$cp_work/cp.csv \
-  node scripts/control-points.mjs T1 > /dev/null
-docker compose exec -T db sh -c 'mkdir -p /tmp/cp-source /tmp/cp-lod && echo stand-in > /tmp/cp-source/T1.spz &&
-  echo stand-in > /tmp/cp-lod/T1-lod.rad && cat > /tmp/cp.csv' < "$cp_work/cp.csv"
-rm -rf "$cp_work"
-out=$(docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
-  -v splats_placement=control_points \
-  -v splats_csv=/tmp/cp.csv -v splats_dir=/tmp/cp-source -v splats_lod_dir=/tmp/cp-lod -f /sql/04_splats.sql 2>&1) \
-  || { echo "$out"; echo "splat load of generated points failed" >&2; exit 1; }
-expect_query "loads the scan"                    "SELECT splat_id||' '||points FROM splats" "T1 3"
-expect_query "puts the origin on the first fix, within 5 mm" \
-  "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.540875478, 25.039362564), 4326)::geography) < 0.005 FROM splats" t
-expect_query "faces grid north (359.3823°) within 0.01°" "SELECT abs(heading_deg - 359.3823) < 0.01 FROM splats" t
-expect_query "  at scale 1/k (1.000132) within 1e-4" "SELECT abs(scale - 1.000132) < 1e-4 FROM splats" t
-expect_query "  with RMS under 5 mm"             "SELECT rms_m < 0.005 FROM splats" t
-expect_query "sets the ground at 0 m: altitude is H − scale·mean(Z) within 1 mm" \
-  "SELECT abs(altitude_m - (1.6 - scale * (0 + 0.6 + 0.7) / 3)) < 0.001 FROM splats" t
-
-# --- placing by the PLY header (splats_placement=header, the default) --------
+# The captures are the mosaic's tiles, each placed from its row of
+# georef.csv. tiles/ and lod/ hold small stand-ins: the loader checks that a
+# capture file and its <stem>-lod.rad exist, and never reads either.
 #
-# georef-ok.csv holds two headers: SYN's is T1's (KZ0918-075047's, UTM 51N)
-# and FOUR's is the Sydney Opera House in UTM 56S (control-points.sh's), its
-# fields padded with spaces. The expected values were computed outside
-# PostGIS, with scripts/utm.mjs's inverse and the ellipsoid's radii over the
-# 100 m grid-north step: T1's origin is 25.039362567, 121.540875478 (its first
-# fix to 0.3 mm), heading 359.38231°, scale 1.0001324; FOUR's origin is
-# −33.856784003, 151.215297000, heading 0.99450°, scale 1.0000640. The
-# placement does not read control_points.csv, so splats_csv names a broken one.
+# georef-ok.csv holds two georeferences: SYN's is KZ0918-075047's header (UTM
+# 51N) and FOUR's is the Sydney Opera House in UTM 56S, its fields padded with
+# spaces. The expected values were computed outside PostGIS, with
+# scripts/utm.mjs's inverse and the ellipsoid's radii over the 100 m
+# grid-north step: SYN's origin is 25.039362567, 121.540875478, heading
+# 359.38231°, scale 1.0001324; FOUR's origin is −33.856784003, 151.215297000,
+# heading 0.99450°, scale 1.0000640.
+SPL=$FIX/splats
 load_georef() {
   docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
-    -v splats_georef="$SPL/$1" -v splats_csv="$SPL/bad-header.csv" \
-    -v splats_dir="$SPL/source" -v splats_lod_dir="$SPL/lod" "${@:2}" \
+    -v splats_georef="$SPL/$1" -v splats_dir="$SPL/tiles" -v splats_lod_dir="$SPL/lod" "${@:2}" \
     -f /sql/04_splats.sql 2>&1
 }
 
-case_ "captures placed by their PLY headers"
+case_ "captures placed by their georeferences"
 schema
-out=$(load_georef georef-ok.csv) || { echo "$out"; echo "header placement failed unexpectedly" >&2; exit 1; }
-expect_contains "says how it places them"         "$out" "placed by each scan's PLY header"
-expect_query "loads both, ignoring control_points.csv" "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
+out=$(load_georef georef-ok.csv) || { echo "$out"; echo "the splat load failed unexpectedly" >&2; exit 1; }
+expect_contains "says how it places them"         "$out" "the mosaic's tiles, placed by georef.csv"
+expect_query "loads both"                         "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
 expect_query "puts the origin at the offset, within 1 mm" \
   "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.540875478, 25.039362567), 4326)::geography) < 0.001 FROM splats WHERE splat_id='SYN'" t
-expect_query "  as exact lng/lat"                  "SELECT lng = ST_X(geom) AND lat = ST_Y(geom) FROM splats WHERE splat_id='SYN'" t
+expect_query "  as exact lng/lat"                  "SELECT lng = ST_X(geom) AND lat = ST_Y(geom) AND pg_typeof(lng)::text = 'double precision' FROM splats WHERE splat_id='SYN'" t
 expect_query "faces grid north (359.38231°) within 0.001°" "SELECT abs(heading_deg - 359.38231) < 0.001 FROM splats WHERE splat_id='SYN'" t
 expect_query "  at scale 1/k (1.0001324) within 1e-5" "SELECT abs(scale - 1.0001324) < 1e-5 FROM splats WHERE splat_id='SYN'" t
-# 26.9 and 10 are 16.9 m apart: two groups of one, each its own datum.
-expect_query "  alone in its datum group, at 0"  "SELECT altitude_m FROM splats WHERE splat_id='SYN'" 0
-expect_query "  with nothing fitted"              "SELECT rms_m IS NULL AND points IS NULL FROM splats WHERE splat_id='SYN'" t
+# OFFSETZ 26.9006 over GROUNDZ 25.3: the ground is 1.6006 m below the origin.
+expect_query "  its ground at GROUNDZ − OFFSETZ"  "SELECT ground_z FROM splats WHERE splat_id='SYN'" -1.6006
+expect_query "  as a double"                      "SELECT pg_typeof(ground_z)::text FROM splats WHERE splat_id='SYN'" "double precision"
+expect_query "  with no fit columns left"         "SELECT count(*) FROM information_schema.columns WHERE table_name = 'splats' AND column_name IN ('rms_m', 'points')" 0
 expect_query "the southern hemisphere: the origin within 1 mm" \
   "SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(151.215297000, -33.856784003), 4326)::geography) < 0.001 FROM splats WHERE splat_id='FOUR'" t
 expect_query "  heading 0.99450° within 0.001°"   "SELECT abs(heading_deg - 0.99450) < 0.001 FROM splats WHERE splat_id='FOUR'" t
 expect_query "  scale 1.0000640 within 1e-5"      "SELECT abs(scale - 1.0000640) < 1e-5 FROM splats WHERE splat_id='FOUR'" t
-expect_query "  trims stray spaces"               "SELECT file||' '||altitude_m FROM splats WHERE splat_id='FOUR'" "four.spz 0"
+expect_query "  trims stray spaces"               "SELECT file||' '||ground_z FROM splats WHERE splat_id='FOUR'" "four.ply 0"
+expect_query "records the file's size"           "SELECT bytes FROM splats WHERE splat_id='SYN'" 36
 
-# Five captures, OFFSETZ 10, 10.4, 11 | 20, 21: the 9 m gap splits them at the
-# default 5 m, and each group's datum is its median (10.4; 20.5, the mean of
-# an even pair). Gaps 0.4 and 0.6 inside the first group: 0.5 splits at the
-# second, 0.6 does not (in doubles 11 − 10.4 is a hair under 0.6). Both split
-# 20 from 21, a gap of 1.
-alts() { q "SELECT string_agg(splat_id||'='||round(altitude_m::numeric, 3), ' ' ORDER BY splat_id) FROM splats"; }
-case_ "a datum per group of captures, by OFFSETZ"
-out=$(load_georef georef-groups.csv) || { echo "$out"; echo "header placement failed unexpectedly" >&2; exit 1; }
-expect "two groups at a 5 m gap, each at its median" "$(alts)" "G10=-0.400 G104=0.000 G11=0.600 G20=-0.500 G21=0.500"
-expect_contains "  reports the groups"           "$out" "datum groups"
-# The report's rows, spaces squeezed: group | splat_id | offsetz | datum | altitude_m.
-printed=$(printf '%s\n' "$out" | tr -d '\r' | tr -s ' ' | sed 's/^ //; s/ $//' | grep -E '^[0-9]+ \| G' | tr '\n' ';')
-expect "  each capture's group, datum and altitude_m" "$printed" \
-  "1 | G10 | 10.000 | 10.400 | -0.400;1 | G104 | 10.400 | 10.400 | 0.000;1 | G11 | 11.000 | 10.400 | 0.600;2 | G20 | 20.000 | 20.500 | -0.500;2 | G21 | 21.000 | 20.500 | 0.500;"
-out=$(load_georef georef-groups.csv -v splats_datum_gap_m=0.5) || { echo "$out"; echo "header placement failed unexpectedly" >&2; exit 1; }
-expect "a 0.5 m gap splits 10.4 from 11"         "$(alts)" "G10=-0.200 G104=0.200 G11=0.000 G20=0.000 G21=0.000"
-out=$(load_georef georef-groups.csv -v splats_datum_gap_m=0.6) || { echo "$out"; echo "header placement failed unexpectedly" >&2; exit 1; }
-expect "  a 0.6 m gap does not"                  "$(alts)" "G10=-0.400 G104=0.000 G11=0.600 G20=0.000 G21=0.000"
-for gap in 0 abc; do
-  load_georef georef-ok.csv > /dev/null
-  if out=$(load_georef georef-ok.csv -v splats_datum_gap_m=$gap); then
-    bad "a splats_datum_gap_m of $gap" "the load succeeded"
-  else
-    expect_contains "a splats_datum_gap_m of $gap" "$out" "splats_datum_gap_m is '$gap'; it must be a positive number"
-    expect_query "  keeps the previous load" "SELECT count(*) FROM splats" 2
-  fi
-done
+case_ "re-running the splat loader"
+out=$(load_georef georef-ok.csv) || { echo "$out"; echo "the second splat load failed" >&2; exit 1; }
+expect_query "reloads, not appends, with the same ids" "SELECT string_agg(id||'='||splat_id, ',' ORDER BY id) FROM splats" "1=FOUR,2=SYN"
+
+# Each capture grounded on its own: (OFFSETZ, GROUNDZ) (26.9, 25.3), a
+# tile's (0, 24.98731) and (10, 10). Nothing is computed across captures, so
+# each ground_z is its own row's alone, in double precision.
+case_ "each capture's own ground"
+out=$(load_georef georef-grounds.csv) || { echo "$out"; echo "the splat load failed unexpectedly" >&2; exit 1; }
+expect_query "ground_z = GROUNDZ − OFFSETZ, each on its own" \
+  "SELECT string_agg(splat_id||'='||round(ground_z::numeric, 6), ' ' ORDER BY splat_id) FROM splats" \
+  "HIGH=-1.600000 LEVEL=0.000000 TILE=24.987310"
+expect_query "  a tile's, exactly its GROUNDZ"    "SELECT ground_z = 24.98731 FROM splats WHERE splat_id='TILE'" t
+expect_contains "  reports the grounds"           "$out" "splats: grounds"
+# The report's rows, spaces squeezed: splat_id | offsetz | groundz | ground_z.
+printed=$(printf '%s\n' "$out" | tr -d '\r' | tr -s ' ' | sed 's/^ //; s/ $//' | grep -E '^(HIGH|LEVEL|TILE)( \| [^|]*){3}$' | tr '\n' ';')
+expect "  each capture's OFFSETZ, GROUNDZ and ground_z" "$printed" \
+  "HIGH | 26.9 | 25.3 | -1.600;LEVEL | 10 | 10 | 0.000;TILE | 0 | 24.98731 | 24.987;"
+expect "  and no datum groups"                    "$(printf '%s' "$out" | grep -c 'datum' || true)" 0
 
 case_ "no georef.csv at all"
-out=$(load_georef nothing-here.csv) || { echo "$out"; echo "header placement failed unexpectedly" >&2; exit 1; }
+out=$(load_georef nothing-here.csv) || { echo "$out"; echo "the splat load failed unexpectedly" >&2; exit 1; }
 expect_contains "says so"        "$out" "no captures loaded"
 expect_query   "loads nothing"   "SELECT count(*) FROM splats" 0
 
@@ -458,70 +319,76 @@ case_ "rejected georeferences"
 georef_rejects "OFFSETX and OFFSETY the other way round" georef-bad-header.csv "could not be loaded"
 georef_rejects "an empty SplatID"            georef-empty-id.csv     "line 2: SplatID is empty"
 georef_rejects "an offset that is not a number" georef-not-a-number.csv "line 2 (SYN): OFFSETX 'N/A' is not a number"
+georef_rejects "a GROUNDZ that is not a number" georef-groundz-not-a-number.csv "line 2 (SYN): GROUNDZ 'ground' is not a number"
+georef_rejects "the header without GROUNDZ"  georef-no-groundz.csv   "could not be loaded"
 georef_rejects "a CRS that is not UTM"       georef-not-utm.csv      "line 2 (SYN): EPSG '3826' is not WGS 84 / UTM"
-georef_rejects "a file that is not there"    georef-missing-file.csv "File 'absent.spz' is not in"
-georef_rejects "a .ply capture"              georef-ply.csv          "File 'syn.ply' is not .spz"
+georef_rejects "a file that is not there"    georef-missing-file.csv "File 'absent.ply' is not in"
+georef_rejects "a directory, not a file"     georef-directory.csv    "File 'folder.ply' is not in"
+# .spz was the per-scan capture before the mosaic: build-lod.sh now reads
+# <tile>.ply alone, so any other extension could never have its LoD.
+georef_rejects "a .spz capture"              georef-spz.csv          "File 'syn.spz' is not .ply"
+georef_rejects "an unsupported extension"    georef-extension.csv    "File 'syn.txt' is not .ply"
+georef_rejects "an upper-case .PLY"          georef-upper-ext.csv    "File 'syn.PLY' is not .ply"
 georef_rejects "a SplatID on two rows"       georef-dup.csv          "SYN appears on 2 rows (lines 2, 3)"
 georef_rejects "an empty File"               georef-empty-file.csv   "line 2 (SYN): File is empty"
-georef_rejects "a File that is a path"       georef-path.csv         "line 2 (SYN): File '../source/syn.spz' must be a bare file name"
-georef_rejects "a File on two rows"          georef-shared-file.csv  "syn.spz is used by 2 captures (SYN, OTHER)"
-georef_rejects "  with the row's shape as a hint" georef-shared-file.csv "HINT:  Each row is one capture: SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ"
-georef_rejects "a capture with no LoD built" georef-no-lod.csv       "NOLOD: its LoD nolod-lod.rad is not in"
-load_georef georef-ok.csv > /dev/null
-if out=$(docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
-  -v splats_placement=fitted -f /sql/04_splats.sql 2>&1); then
-  bad "an unknown splats_placement" "the load succeeded"
-else
-  expect_contains "an unknown splats_placement" "$out" "splats_placement is 'fitted'; it must be header or control_points"
-  expect_query "  keeps the previous load" "SELECT count(*) FROM splats" 2
-fi
+georef_rejects "a File that is a path"       georef-path.csv         "line 2 (SYN): File '../tiles/syn.ply' must be a bare file name"
+georef_rejects "a File on two rows"          georef-shared-file.csv  "syn.ply is used by 2 captures (SYN, OTHER)"
+georef_rejects "  with the row's shape as a hint" georef-shared-file.csv "HINT:  Each row is one capture: SplatID,File,EPSG,OFFSETX,OFFSETY,OFFSETZ,GROUNDZ"
+georef_rejects "a capture with no LoD built" georef-no-lod.csv       "NOLOD: its LoD nolod-lod.rad is not in /test/fixtures/splats/lod (run ./scripts/build-lod.sh nolod)"
 
-# georef.mjs's output for T1, through the real loader: the same place as the
-# fixture's SYN, which was copied from the same header by hand, and alone, so
-# at its own datum.
-case_ "a georeference generated from a scan's PLY"
-gr_work=$(mktemp -d)
-mkdir -p "$gr_work/original" && cp -R test/fixtures/control-points/T1 "$gr_work/original/"
-SPLATS_ORIGINAL_DIR=$gr_work/original SPLATS_GEOREF=$gr_work/georef.csv node scripts/georef.mjs T1 > /dev/null
-docker compose exec -T db sh -c 'mkdir -p /tmp/gr-source /tmp/gr-lod && echo stand-in > /tmp/gr-source/T1.spz &&
-  echo stand-in > /tmp/gr-lod/T1-lod.rad && cat > /tmp/georef.csv' < "$gr_work/georef.csv"
-rm -rf "$gr_work"
+# splat-mosaic.mjs's output, through the real loader: two scans whose
+# splats fall in two tiles, each placed at its centre, with its ground_z
+# the GROUNDZ the mosaic wrote. The expected origins are scripts/utm.mjs's
+# inverse of the tiles' centres.
+case_ "the mosaic's georef.csv"
+mz=$(mktemp -d)
+mz_scan() {
+  mkdir -p "$mz/original/$1" "$mz/clean"
+  echo "{\"comments\": {\"epsg\": \"32651\", \"offsetx\": \"$2\", \"offsety\": \"$3\", \"offsetz\": \"$4\"}, \"splats\": []}" \
+    | node test/splat-mosaic-scene.mjs -- "$mz/original/$1/point_cloud.ply"
+  echo "{\"splats\": $5}" | node test/splat-mosaic-scene.mjs -- "$mz/clean/$1.ply"
+}
+mz_scan A 352650 2770050 27 '[{"x": 1, "y": 1, "z": 1}, {"x": 60, "y": 1, "z": 1}]'
+mz_scan B 352660 2770040 26 '[{"x": 1, "y": 1, "z": 1}]'
+SPLATS_ORIGINAL_DIR=$mz/original SPLATS_CLEAN_DIR=$mz/clean SPLATS_TILES_DIR=$mz/tiles SPLATS_GEOREF=$mz/georef.csv \
+  SPLATS_MIN_TILE_SPLATS=1 node scripts/splat-mosaic.mjs > /dev/null
+# Stand-ins for the tiles and their trees, named from the CSV's File column.
+stand_ins=$(tail -n +2 "$mz/georef.csv" | cut -d, -f2 | while read -r f; do
+  printf 'echo stand-in > /tmp/mz-tiles/%s && echo stand-in > /tmp/mz-lod/%s-lod.rad && ' "$f" "${f%.ply}"; done)
+docker compose exec -T db sh -c "rm -rf /tmp/mz-tiles /tmp/mz-lod && mkdir -p /tmp/mz-tiles /tmp/mz-lod && ${stand_ins} cat > /tmp/mz.csv" < "$mz/georef.csv"
+read -r lng0 lat0 lng1 lat1 < <(node --input-type=module -e '
+  import { utmInverse } from "./scripts/utm.mjs";
+  const a = utmInverse(352650, 2770050, 51, true), b = utmInverse(352750, 2770050, 51, true);
+  console.log([a[1], a[0], b[1], b[0]].join(" ")); // utmInverse gives [lat, lon]')
+grounds=$(tail -n +2 "$mz/georef.csv" | cut -d, -f7 | paste -sd, -)
+rm -rf "$mz"
 out=$(docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" \
-  -v splats_georef=/tmp/georef.csv -v splats_dir=/tmp/gr-source -v splats_lod_dir=/tmp/gr-lod -f /sql/04_splats.sql 2>&1) \
-  || { echo "$out"; echo "splat load of a generated georeference failed" >&2; exit 1; }
-expect_query "loads the scan where the header puts it, within 1 mm" \
-  "SELECT splat_id||' '||(ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(121.540875478, 25.039362567), 4326)::geography) < 0.001)||' '||altitude_m FROM splats" "T1 true 0"
+  -v splats_georef=/tmp/mz.csv -v splats_dir=/tmp/mz-tiles -v splats_lod_dir=/tmp/mz-lod -f /sql/04_splats.sql 2>&1) \
+  || { echo "$out"; echo "the splat load of the mosaic's georef.csv failed" >&2; exit 1; }
+expect_query "loads both tiles"                  "SELECT string_agg(splat_id||' '||file, ',' ORDER BY splat_id) FROM splats" \
+  "32651-352600-2770000 32651-352600-2770000.ply,32651-352700-2770000 32651-352700-2770000.ply"
+expect_query "  each at its centre, within 1 mm" \
+  "SELECT bool_and(ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(CASE splat_id WHEN '32651-352600-2770000' THEN $lng0 ELSE $lng1 END, CASE splat_id WHEN '32651-352600-2770000' THEN $lat0 ELSE $lat1 END), 4326)::geography) < 0.001) FROM splats" t
+# Every splat at z 1: A's over offsetz 27 (H 28), B's over 26 (H 27). Tile
+# 352600 holds one of each, two bins of one, and the lower is its ground;
+# tile 352700 holds A's other splat alone.
+expect "  the mosaic's GROUNDZ"                    "$grounds" "27,28"
+expect_query "  each with ground_z its GROUNDZ"  "SELECT string_agg(ground_z::text, ',' ORDER BY splat_id) FROM splats" "$grounds"
+expect_query "  facing grid north"               "SELECT bool_and(abs(heading_deg - 359.38) < 0.01) FROM splats" t
 
 docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXISTS $DB WITH (FORCE)" > /dev/null
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-# --- the splat processor (process-splat.sh) -----------------------------------
+# --- the splat tools ------------------------------------------------------------
 #
-# Its own suite, with its own count: it needs splat-transform rather than the
-# database, and runs on its own as ./test/process-splat.sh.
-printf '\n== process-splat.sh ==\n'
-processor_ok=1
-./test/process-splat.sh || processor_ok=0
+# Each has its own suite, with its own count, and runs on its own as
+# ./test/<tool>.sh: they need splat-transform, node or Docker rather than the
+# database.
+suites_ok=1
+for suite in process-splat splat-align voxel-quality splat-mosaic build-lod; do
+  printf '\n== %s ==\n' "$suite"
+  ./test/$suite.sh || suites_ok=0
+done
 
-# --- the align step (splat-align.mjs) -----------------------------------------
-printf '\n== splat-align.mjs ==\n'
-align_ok=1
-./test/splat-align.sh || align_ok=0
-
-# --- the control-point generator (control-points.mjs) ------------------------
-printf '\n== control-points.mjs ==\n'
-generator_ok=1
-./test/control-points.sh || generator_ok=0
-
-# --- the georef.csv generator (georef.mjs) -----------------------------------
-printf '\n== georef.mjs ==\n'
-georef_ok=1
-./test/georef.sh || georef_ok=0
-
-# --- the LoD builder (build-lod.sh) -------------------------------------------
-printf '\n== build-lod.sh ==\n'
-lod_ok=1
-./test/build-lod.sh || lod_ok=0
-
-[ "$fail" -eq 0 ] && [ "$processor_ok" = 1 ] && [ "$align_ok" = 1 ] && [ "$generator_ok" = 1 ] && [ "$georef_ok" = 1 ] && [ "$lod_ok" = 1 ]
+[ "$fail" -eq 0 ] && [ "$suites_ok" = 1 ]

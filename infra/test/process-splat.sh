@@ -37,7 +37,7 @@ done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-export SPLATS_ORIGINAL_DIR=$work/original SPLATS_SOURCE_DIR=$work/source
+export SPLATS_ORIGINAL_DIR=$work/original SPLATS_CLEAN_DIR=$work/clean
 mkdir -p "$SPLATS_ORIGINAL_DIR" "$work/gen"
 
 count() { splat-transform -q --no-tty "$1" --info json null | node -e '
@@ -112,35 +112,35 @@ cp "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog" "$SPLATS_ORIGINAL_DIR/both/"
 # A generator is code; one in a scan folder must never be run.
 cp "$work/gen/scene.mjs" "$SPLATS_ORIGINAL_DIR/code/point_cloud.mjs"
 before=$(sum "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog")
-out=$SPLATS_SOURCE_DIR/scene.spz
+out=$SPLATS_CLEAN_DIR/scene.ply
 
 case_ "the density, size and floater cuts"
 expect "the original has every clump" "$(count "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog")" 1475
 log=$(process scene) || { echo "$log"; echo "process-splat.sh failed unexpectedly" >&2; exit 1; }
 expect_contains "names the file it read" "$log" "==> scene (point_cloud.sog)"
 expect_contains "the typical voxel is main's, and both 8s go" "$log" "1475 gaussians; typical voxel holds 1000; 1459 kept by density"
-expect "writes source/<scan>.spz with main, c27, far and sizes less 64" "$(count "$out")" 1395
+expect "writes clean/<scan>.ply with main, c27, far and sizes less 64" "$(count "$out")" 1395
 expect_contains "reports the size cut on its own" "$log" "1395 kept by size"
 expect_contains "reports what it removed" "$log" "1395 kept after floaters; 80 removed in all (5.4%)"
 expect_contains "skips the align step for a .sog" "$log" "align skipped: point_cloud.sog is not a point_cloud.ply"
-expect "  and says so beside the .spz" "$(node -e 'const j = require(process.argv[1]); console.log(j.status, j.reason)' -- "$SPLATS_SOURCE_DIR/scene.align.json")" "skipped point_cloud.sog is not a point_cloud.ply"
+expect "  and says so beside the .ply" "$(node -e 'const j = require(process.argv[1]); console.log(j.status, j.reason)' -- "$SPLATS_CLEAN_DIR/scene.align.json")" "skipped point_cloud.sog is not a point_cloud.ply"
 
 case_ "every coordinate negative"
 if log=$(process mirror); then
-  expect "keeps the same clumps" "$(count "$SPLATS_SOURCE_DIR/mirror.spz")" 1395
+  expect "keeps the same clumps" "$(count "$SPLATS_CLEAN_DIR/mirror.ply")" 1395
 else
   bad "cleans a mirrored scan" "$log"
 fi
-rm -f "$SPLATS_SOURCE_DIR"/mirror.*
+rm -f "$SPLATS_CLEAN_DIR"/mirror.*
 
 case_ "every format splat-transform can write"
 for ext in "${formats[@]}"; do
   if log=$(process "as-$ext"); then
-    expect "point_cloud.$ext gives the same counts" "$(count "$SPLATS_SOURCE_DIR/as-$ext.spz")" 1395
+    expect "point_cloud.$ext gives the same counts" "$(count "$SPLATS_CLEAN_DIR/as-$ext.ply")" 1395
   else
     bad "cleans a point_cloud.$ext" "$log"
   fi
-  rm -f "$SPLATS_SOURCE_DIR"/as-$ext.*
+  rm -f "$SPLATS_CLEAN_DIR"/as-$ext.*
 done
 
 case_ "each cut alone"
@@ -156,31 +156,33 @@ expect_contains "in 100 m voxels the sky clump shares main's, and nothing goes" 
 
 case_ "the output"
 process scene > /dev/null
-expect "is gzipped" "$(od -An -tx1 -N2 "$out" | tr -d ' ')" 1f8b
-expect "is SPZ v3"  "$(node -e '
-  const h = require("zlib").gunzipSync(require("fs").readFileSync(process.argv[1]));
-  console.log(h.toString("latin1", 0, 4), h.readUInt32LE(4));' -- "$out")" "NGSP 3"
+expect "is a binary little-endian PLY" "$(head -c 200 "$out" | LC_ALL=C sed -n 2p)" "format binary_little_endian 1.0"
+expect "  with every property the mosaic reads, as floats" "$(node --input-type=module -e '
+  import { layout } from "./scripts/ply-header.mjs";
+  const L = await layout(process.argv[1], "out");
+  const want = ["x","y","z","f_dc_0","f_dc_1","f_dc_2","opacity","scale_0","scale_1","scale_2","rot_0","rot_1","rot_2","rot_3"];
+  console.log(want.every((p) => L.props.get(p)?.type === "float"), L.count);' -- "$out")" "true 1395"
 expect "leaves the original as it was" "$(sum "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog")" "$before"
 process scene > /dev/null
 expect "a re-run starts from the original" "$(count "$out")" 1395
 # The working directory is gone by exit, so a shim in front of splat-transform
-# lists source/ while the script runs.
+# lists clean/ while the script runs.
 mkdir -p "$work/shim"
 cat > "$work/shim/splat-transform" <<EOF
 #!/usr/bin/env bash
-ls -A "\$SPLATS_SOURCE_DIR" >> "$work/seen"
+ls -A "\$SPLATS_CLEAN_DIR" >> "$work/seen"
 exec $(command -v splat-transform) "\$@"
 EOF
 chmod +x "$work/shim/splat-transform"
 PATH=$work/shim:$PATH ./scripts/process-splat.sh scene > /dev/null 2>&1
-if grep -q '^\.process-' "$work/seen"; then ok "works in source/.process-*"; else bad "works in source/.process-*" "saw: $(sort -u "$work/seen" | tr '\n' ' ')"; fi
+if grep -q '^\.process-' "$work/seen"; then ok "works in clean/.process-*"; else bad "works in clean/.process-*" "saw: $(sort -u "$work/seen" | tr '\n' ' ')"; fi
 
 case_ "refusals"
 kept=$(sum "$out")
 if log=$(process scene --min-density 2); then bad "fails when nothing is left" "it succeeded"; else ok "fails when nothing is left"; fi
 expect_contains "  says so"                     "$log" "remove every Gaussian"
 expect "  leaves the previous output"           "$(sum "$out")" "$kept"
-expect "  leaves no temporary file"             "$(ls -A "$SPLATS_SOURCE_DIR" | tr '\n' ' ')" "scene.align.json scene.spz "
+expect "  leaves no temporary file"             "$(ls -A "$SPLATS_CLEAN_DIR" | tr '\n' ' ')" "scene.align.json scene.ply "
 if log=$(process absent); then bad "refuses a missing scan" "it succeeded"; else expect_contains "refuses a missing scan" "$log" "'absent' is not a scan folder in"; fi
 if log=$(process empty); then bad "refuses a scan with no splat" "it succeeded"; else expect_contains "refuses a scan with no splat" "$log" "'empty' has no point_cloud.<ext>"; fi
 if log=$(process both); then bad "refuses two splats" "it succeeded"; else expect_contains "refuses two splats, naming both" "$log" "more than one splat: point_cloud.ply point_cloud.sog"; fi
@@ -203,10 +205,10 @@ case_ "the align step"
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/aligned" '{"shift":[0.4,0.3,0],"turnDeg":0.3}'
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/unreliable" '{"lidar":"random"}'
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/nomap" '{"lidar":"random","omit":["map_config.json","gnss.csv"]}'
-status_of() { node -e 'console.log(require(process.argv[1]).status)' -- "$SPLATS_SOURCE_DIR/$1.align.json"; }
+status_of() { node -e 'console.log(require(process.argv[1]).status)' -- "$SPLATS_CLEAN_DIR/$1.align.json"; }
 if log=$(process aligned); then
   expect_contains "aligns a scan with every file" "$log" "align corrected: moved up to"
-  expect "  and records it beside the .spz" "$(status_of aligned)" corrected
+  expect "  and records it beside the .ply" "$(status_of aligned)" corrected
   # The cuts read the aligned file. The scene's end walls are at x = ±20 m;
   # misplaced, one sits at 20.4 m, so ~10,000 Gaussians lie past 20.2 m on
   # one side or the other. Put back, only the haze (which was never
@@ -222,7 +224,7 @@ if log=$(process aligned); then
     echo "$total"
   }
   expect "  the misplaced original has its wall past 20.2 m" "$(( $(beyond "$SPLATS_ORIGINAL_DIR/aligned/point_cloud.ply") > 9000 ))" 1
-  expect "  the served capture has it back at 20 m" "$(( $(beyond "$SPLATS_SOURCE_DIR/aligned.spz") < 200 ))" 1
+  expect "  the cleaned capture has it back at 20 m" "$(( $(beyond "$SPLATS_CLEAN_DIR/aligned.ply") < 200 ))" 1
 else
   bad "aligns a scan with every file" "$log"
 fi
@@ -237,13 +239,13 @@ fi
 log=$(process nomap)
 expect_contains "skips a scan missing files, naming them" "$log" "align skipped: no gnss.csv, map_config.json"
 expect "  and records it" "$(status_of nomap)" skipped
-expect "a failed align serves what a skipped one does" "$(sum "$SPLATS_SOURCE_DIR/unreliable.spz")" "$(sum "$SPLATS_SOURCE_DIR/nomap.spz")"
+expect "a failed align serves what a skipped one does" "$(sum "$SPLATS_CLEAN_DIR/unreliable.ply")" "$(sum "$SPLATS_CLEAN_DIR/nomap.ply")"
 
 case_ "run from outside infra/"
 # Without the overrides, the default folders are found from the script's own
 # location, not the working directory. A missing scan is refused before
 # anything is written, so data/ is only read.
-if log=$(here=$PWD; cd "$work" && env -u SPLATS_ORIGINAL_DIR -u SPLATS_SOURCE_DIR "$here/scripts/process-splat.sh" no-such-scan 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "not a scan folder in $PWD/data/3dgs/original"; fi
+if log=$(here=$PWD; cd "$work" && env -u SPLATS_ORIGINAL_DIR -u SPLATS_CLEAN_DIR "$here/scripts/process-splat.sh" no-such-scan 2>&1); then bad "finds infra/data from elsewhere" "it succeeded"; else expect_contains "finds infra/data from elsewhere" "$log" "not a scan folder in $PWD/data/3dgs/original"; fi
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

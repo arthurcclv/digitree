@@ -1,7 +1,10 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 9, approved 2026-10-29**: splat-transform 3.10.x instead
-of 3.4.x; see *Changes from revision 8*. Revision 8 (approved 2026-10-24) runs
+Status: **revision 10, approved 2026-10-29**: the output is a lossless
+`clean/<scan>.ply` for the mosaic (`specs/splat-mosaic.md`), not a served
+`source/<scan>.spz`; see *Changes from revision 9*. Revision 9 (approved
+2026-10-29) moved to splat-transform 3.10.x from 3.4.x; see *Changes from
+revision 8*. Revision 8 (approved 2026-10-24) runs
 an align step before the cuts; see *Changes from revision 7* and its own spec,
 `specs/splat-align.md`.
 Revision 7 (approved 2026-10-24) renamed `clean-splat.sh` to
@@ -15,13 +18,14 @@ splat-transform reads. Revision 4
 
 ## What it is
 
-A script in `infra/scripts/` that prepares one Gaussian splat capture before
-it is served: it corrects the capture's placement against the scanner's RTK
+A script in `infra/scripts/` that prepares one Gaussian splat capture for
+the mosaic: it corrects the capture's placement against the scanner's RTK
 and lidar (`splat-align.mjs`, when the scan carries what that needs), drops
 the Gaussians that lie outside the capture's own distribution, the ones that
-are too large, and the floaters, and writes the result as a file Spark can
-load. Every capture gets the same treatment from one command, with
-no per-capture setting to pick.
+are too large, and the floaters, and writes the result as a PLY. Every capture gets the same treatment from one command, with
+no per-capture setting to pick. Its output is not served: it is one input of
+the mosaic (`specs/splat-mosaic.md`), which merges every cleaned scan into
+the tiles the app draws.
 
 ```bash
 ./scripts/process-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, 0.25 m
@@ -37,14 +41,14 @@ data/3dgs/original/<scan>/   one folder per scan, as delivered — read-only
   octree.bin, metadata.json, there and the splat is point_cloud.ply
   map_config.json
   …                          anything else is ignored
-data/3dgs/source/<scan>.spz  the scans as served — written only by process-splat.sh
-data/3dgs/source/<scan>.align.json
-                             what the align step did to that .spz
+data/3dgs/clean/<scan>.ply   the scans as cleaned — written only by process-splat.sh
+data/3dgs/clean/<scan>.align.json
+                             what the align step did to that .ply
 ```
 
-The `files` service serves `source/` at `/3dgs/`, and `04_splats.sql`
-(`splats_dir`) checks control-point files against it. The rule "never modify
-`data/`" keeps one exception: `process-splat.sh` owns `data/3dgs/source/`.
+`splat-mosaic.mjs` reads every `clean/<scan>.ply`. The rule "never modify
+`data/`" keeps one exception for this script: `process-splat.sh` owns
+`data/3dgs/clean/`.
 `original/` stays read-only, so a capture can always be cleaned again from what
 was delivered.
 
@@ -58,7 +62,7 @@ was delivered.
 | `--max-scale <m>` | `0.25` | keep Gaussians whose **every** axis is at most this long |
 | `--floaters <size,op,min>` | `0.05,0.1,0.004` (splat-transform's own) | passed to `-F` |
 | `SPLATS_ORIGINAL_DIR` | `data/3dgs/original` | env: where the scan folders are |
-| `SPLATS_SOURCE_DIR` | `data/3dgs/source` | env: where the output is written |
+| `SPLATS_CLEAN_DIR` | `data/3dgs/clean` | env: where the output is written |
 
 The two directories are variables for the same reason the loader's inputs are
 psql variables: the test points the real script at a scratch directory.
@@ -66,9 +70,8 @@ psql variables: the test points the real script at a scratch directory.
 Requires `splat-transform` 3.10.x, installed globally (`npm install -g
 @playcanvas/splat-transform@3.10`), and `node` on `PATH`; fails with a clear
 message if either is missing or the version is not 3.10.x. The output is always
-`source/<scan>.spz`, so a scan's `control_points.csv` rows name `<scan>.spz`
-and its `SplatID` is naturally `<scan>`. A `<scan>` that is a path or is not a
-folder in `original/` is refused, naming what is missing.
+`clean/<scan>.ply`, the name the mosaic reads it by. A `<scan>` that is a
+path or is not a folder in `original/` is refused, naming what is missing.
 
 **The input file.** The scan folder must hold exactly one `point_cloud.<ext>`
 with `<ext>` one of:
@@ -85,14 +88,17 @@ with `<ext>` one of:
 - **None** of them: refused, listing the names it looked for.
 - **More than one** (say `point_cloud.ply` and `point_cloud.sog`): refused,
   naming each. They may be different exports of the same scan at different
-  losses, and which one is served is the operator's call, not a guess; remove
+  losses, and which one is cleaned is the operator's call, not a guess; remove
   or move the others.
 - Not accepted, though splat-transform reads them: `.mjs` (a generator is code,
   and the scan folder is delivered data — it is never executed), and the
   multi-file or multi-LOD containers (`meta.json`, `lod-meta.json`, `.lcc`,
   `.lcc2`).
-- A PLY's extra columns (KZ0918-090946's `nx`, `ny`, `nz`) pass through the
-  density step and are dropped by the SPZ writer.
+- A PLY's extra columns (the delivered scans' zero `nx`, `ny`, `nz`) pass
+  through to the output; the mosaic drops them.
+- Only a `point_cloud.ply` carries a georeference, and the mosaic places a
+  scan by it alone, so any other format is cleaned here and then refused by
+  the mosaic (`specs/splat-mosaic.md`, *Inputs*).
 
 ## What it does, in order
 
@@ -106,10 +112,10 @@ with `<ext>` one of:
    original. When the step's validation **fails** (ICP inliers ≤ 40%, or
    RTK p95 > 0.10 m), it prints `error: <scan>: align failed (<reason>);
    continuing unaligned` on stderr and goes on with the original: the scan
-   is still served, and the script still exits 0. A file that is there but
+   still goes into the mosaic, and the script still exits 0. A file that is there but
    wrong (a PLY without `epsg`, a Potree encoding other than `DEFAULT`, …)
    fails the scan, naming the file. Either way the step's report is written
-   to `source/<scan>.align.json`, with `status` `pass`, `corrected`, `fail`
+   to `clean/<scan>.align.json`, with `status` `pass`, `corrected`, `fail`
    or `skipped`.
 1. **Density cut** (`scripts/splat-density-cut.mjs`, a node step). Read the capture,
    put every Gaussian in a cubic voxel of edge `--cell` by its centre, and count
@@ -122,7 +128,7 @@ with `<ext>` one of:
 2. **Size cut.** Keep Gaussians with `scale_0`, `scale_1` and `scale_2` each
    `<= --max-scale` (three `-V … lte`).
 3. **Floaters.** `-F` with `--floaters`.
-4. **Write** SPZ **version 3** (`--spz-version 3`).
+4. **Write** a binary `.ply`, lossless, splat-transform's own PLY output.
 5. **Report** the align step's status (and how far it moved the capture),
    the typical density, and Gaussians before, after each cut, after all, and
    the % removed.
@@ -167,23 +173,25 @@ script, each with a comment, and each has a test.
   at 2.6 GB and the splat-transform run at 3.5 GB for KZ0918-075047 (19.3M
   Gaussians, a 222 MB `.sog`), which takes ~2.5 min and serves 269 MB. A
   937 MB `.ply` (KZ0918-090946, 13.8M) peaks at 2.2 GB in the density step.
-  The intermediate `.ply` in `source/` needs ~1 GB of disk per 13M Gaussians
-  while the script runs.
+  The intermediate `.ply` in `clean/` needs ~1 GB of disk per 13M Gaussians
+  while the script runs, and the output is about that size too: lossless, 14
+  floats a Gaussian plus the normals.
 
 ## Output contract
 
-- The output is a gzip-wrapped SPZ v3. Spark 2.3.1 identifies an SPZ only by
-  the gzip magic (`getSplatFileType`), so the default v4 output — not gzipped —
-  does not load at all.
+- The output is a binary little-endian `.ply` with every property the mosaic
+  reads, as floats: `x y z`, `f_dc_0..2`, `opacity`, `scale_0..2`,
+  `rot_0..3`, in splat-transform's order. It carries no header comments, so
+  no georeference: the mosaic reads the frame from the original's header.
 - Gaussians are moved only by the align step's one rigid correction, within
   the PLY's own frame (UTM less the header's offset), and otherwise only
-  removed. The frame is unchanged, so rows `control-points.mjs` wrote stay
-  valid — they come from GNSS, which the corrected capture now agrees with.
-  A row **measured by hand** on an aligned capture's file coordinates is off
-  by up to its `correction_max_m` and must be re-measured or regenerated.
-  (As of this revision every row is from GNSS.)
-- The script writes to temporary files in `source/` and renames the
-  `.align.json` and then the `.spz` into place only on success; a failed run
+  removed. Their coordinates are written as stored: splat-transform's `.ply`
+  output keeps x and y as the original has them (checked on a round trip of a
+  known scene: x 12.30–12.39 and y −45.60 to −45.51 in, the same out). So the
+  original's offset is the cleaned file's frame.
+- The script writes to temporary files in `clean/`, the output's with a
+  leading `.` so the mosaic never reads it, and renames the `.align.json`
+  and then the `.ply` into place only on success; a failed run
   leaves the previous outputs untouched and no temporary file behind (the
   intermediate `.ply` files included).
 - A run that would remove **every** Gaussian fails, naming the scan.
@@ -212,11 +220,12 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   0.2683 — so each size has 64 Gaussians and sits well clear of the limit;
 - the same scene mirrored through the origin, so its coordinates are negative,
   gives the same count;
-- the output starts with the gzip magic and decodes as SPZ v3;
+- the output is a binary little-endian PLY carrying every property the mosaic
+  reads, as floats;
 - the original's checksum is unchanged, and a re-run gives the same count;
 - a `--min-density` that keeps nothing fails, leaves the previous output
   untouched and no temporary file;
-- the output is `source/<scan>.spz`;
+- the output is `clean/<scan>.ply`;
 - the same scene as `point_cloud.ply`, `point_cloud.compressed.ply`,
   `point_cloud.sog` and `point_cloud.spz` gives the same counts — the four
   formats splat-transform can write; `.splat` and `.ksplat` are accepted but
@@ -229,10 +238,10 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   printing `splat-transform v3.4.0`) is refused, naming the version found;
 - the `.sog` scene is skipped by the align step as not a `point_cloud.ply`,
   and its `.align.json` says so;
-- with scans from `test/splat-align-scene.mjs`: a misplaced one is served
+- with scans from `test/splat-align-scene.mjs`: a misplaced one is written
   put back (its end wall no longer past 20.2 m) with `corrected` recorded; one
   whose validation fails prints the error, exits 0, records `fail`, and
-  serves a `.spz` byte-identical to that of the same `point_cloud.ply`
+  writes a `.ply` byte-identical to that of the same `point_cloud.ply`
   skipped for missing files, whose log names them.
 
 The align step's own cases are in `test/splat-align.sh`
@@ -240,11 +249,22 @@ The align step's own cases are in `test/splat-align.sh`
 
 ## Docs
 
-`infra/README.md` (*Cleaning*), `infra/CLAUDE.md` (layout table gains
-`splat-density-cut.mjs`; the traps rule loses the `--stats` frame, which no
-step reads any more), the splat layer spec's served counts, and the 2026-10-21
-decision entry in `app/ai/DECISIONS.md`, which has not landed yet and is
-rewritten for the density rule rather than superseded.
+`infra/README.md` (*Cleaning*) and `infra/CLAUDE.md` (the layout block and
+the `data/` exceptions) name `clean/<scan>.ply`; the mosaic's entry in
+`app/ai/DECISIONS.md` records why the output is no longer SPZ.
+
+## Changes from revision 9
+
+- The output is `clean/<scan>.ply`, lossless, instead of
+  `source/<scan>.spz` (SPZ v3), and `SPLATS_SOURCE_DIR` is
+  `SPLATS_CLEAN_DIR`. The final run keeps `-F` and drops
+  `--spz-version 3`. SPZ was needed only while the app fetched the file; it
+  now draws the LoD trees of the mosaic's tiles, which `build-lod.sh` builds
+  from `.ply`.
+- The steps, their order, their defaults and their failure modes do not
+  change.
+- Tests: the SPZ checks become PLY ones (the format line, and every property
+  the mosaic reads, as floats); every path names `clean/` and `.ply`.
 
 ## Changes from revision 8
 
@@ -328,7 +348,7 @@ on 2026-10-22, the day it was approved.
   and the global check kept.)
 - Connectivity (`-C`), box (`-B`) or opacity cuts, SH or decimation.
 - Converting the capture's frame. (The SOG first delivered was y-up; the
-  PLYs now delivered are z-up and georeferenced, and `control-points.mjs`
-  places them from that.) Its cuts are the same on every axis, and the align
-  step moves Gaussians only within the PLY's frame, so the SPZ keeps it —
-  checked by decoding its positions.
+  PLYs now delivered are z-up and georeferenced, and the mosaic moves them
+  into one frame by that.) Its cuts are the same on every axis, and the align
+  step moves Gaussians only within the PLY's frame, so the output keeps it —
+  checked by reading its positions back.

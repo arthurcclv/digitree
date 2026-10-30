@@ -1,9 +1,9 @@
-// A scan's georeference, from its point_cloud.ply header. Shared by
-// control-points.mjs (GNSS fixes into the file's frame) and georef.mjs (the
-// header copied into georef.csv for the loader). Every refusal throws, naming
-// the scan; the caller prints it and exits. `num` is shared too, and throws
-// the same way. The rules are in
-// specs/control-points.md, step 1, and specs/georef.md.
+// A scan's georeference, from its point_cloud.ply header, and a PLY's body
+// layout, for splat-mosaic.mjs: each cleaned scan is moved into the common
+// frame by its original's offset, and read through its layout. Every refusal
+// throws, naming the scan; the caller prints it and exits. `num` is shared
+// too, and throws the same way. The rules are in specs/splat-mosaic.md,
+// *Inputs*.
 import { existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -41,10 +41,8 @@ async function plyComments(path) {
 
 // The capture's georeference: file (x, y, z) = (E, N, h) − offset, in the UTM
 // zone `epsg` names. Verified on the KZ0918 scans, where the offset is the
-// first GNSS fix to under 1 mm (specs/control-points.md). A shift or scale
-// other than the identity is refused: what it would mean is unverified.
-// `raw` keeps the header's text for each value, for a CSV that copies it as
-// written.
+// first GNSS fix to under 1 mm. A shift or scale other than the identity is
+// refused: what it would mean is unverified.
 export async function georeference(original, scan) {
   const found = CAPTURES.filter((f) => existsSync(join(original, scan, f)));
   if (found.length === 0) throw new Error(`${scan}: no ${PLY} in ${join(original, scan)}`);
@@ -57,7 +55,7 @@ export async function georeference(original, scan) {
     return num(c.get(key), `${scan}: ${PLY} comment ${key}`);
   };
   // Digits only, as the loader reads EPSG: `32651.0` is a number in range,
-  // but the row georef.mjs copies it into would be refused.
+  // but the tiles' georef.csv rows, which carry it, would be refused.
   const epsg = field('epsg');
   if (!/^\d+$/.test(c.get('epsg'))) throw new Error(`${scan}: ${PLY} has epsg ${c.get('epsg')}; it must be a whole number`);
   const north = epsg >= 32601 && epsg <= 32660;
@@ -66,8 +64,41 @@ export async function georeference(original, scan) {
     if (c.has(`shift${axis}`) && field(`shift${axis}`) !== 0) throw new Error(`${scan}: ${PLY} has shift${axis} ${c.get(`shift${axis}`)}; only 0 is supported`);
     if (c.has(`scale${axis}`) && field(`scale${axis}`) !== 1) throw new Error(`${scan}: ${PLY} has scale${axis} ${c.get(`scale${axis}`)}; only 1 is supported`);
   }
-  return {
-    epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')],
-    raw: { epsg: c.get('epsg'), offsetx: c.get('offsetx'), offsety: c.get('offsety'), offsetz: c.get('offsetz') },
-  };
+  return { epsg, zone: epsg % 100, north, offset: [field('offsetx'), field('offsety'), field('offsetz')] };
+}
+
+// A binary PLY's body layout: one vertex element of fixed-size properties,
+// little-endian. `props` maps each property to its type and byte offset in a
+// vertex; the file's size must be exactly the header plus count × stride.
+// Throws, naming `what`, on anything else.
+const PLY_TYPES = { char: 1, uchar: 1, int8: 1, uint8: 1, short: 2, ushort: 2, int16: 2, uint16: 2, int: 4, uint: 4, int32: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
+export async function layout(path, what) {
+  const fh = await open(path, 'r');
+  let head, size;
+  try {
+    size = (await fh.stat()).size;
+    head = Buffer.alloc(Math.min(size, 64 * 1024));
+    await fh.read(head, 0, head.length, 0);
+  } finally {
+    await fh.close();
+  }
+  const text = head.toString('latin1');
+  const end = text.indexOf('end_header\n');
+  if (!text.startsWith('ply') || end < 0) throw new Error(`${what}: no LF-terminated PLY header`);
+  const headerLen = end + 'end_header\n'.length;
+  const hl = text.slice(0, end).split('\n').map((l) => l.trim());
+  if (!hl.includes('format binary_little_endian 1.0')) throw new Error(`${what}: must be binary_little_endian 1.0`);
+  const elements = hl.filter((l) => l.startsWith('element '));
+  if (elements.length !== 1 || !elements[0].startsWith('element vertex ')) throw new Error(`${what}: must have exactly one element, vertex`);
+  const count = num(elements[0].split(/\s+/)[2], `${what}: vertex count`);
+  const props = new Map();
+  let stride = 0;
+  for (const l of hl.filter((x) => x.startsWith('property '))) {
+    const [, type, name] = l.split(/\s+/);
+    if (!PLY_TYPES[type]) throw new Error(`${what}: property '${l}' is not supported`);
+    props.set(name, { type, offset: stride });
+    stride += PLY_TYPES[type];
+  }
+  if (size !== headerLen + count * stride) throw new Error(`${what}: is ${size} bytes; its header says ${headerLen + count * stride}`);
+  return { headerLen, count, stride, props };
 }
