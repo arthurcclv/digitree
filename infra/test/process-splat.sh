@@ -106,6 +106,16 @@ splat-transform -q --no-tty -w "$work/gen/mirror.mjs" "$SPLATS_ORIGINAL_DIR/mirr
 for ext in "${formats[@]}"; do
   splat-transform -q --no-tty -w "$work/gen/scene.mjs" "$SPLATS_ORIGINAL_DIR/as-$ext/point_cloud.$ext"
 done
+# A delivered PLY carries a georeference, and the align step refuses one
+# without (splat-align.md revision 5); splat-transform writes none, so it is
+# added. It has no `comment source`, so the step skips it.
+node -e '
+  const fs = require("fs"), p = process.argv[1], buf = fs.readFileSync(p);
+  const end = buf.indexOf("end_header\n") + "end_header\n".length;
+  const head = buf.subarray(0, end).toString("latin1")
+    .replace(/^(format [^\n]*\n)/m, "$1comment offsetx 0\ncomment offsety 0\ncomment offsetz 0\ncomment epsg 32651\n");
+  fs.writeFileSync(p, Buffer.concat([Buffer.from(head, "latin1"), buf.subarray(end)]));' \
+  -- "$SPLATS_ORIGINAL_DIR/as-ply/point_cloud.ply"
 sed 's/^const only = Infinity;/const only = 1;/' "$work/gen/scene.mjs" > "$work/gen/main.mjs"
 splat-transform -q --no-tty -w "$work/gen/main.mjs" "$SPLATS_ORIGINAL_DIR/both/point_cloud.ply"
 cp "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog" "$SPLATS_ORIGINAL_DIR/both/"
@@ -205,6 +215,9 @@ case_ "the align step"
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/aligned" '{"shift":[0.4,0.3,0],"turnDeg":0.3}'
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/unreliable" '{"lidar":"random"}'
 node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/nomap" '{"lidar":"random","omit":["map_config.json","gnss.csv"]}'
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/nometa" '{"omit":["metadata.json"]}'
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/drone" '{"source":"Drone","omit":["gnss.csv","poses.csv","octree.bin","metadata.json","map_config.json"]}'
+node test/splat-align-scene.mjs -- "$SPLATS_ORIGINAL_DIR/l3" '{"l3":true,"shift":[0.4,0.3,0],"turnDeg":0.3}'
 status_of() { node -e 'console.log(require(process.argv[1]).status)' -- "$SPLATS_CLEAN_DIR/$1.align.json"; }
 if log=$(process aligned); then
   expect_contains "aligns a scan with every file" "$log" "align corrected: moved up to"
@@ -239,6 +252,19 @@ fi
 log=$(process nomap)
 expect_contains "skips a scan missing files, naming them" "$log" "align skipped: no gnss.csv, map_config.json"
 expect "  and records it" "$(status_of nomap)" skipped
+log=$(process nometa)
+expect_contains "skips an L2 Pro scan without metadata.json" "$log" "align skipped: no metadata.json"
+if log=$(process drone); then
+  expect_contains "cleans a Drone scan, skipping align" "$log" "align skipped: no scanner module for source 'Drone'"
+  expect "  and records it" "$(status_of drone)" skipped
+else
+  bad "cleans a Drone scan, skipping align" "$log"
+fi
+if log=$(process l3); then
+  expect_contains "aligns an L3 scan (metadata.oct)" "$log" "align corrected: moved up to"
+else
+  bad "aligns an L3 scan (metadata.oct)" "$log"
+fi
 expect "a failed align serves what a skipped one does" "$(sum "$SPLATS_CLEAN_DIR/unreliable.ply")" "$(sum "$SPLATS_CLEAN_DIR/nomap.ply")"
 
 case_ "run from outside infra/"

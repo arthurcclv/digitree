@@ -1,6 +1,18 @@
 # Spec — `splat-align.mjs`: correct a capture's placement against RTK and lidar
 
-Status: **revision 2 — approved 2026-10-29**, with `specs/splat-mosaic.md`:
+Status: **revision 5 — approved and implemented 2026-11-03**: the PLY's
+header is checked before the skip is decided, so a PLY that is present but
+wrong is refused whatever its source, and a module's file is missing when it
+is not a regular file; see *Changes in revision 5*. Revision 4 — approved and
+implemented 2026-11-03: what a scanner
+delivers is read by that scanner's module in `scripts/scanners/`, chosen by
+the PLY's `comment source` (`specs/scanners.md`); the step decides its own
+skips (exit 5) and records `scanner` in `.align.json`; see *Changes in
+revision 4*. Revision 3 — approved and implemented 2026-11-02: the step also
+reads the new scanner's delivery (Lixel L3, first KZ1012-142213): a `metadata.oct` in
+place of `metadata.json`, lidar in absolute UTM, a `poses.csv` with `#`
+lines, and an `octree.bin` of any size; see *Changes in revision 3*.
+Revision 2 — approved 2026-10-29, with `specs/splat-mosaic.md`:
 the step is unchanged, but its scan is written to `clean/<scan>.ply` and its
 report to `clean/<scan>.align.json`, and what reads its frame downstream is
 the mosaic, not the control-point fit; see *Changes in revision 2*. Revision 1
@@ -31,22 +43,41 @@ node scripts/splat-align.mjs -- <scan dir> <out.ply> <out.json>
 
 ## Inputs
 
-All read from `original/<scan>/`, which stays read-only.
+All read from `original/<scan>/`, which stays read-only: `point_cloud.ply`,
+then the rest through the module for the scanner its `comment source` names
+(`specs/scanners.md`, which lists the modules and which scans each reads).
+The step itself knows no scanner. The files the three modules read, as
+delivered today:
 
 | file | used for |
 | --- | --- |
 | `point_cloud.ply` | the Gaussians; header `epsg`, `offsetx/y/z` |
 | `gnss.csv` | RTK fixes; only `status == 4` |
-| `poses.csv` | the IMU trajectory (SLAM frame), `timestamp,x,y,z,qx,qy,qz,qw`, no header |
-| `octree.bin` + `metadata.json` | the lidar preview cloud, Potree 2.0, in the poses' frame |
-| `map_config.json` | `rtk_external_param` only: the antenna's lever arm in the IMU frame |
+| `poses.csv` | the IMU trajectory, `timestamp,x,y,z,qx,qy,qz,qw`; lines starting with `#` are not poses (`specs/scanners.md`) |
+| `octree.bin` + `metadata.json` **or** `metadata.oct` | the lidar cloud, Potree DEFAULT records (below) |
+| `map_config.json` | `rtk_external_param` only: the antenna's lever arm in the IMU frame. Its `epsg` and `offset_xyz` are not read (KZ1012-142213's say EPSG:3826, TWD97, though its PLY is in 32651: the lever arm is in the IMU's frame and needs neither) |
 
-**When the step is skipped.** `process-splat.sh` skips alignment, prints the
-reason (`align skipped: point_cloud.sog is not a point_cloud.ply`, `align
-skipped: no gnss.csv, map_config.json`), and runs the cuts on the original as
-before, when the capture is not `point_cloud.ply` or any of the five other
-files is absent. Seven of the 22
-scans now delivered have no `map_config.json` (KY0917A, KZ0918-135904,
+The fit in step 1 finds the poses' frame from RTK whatever it is, so the
+poses need no frame of their own; the lidar must arrive in the poses' frame,
+and carrying it there is the scanner module's job (`specs/scanners.md`,
+*What each scanner delivers*). `octree.bin` is read as a flat array of
+records: every Potree node is a whole number of records, so a record never
+straddles two nodes (the hierarchy is not read). Only the sampled records are read from it, so its
+size does not matter (*Memory and time*).
+
+**When the step is skipped.** The step reads and checks the PLY's header
+first — a PLY that is present but wrong (below) is refused, exit 1, whatever
+its source, and only the header is read before the skip is decided. It then
+reads the header's `comment source`, finds its module, and checks the
+module's `files`; a file is missing when it is not a regular file (a
+directory under its name is missing too). With no `comment source`, no
+module for it, or a file missing, it writes the skipped `.align.json` and
+exits 5; `process-splat.sh` prints the reason (`align skipped: no scanner
+module for source 'Drone'`, `align skipped: no gnss.csv, map_config.json`)
+and runs the cuts on the original as before. `process-splat.sh` itself still
+skips a capture that is not `point_cloud.ply` (`align skipped:
+point_cloud.sog is not a point_cloud.ply`), as the step reads only PLY. Seven of
+the 23 scanner scans now delivered have no `map_config.json` (KY0917A, KZ0918-135904,
 -140755, -143613, -153127, KZ0918161007, KZ0918162445); they are served
 unaligned, in the same frame as the aligned ones, just uncorrected.
 
@@ -55,7 +86,9 @@ a PLY that is not `binary_little_endian 1.0`, or lacks `epsg`, `offsetx/y/z`,
 `x y z`, `rot_0..3`, `scale_0..2` or `opacity`; an `epsg` outside WGS 84 /
 UTM (as `ply-header.mjs` refuses it); a Potree `encoding` other than
 `DEFAULT`; a `map_config.json` without a 3-number `rtk_external_param`; a
-`gnss.csv` without the expected header.
+`gnss.csv` without the expected header; an L3 `poses.csv` that has no
+`#OFFSET [x,y,z]` line; an `#OFFSET` that is not
+three numbers; an `octree.bin` that is not a whole number of records.
 
 ## What it does
 
@@ -123,6 +156,12 @@ The 15 of 22 that have every file, as of 2026-10-24 (the other 7 lack
 | `fail`, RTK p95 just over 0.10 m | KZ0918-090946 (0.107), KZ0918-132221 (0.1004), KZ0918153456 (0.112), KZ0917-06 (0.172) |
 | `fail`, ICP | KZ0918-101007-1 (0.20) and -2 (0.39): one lidar for a split scan; KZ0918-075047 (0.31), KZ0918090721 (0.33), KZ0918160415 (0.40) — all three K2, whose RTK fit is also poor (p95 0.37–1.1 m) |
 
+KZ1012-142213 (Lixel L3, the 23rd, delivered later with its own
+`map_config.json`), measured with revision 3: **`corrected`, 0.283 m, 0.054°**
+— 5,279 RTK pairs, 385 false fixes dropped, p50 0.036 m and p95 0.095 m, just
+inside the tolerance; ICP inliers 0.58. Its correction is mostly the 0.054°
+tilt, which moves a corner 300 m out by ~0.28 m; the translation is 1 cm.
+
 So the step corrects 6 scans and leaves 16 as they were. The four RTK
 failures by a few millimetres to centimetres are the strict 0.10 m p95 doing
 its job; whether that threshold is right for this scanner is a question for
@@ -169,16 +208,17 @@ does not, and nothing downstream has to change:
 
   A `fail` is written the same way, with `correction_applied: false` and a
   `reason` (`"ICP inliers 0.22 <= 0.4"`, `"RTK p95 0.14 m > 0.10 m"`). A
-  scan skipped for a missing file gets `{"scan": …, "status": "skipped",
-  "reason": "no map_config.json"}`. So `clean/` always says what was done to
+  scan skipped gets `{"scan": …, "scanner": …, "status": "skipped",
+  "reason": "no map_config.json"}`, `scanner` null when no module was
+  found. Every report has `"scanner"` after `"scan"`: the module's `name`. So `clean/` always says what was done to
   each `.ply`. No `created`
   timestamp: re-running must give the same file.
 - On stdout, one JSON line for `process-splat.sh` (`status`, the two RTK
   residuals, `correction_max_m`, `correction_rot_deg`, `correction_applied`),
   as `splat-density-cut.mjs` reports.
 - Exit codes: `0` aligned, `.ply` written; `4` validation `fail`, no `.ply`
-  (the `.json` is still written); anything else is an error and fails the
-  scan.
+  (the `.json` is still written); `5` skipped, no `.ply` (the `.json` is
+  still written); anything else is an error and fails the scan.
 
 Nothing reads the `.align.json` but people. It is not served: the `files`
 service serves `tiles/`, not `clean/`.
@@ -197,6 +237,19 @@ Gaussian and cost ~2,200 nodes each. Without the 0.2 m bound on the later
 rounds it took 5.5 min, and with plane pruning alone 8. That is under the density step's 2.6 GB, so
 the script's peak does not rise. End to end, `process-splat.sh` on KY0917B
 took 2 min 13 s.
+
+**`octree.bin` is never read whole** (revision 3). The sample's record
+indices are drawn first — the same seeded partial Fisher–Yates as before, but
+keeping only the swapped entries in a `Map` instead of an array of every
+index, so it costs O(k), not O(n), and draws exactly the indices it drew
+before — then sorted, and each record read by its byte offset. KZ1012-142213's
+9.0 GB file (450.7M records; an index array alone would be 1.8 GB) reads
+300,000 records; the L2 Pro and K2 scans draw the same samples as revision 2, so their
+`.align.json` and `.ply` are byte-identical. The Gaussians' sample uses the
+same draw. The PLY is still read whole: KZ1012-142213's is 2.56 GB (37.6M
+Gaussians), within Node's buffer limit. Measured: the step takes 51 s there and
+peaks at 2.8 GB. KY0917B's `.align.json` was re-made with revision 3 and is
+byte-identical to revision 2's.
 
 ## Changes to `process-splat.md` (its revision 8)
 
@@ -233,7 +286,86 @@ Revision 1's changes, kept as history. `control_points.csv`,
   and the fit, which are removed (`specs/splat-mosaic.md`).
 - The step, its rules and its tests do not change.
 
+## Changes in revision 5
+
+- The PLY's header — everything *Inputs* refuses a PLY for, its size against
+  its header included — is checked before the scanner is looked up.
+  Revision 4 looked the scanner up first, so a broken PLY without `comment
+  source`, or from a scanner with no module, was skipped (exit 5) instead of
+  refused (exit 1). The body is read only once the step is not skipped.
+- A module's file is missing when it is not a regular file, as
+  `process-splat.sh`'s `[ -f ]` had it before revision 4; revision 4 counted
+  a directory under the file's name as present, and failed on reading it.
+- No delivered scan's outcome changes: every one has a valid header (the
+  drone capture's too, so it is still skipped). `test/process-splat.sh`'s
+  `as-ply` fixture, which splat-transform writes with no georeference, gains
+  one: revision 4 skipped it before reading its header.
+
+## Changes in revision 4
+
+- The scanner-specific reading moves to `scripts/scanners/` (`xgrids.mjs`
+  shared; `l2pro.mjs`, `k2.mjs`, `lixel-l3.mjs`; `index.mjs` the registry),
+  behind the interface in `specs/scanners.md`. `splat-align.mjs` keeps the
+  PLY, the fit, the ICP, the apply and the validation.
+- The module is chosen by the PLY's `comment source`, not by which metadata
+  file is there; so revision 3's "both `metadata.json` and `metadata.oct` is
+  refused" is dropped — the L3 module reads `metadata.oct` and ignores a
+  stray `metadata.json`.
+- The skip is the step's (exit 5), not `process-splat.sh`'s file check. New
+  skips: a source no module claims (the drone capture,
+  `air_force_headquarter_ariel`), and a PLY without `comment source`.
+- `.align.json` gains `"scanner"`. KY0917B's and KZ1012-142213's reports were
+  re-made with revision 4 and are revision 3's but for that line.
+- "K1/K2" in revision 3 was wrong: the scanners are the L2 Pro and the K2.
+  Corrected in place throughout.
+
+## Changes in revision 3
+
+- A scan may carry `metadata.oct` (Potree 2.1, absolute UTM) instead of
+  `metadata.json`; its lidar is carried into the poses' frame by the
+  `#OFFSET` line of `poses.csv`. Exactly one of the two must be there.
+- `poses.csv` lines starting with `#` are skipped; `#OFFSET [x,y,z]` is read
+  when present, and required with `metadata.oct`.
+- `octree.bin` is sampled by offset instead of read whole, so a file over
+  2 GB works; the draws are those of revision 2.
+- `process-splat.sh` checks for `metadata.json` or `metadata.oct`, and names
+  both in the skip reason.
+- Nothing else changes: the fit, the ICP, the thresholds, the output.
+
+Questions this revision does not answer, and leaves as they are: whether
+0.10 m is the right RTK p95 for the L3 (only 23% of its fixes are status 4);
+and `metadata.oct`'s `hierarchy.bin` and `voxelMap.bin`, which are not
+delivered locally and not needed.
+
 ## Tests
+
+Added in revision 3 — `test/splat-align-scene.mjs` gains an `l3` option
+that writes the same scene the L3 way: `poses.csv` with the three `#` lines
+and positions relative to `#OFFSET` (the PLY's offset), and `metadata.oct`
+with absolute positions and a `gps-time` attribute, in 20-byte records:
+
+- **L3, known displacement:** the same 0.5 m / 0.3° case gives `corrected`
+  and undoes it within 1 cm.
+- **L3, no displacement:** `pass`, under 1 cm.
+- **Lidar not carried:** the same scene with the lidar left absolute, as if
+  `#OFFSET` were ignored, is a `fail` — guarding the subtraction.
+- **Present but wrong:** both metadata files; `metadata.oct` with no
+  `#OFFSET`; an `#OFFSET` of two numbers — each refused, naming the file.
+
+Added in revision 5:
+
+- **A broken PLY with no source:** a PLY without `epsg` and without `comment
+  source` is refused (exit 1, naming `epsg`), not skipped.
+- **A directory for a file:** an L2 Pro scene whose `gnss.csv` is a
+  directory is skipped (exit 5), `no gnss.csv`.
+- **Sampling unchanged:** the existing cases' `.align.json` are
+  byte-identical to revision 2's (recorded in the test as checksums).
+- *In `process-splat.sh`:* a scan with neither metadata file is skipped,
+  `no metadata.json or metadata.oct`; an L3 scan is aligned.
+- Not tested: a file over 2 GB. The offset reads are the only path, so every
+  case exercises them; the size is checked by hand on KZ1012-142213.
+
+Revision 1 and 2's cases:
 
 `test/splat-align.sh`, run by `test/run.sh` and runnable on its own; it needs
 only `node`. Its scans are written in a scratch directory by
@@ -298,6 +430,13 @@ flip between `pass` and `corrected` with the seed, in `align.py` as here, and
 either way the correction is applied.
 
 ## Docs
+
+Revision 3: `infra/README.md` (the align section's file list), `infra/CLAUDE.md`
+(the "poses.csv is in a frame of its own" sentence gains "on the L2 Pro and K2; the
+L3's are in the PLY's"), `specs/process-splat.md` (*Where files live* and
+step 0 name `metadata.json` or `metadata.oct`), and a decision entry in
+`app/ai/DECISIONS.md`: the L3 lidar is placed by the poses' `#OFFSET`, and
+`octree.bin` is sampled by offset.
 
 Revision 1's doc changes, kept as history: the `source/` paths and
 `specs/control-points.md` are revision 2's `clean/` and gone, respectively.

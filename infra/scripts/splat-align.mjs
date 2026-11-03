@@ -6,19 +6,22 @@
 //
 //   node scripts/splat-align.mjs -- <scan dir> <out.ply> <out.json>
 //
-// Reads <scan dir>/point_cloud.ply, gnss.csv, poses.csv, octree.bin,
-// metadata.json and map_config.json. Prints one JSON line. Exits 0 having
-// written both outputs; 4 when validation fails, having written <out.json>
-// but no <out.ply>; 1 on bad input. The rules and their numbers are in
-// specs/splat-align.md.
-import { open, readFile, stat, writeFile } from 'node:fs/promises';
+// Reads <scan dir>/point_cloud.ply, and the rest of the scan through the
+// module for the scanner its `comment source` names (scripts/scanners/,
+// specs/scanners.md). Prints one JSON line. Exits 0 having written both
+// outputs; 4 when validation fails, having written <out.json> but no
+// <out.ply>; 5 when there is nothing to align by (no module for the source,
+// or a file it reads is missing), having written <out.json>; 1 on bad input.
+// The rules and their numbers are in specs/splat-align.md.
+import { statSync } from 'node:fs';
+import { open, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { scannerFor } from './scanners/index.mjs';
+import { num, refuse, ScanFileError } from './scanners/xgrids.mjs';
 import { utm, utmZone } from './utm.mjs';
 
-const RTK_FIXED = 4;
 const TOLERANCE_M = 0.10;
 const MATCH_TOL_S = 0.05; // half the GNSS interval
-const GNSS_HEADER = '#timestamp,status,latitude,longitude,altitude,';
 const GAUSSIAN_SAMPLE = 3_000_000;
 const LIDAR_SAMPLE = 300_000;
 const ICP_ITERATIONS = 30;
@@ -30,7 +33,6 @@ const ICP_ITERATIONS = 30;
 // that far off fails validation either way.
 const NN_CAP_M = 20;
 const PLY_TYPES = { char: 1, uchar: 1, short: 2, ushort: 2, int: 4, uint: 4, float: 4, double: 8, int8: 1, uint8: 1, int16: 2, uint16: 2, int32: 4, uint32: 4, float32: 4, float64: 8 };
-const POTREE_TYPES = { int8: 1, uint8: 1, int16: 2, uint16: 2, int32: 4, uint32: 4, int64: 8, uint64: 8, float: 4, double: 8 };
 
 const args = process.argv.slice(2);
 if (args[0] === '--') args.shift();
@@ -40,12 +42,6 @@ if (!outJson) {
   process.exit(2);
 }
 const scan = scanDir.replace(/\/+$/, '').split('/').pop();
-const fail = (file, msg) => { console.error(`error: ${scan}: ${file}: ${msg}`); process.exit(1); };
-const num = (raw, file, what) => {
-  const v = Number(raw);
-  if (raw === undefined || String(raw).trim() === '' || !Number.isFinite(v)) fail(file, `${what}: '${raw}' is not a number`);
-  return v;
-};
 
 // ---------- small linear algebra (row-major 3×3) ----------
 
@@ -191,16 +187,19 @@ function rng(seed) {
 }
 
 // k distinct indices of [0, n), by a partial Fisher–Yates shuffle; all of
-// them, in order, when k >= n.
+// them, in order, when k >= n. Only the swapped slots are kept, in a Map, so
+// it costs O(k) whatever n is (an L3 octree.bin has 450M records), and draws
+// exactly what shuffling a full array of indices would.
 function sample(random, n, k) {
-  const idx = new Uint32Array(n);
-  for (let i = 0; i < n; i++) idx[i] = i;
-  if (k >= n) return idx;
+  if (k >= n) return Uint32Array.from({ length: n }, (_, i) => i);
+  const swapped = new Map(), at = (i) => swapped.get(i) ?? i;
+  const out = new Uint32Array(k);
   for (let i = 0; i < k; i++) {
     const j = i + Math.floor(random() * (n - i));
-    const tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp;
+    out[i] = at(j);
+    swapped.set(j, at(i));
   }
-  return idx.subarray(0, k);
+  return out;
 }
 
 // ---------- nearest neighbours ----------
@@ -302,7 +301,10 @@ class KdTree {
 
 // ---------- inputs ----------
 
-async function readPly(path) {
+// The PLY's header, checked, without its body: what the step needs to decide
+// a skip, and to read the body after. `source` is the header's `comment
+// source` (the rest of the line), or null: which scanner made the scan.
+async function readPlyHeader(path) {
   const file = 'point_cloud.ply';
   const { size } = await stat(path);
   const fh = await open(path, 'r');
@@ -311,124 +313,67 @@ async function readPly(path) {
     await fh.read(head, 0, head.length, 0);
     const text = head.toString('latin1');
     const end = text.indexOf('end_header\n');
-    if (!text.startsWith('ply\n') || end < 0) fail(file, 'not a PLY with an LF header');
+    if (!text.startsWith('ply\n') || end < 0) refuse(file, 'not a PLY with an LF header');
     const headerLen = end + 'end_header\n'.length;
     const lines = text.slice(0, end).split('\n').filter((l) => l !== '');
-    if (!lines.includes('format binary_little_endian 1.0')) fail(file, 'only binary_little_endian 1.0 is supported');
+    if (!lines.includes('format binary_little_endian 1.0')) refuse(file, 'only binary_little_endian 1.0 is supported');
     const elements = lines.filter((l) => l.startsWith('element '));
-    if (elements.length !== 1 || !elements[0].startsWith('element vertex ')) fail(file, 'must have exactly one element, vertex');
+    if (elements.length !== 1 || !elements[0].startsWith('element vertex ')) refuse(file, 'must have exactly one element, vertex');
     const count = num(elements[0].split(' ')[2], file, 'vertex count');
     const props = new Map();
     let stride = 0;
     for (const l of lines.filter((x) => x.startsWith('property '))) {
       const [, type, name] = l.split(' ');
-      if (!PLY_TYPES[type]) fail(file, `property '${l}' is not supported`);
+      if (!PLY_TYPES[type]) refuse(file, `property '${l}' is not supported`);
       props.set(name, { type, offset: stride });
       stride += PLY_TYPES[type];
     }
     for (const p of ['x', 'y', 'z', 'opacity', 'scale_0', 'scale_1', 'scale_2', 'rot_0', 'rot_1', 'rot_2', 'rot_3']) {
-      if (!props.has(p)) fail(file, `has no property ${p}`);
-      if (!['float', 'float32'].includes(props.get(p).type)) fail(file, `property ${p} must be float`);
+      if (!props.has(p)) refuse(file, `has no property ${p}`);
+      if (!['float', 'float32'].includes(props.get(p).type)) refuse(file, `property ${p} must be float`);
     }
     const normals = ['nx', 'ny', 'nz'].every((p) => ['float', 'float32'].includes(props.get(p)?.type));
-    if (size !== headerLen + count * stride) fail(file, `is ${size} bytes; its header says ${headerLen + count * stride}`);
+    if (size !== headerLen + count * stride) refuse(file, `is ${size} bytes; its header says ${headerLen + count * stride}`);
     const comments = new Map();
     for (const l of lines) {
       const [kw, key, value, ...rest] = l.trim().split(/\s+/);
       if (kw === 'comment' && key && value !== undefined && rest.length === 0) comments.set(key, value);
     }
     const field = (key) => {
-      if (!comments.has(key)) fail(file, `has no 'comment ${key}' georeference`);
+      if (!comments.has(key)) refuse(file, `has no 'comment ${key}' georeference`);
       return num(comments.get(key), file, `comment ${key}`);
     };
     const epsg = field('epsg');
     const zone = utmZone(epsg);
-    if (!zone) fail(file, `is in EPSG:${epsg}; only WGS 84 / UTM (32601–32660, 32701–32760) is supported`);
+    if (!zone) refuse(file, `is in EPSG:${epsg}; only WGS 84 / UTM (32601–32660, 32701–32760) is supported`);
     for (const axis of 'xyz') {
-      if (comments.has(`shift${axis}`) && field(`shift${axis}`) !== 0) fail(file, `has shift${axis} ${comments.get(`shift${axis}`)}; only 0 is supported`);
-      if (comments.has(`scale${axis}`) && field(`scale${axis}`) !== 1) fail(file, `has scale${axis} ${comments.get(`scale${axis}`)}; only 1 is supported`);
+      if (comments.has(`shift${axis}`) && field(`shift${axis}`) !== 0) refuse(file, `has shift${axis} ${comments.get(`shift${axis}`)}; only 0 is supported`);
+      if (comments.has(`scale${axis}`) && field(`scale${axis}`) !== 1) refuse(file, `has scale${axis} ${comments.get(`scale${axis}`)}; only 1 is supported`);
     }
     const offset = [field('offsetx'), field('offsety'), field('offsetz')];
-    // Read whole, in chunks: readFile stops at 2 GB, and the body is edited in place.
-    const body = Buffer.alloc(count * stride);
-    for (let pos = 0; pos < body.length;) {
-      const { bytesRead } = await fh.read(body, pos, Math.min(256 << 20, body.length - pos), headerLen + pos);
-      if (bytesRead === 0) fail(file, 'ended early');
-      pos += bytesRead;
-    }
-    return { lines, count, stride, props, normals, epsg, ...zone, offset, body };
+    const sourceLine = lines.find((l) => /^comment source\s/.test(l));
+    const source = sourceLine ? sourceLine.replace(/^comment source\s+/, '').trim() || null : null;
+    return { lines, headerLen, count, stride, props, normals, epsg, ...zone, offset, source };
   } finally {
     await fh.close();
   }
 }
 
-const textLines = (text) => text.split(/\r?\n/).filter((l) => l.trim() !== '');
-
-// gnss.csv: every fix's timestamp and status, sorted by time; numbers only for
-// RTK fixes (a fix without a solution writes nan).
-async function readGnss(path) {
-  const file = 'gnss.csv';
-  const [head, ...rows] = textLines(await readFile(path, 'utf8'));
-  if (!head?.startsWith(GNSS_HEADER)) fail(file, `must start with the header ${GNSS_HEADER}…`);
-  const fixes = rows.map((l, i) => {
-    const f = l.split(',');
-    const what = `line ${i + 2}`;
-    const status = num(f[1], file, what);
-    const fix = { t: num(f[0], file, what), status };
-    if (status === RTK_FIXED) Object.assign(fix, { lat: num(f[2], file, what), lon: num(f[3], file, what), h: num(f[4], file, what) });
-    return fix;
-  });
-  return fixes.sort((a, b) => a.t - b.t);
-}
-
-// poses.csv: timestamp,x,y,z,qx,qy,qz,qw, no header, sorted by time.
-async function readPoses(path) {
-  const file = 'poses.csv';
-  return textLines(await readFile(path, 'utf8')).map((l, i) => {
-    const f = l.split(',');
-    if (f.length < 8) fail(file, `line ${i + 1} has ${f.length} columns; 8 are needed`);
-    return f.slice(0, 8).map((v) => num(v, file, `line ${i + 1}`));
-  }).sort((a, b) => a[0] - b[0]);
-}
-
-async function readLeverArm(path) {
-  const file = 'map_config.json';
-  let cfg;
-  try { cfg = JSON.parse(await readFile(path, 'utf8')); } catch (e) { fail(file, `is not JSON: ${e.message}`); }
-  const arm = cfg?.rtk_external_param;
-  if (!Array.isArray(arm) || arm.length !== 3) fail(file, 'has no 3-number rtk_external_param');
-  return arm.map((v) => num(v, file, 'rtk_external_param'));
-}
-
-// The lidar preview: octree.bin is a flat array of Potree 2.0 DEFAULT records;
-// `position` is int32 × 3, times `scale` plus `offset`, in the poses' frame.
-async function readLidar(dir, random) {
-  let meta;
-  try { meta = JSON.parse(await readFile(join(dir, 'metadata.json'), 'utf8')); } catch (e) { fail('metadata.json', `is not JSON: ${e.message}`); }
-  if (meta.encoding !== 'DEFAULT') fail('metadata.json', `encoding is '${meta.encoding}'; only DEFAULT is supported`);
-  let stride = 0, posOffset = -1;
-  for (const a of meta.attributes ?? []) {
-    const size = POTREE_TYPES[a.type];
-    if (!size) fail('metadata.json', `attribute ${a.name} has unsupported type ${a.type}`);
-    if (a.name === 'position') {
-      if (a.type !== 'int32' || a.numElements !== 3) fail('metadata.json', 'position must be int32 × 3');
-      posOffset = stride;
+// The PLY's body, read whole, in chunks: readFile stops at 2 GB, and the body
+// is edited in place.
+async function readPlyBody(path, { headerLen, count, stride }) {
+  const fh = await open(path, 'r');
+  try {
+    const body = Buffer.alloc(count * stride);
+    for (let pos = 0; pos < body.length;) {
+      const { bytesRead } = await fh.read(body, pos, Math.min(256 << 20, body.length - pos), headerLen + pos);
+      if (bytesRead === 0) refuse('point_cloud.ply', 'ended early');
+      pos += bytesRead;
     }
-    stride += size * a.numElements;
+    return body;
+  } finally {
+    await fh.close();
   }
-  if (posOffset < 0) fail('metadata.json', 'has no position attribute');
-  const scale = meta.scale, offset = meta.offset;
-  if (![scale, offset].every((v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite))) fail('metadata.json', 'needs 3-number scale and offset');
-  const buf = await readFile(join(dir, 'octree.bin'));
-  if (buf.length % stride !== 0) fail('octree.bin', `is ${buf.length} bytes, not a whole number of ${stride}-byte records`);
-  const n = buf.length / stride;
-  if (n === 0) fail('octree.bin', 'is empty');
-  const pick = sample(random, n, LIDAR_SAMPLE);
-  const pts = new Float64Array(3 * pick.length);
-  pick.forEach((r, i) => {
-    for (let k = 0; k < 3; k++) pts[3 * i + k] = buf.readInt32LE(r * stride + posOffset + 4 * k) * scale[k] + offset[k];
-  });
-  return pts;
 }
 
 // ---------- the steps ----------
@@ -452,7 +397,7 @@ function fitPosesToPly(gnss, poses, leverArm, ply) {
   const antenna = [], fix = [];
   poses.forEach((p, i) => {
     const g = match[i] >= 0 ? gnss[match[i]] : null;
-    if (g?.status !== RTK_FIXED) return;
+    if (!g?.fixed) return;
     const [E, N] = utm(g.lat, g.lon, ply.zone, ply.north);
     fix.push(E - ply.offset[0], N - ply.offset[1], g.h - ply.offset[2]);
     const arm = rotateByQuat(p[4], p[5], p[6], p[7], leverArm);
@@ -508,12 +453,39 @@ function icp(src, tree) {
   return { R, t, d: tree.query(cur).d };
 }
 
-const ply = await readPly(join(scanDir, 'point_cloud.ply'));
-const [gnss, poses, leverArm] = await Promise.all([
-  readGnss(join(scanDir, 'gnss.csv')),
-  readPoses(join(scanDir, 'poses.csv')),
-  readLeverArm(join(scanDir, 'map_config.json')),
-]);
+// A file that is there but wrong — the PLY, or one a scanner module reads —
+// throws ScanFileError: printed as `error: <scan>: <file>: <message>`, exit 1.
+const exitOnBadFile = async (f) => {
+  try {
+    return await f();
+  } catch (e) {
+    if (!(e instanceof ScanFileError)) throw e;
+    console.error(`error: ${scan}: ${e.file}: ${e.message}`);
+    process.exit(1);
+  }
+};
+
+// The PLY's header first: one present but wrong is refused whatever its
+// source. Then which scanner made the scan; with no module for it, or a file
+// it reads missing (not a regular file), there is nothing to align by:
+// skipped, exit 5.
+const plyPath = join(scanDir, 'point_cloud.ply');
+const plyHeader = await exitOnBadFile(() => readPlyHeader(plyPath));
+const { source } = plyHeader;
+const scanner = source === null ? null : scannerFor(source);
+const isFile = (f) => { try { return statSync(join(scanDir, f)).isFile(); } catch { return false; } };
+const missing = scanner ? scanner.files.filter((f) => !isFile(f)) : [];
+const skipReason = source === null ? "point_cloud.ply has no 'comment source'"
+  : !scanner ? `no scanner module for source '${source}'`
+    : missing.length ? `no ${missing.join(', ')}` : null;
+if (skipReason) {
+  await writeFile(outJson, JSON.stringify({ scan, scanner: scanner?.name ?? null, status: 'skipped', reason: skipReason }, null, 2) + '\n');
+  console.log(JSON.stringify({ status: 'skipped', reason: skipReason }));
+  process.exit(5);
+}
+
+const ply = { ...plyHeader, body: await exitOnBadFile(() => readPlyBody(plyPath, plyHeader)) };
+const { gnss, poses, leverArm, lidar: sampleLidar } = await exitOnBadFile(() => scanner.read(scanDir));
 const random = rng(0); // per scan: a re-run draws the same samples
 
 const { body, stride, props, count } = ply;
@@ -530,7 +502,9 @@ for (const i of pick) {
     && Math.exp(Math.max(f32(i, 'scale_0'), f32(i, 'scale_1'), f32(i, 'scale_2'))) < 0.3;
   if (solid) target.push(f32(i, 'x'), f32(i, 'y'), f32(i, 'z'));
 }
-const lidar = await readLidar(scanDir, random);
+// After the Gaussians' sample, from the same stream: the draws stay what
+// they always were.
+const lidar = await exitOnBadFile(() => sampleLidar((n) => sample(random, n, LIDAR_SAMPLE)));
 
 let reason = rtk.reason ?? null;
 let R = IDENTITY, t = [0, 0, 0], nnBefore = [NaN], nnAfter = [NaN], inliers = 0;
@@ -570,6 +544,7 @@ const applied = status !== 'fail';
 const r6 = (v) => (Number.isFinite(v) ? Math.round(v * 1e6) / 1e6 : null);
 const report = {
   scan,
+  scanner: scanner.name,
   status,
   ...(reason ? { reason } : {}),
   tolerance_m: TOLERANCE_M,

@@ -6,6 +6,65 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-03 — splat-align reads each scanner through its own module
+
+**Decision.** What a scanner delivers is read by one module per scanner in
+`infra/scripts/scanners/` (`l2pro.mjs`, `k2.mjs`, `lixel-l3.mjs`, sharing
+`xgrids.mjs`), behind a fixed interface (`name`, `sources`, `files`,
+`read(dir)` → gnss, poses, lever arm, `lidar(pick)` in the poses' frame). The
+module is chosen by the PLY's `comment source`; a source with no module (the
+drone capture) is skipped, not refused. `splat-align.mjs` keeps the fit and
+knows no scanner by name, and decides its own skips (exit 5) — after
+checking the PLY's header, so a broken PLY is refused whatever its source.
+`infra/specs/scanners.md` revision 2, `splat-align.md` revision 5,
+`process-splat.md` revision 12.
+
+**Why.** Supporting the L3 (2026-11-02) put L3 branches in the generic code;
+a next scanner would have added more. The header names the scanner, which
+the files present do not reliably do: two scanners can deliver one file name
+in different frames. K2 has its own module, though it reads as the L2 Pro
+does, so either can change alone.
+
+**Rules out.** Choosing the module by the files present, or by an override
+file in `original/`; per-scanner RTK or ICP thresholds (one rule for all, for
+now); swapping the registry by an environment variable.
+
+**Revisit if** a scanner's PLY carries no `comment source`, or one source
+covers two deliveries that must be read differently.
+
+---
+
+## 2026-11-02 — splat-align reads the Lixel L3: its lidar placed by the poses' `#OFFSET`
+
+**Decision.** `splat-align.mjs` accepts a scan's lidar metadata as
+`metadata.oct` (Potree 2.1, the L3's) as well as `metadata.json` (Potree 2.0,
+the L2 Pro's and K2's), exactly one of them (*superseded in part*
+2026-11-03: the scanner module, chosen by the PLY's `comment source`, now
+names the one file read, and a stray other is ignored). The L3's lidar is absolute UTM; it is
+carried into the poses' frame by subtracting the `#OFFSET` line of the L3's
+`poses.csv`, whose other `#` lines are skipped. `octree.bin` is no longer read
+whole: the sampled records are read by offset, drawn by a sparse shuffle that
+draws exactly what revision 2's did. `infra/specs/splat-align.md` revision 3,
+`process-splat.md` revision 11. First scan: KZ1012-142213, `corrected`
+0.283 m.
+
+**Why.** The L3's `octree.bin` is 9 GB, past `readFile`'s 2 GB, and an index
+array of its 450M records would be 1.8 GB. The `#OFFSET` line, not
+`metadata.oct`'s `shift` (equal on KZ1012-142213), is subtracted: it names the
+frame the points must end in. Keeping the draws lets every L2 Pro and K2 scan's
+`.align.json` stay byte-identical.
+
+**Rules out.** Reading `hierarchy.bin` or the Potree tree; converting the
+L3's lidar through anything but that offset; reading `map_config.json`'s
+`epsg`/`offset_xyz` (KZ1012-142213's say EPSG:3826, though its PLY is 32651 —
+only the lever arm is read).
+
+**Revisit if** an L3 delivery's `poses.csv` has no `#OFFSET`, or its lidar is
+not absolute; or if 0.10 m RTK p95 proves wrong for the L3 (KZ1012-142213 sits
+at 0.095 m, with 23% of its fixes RTK-fixed).
+
+---
+
 ## 2026-10-30 — Spark moves to 2.4.0, the app and infra's `build-lod` together
 
 **Decision.** `@sparkjsdev/spark` is pinned exactly at `2.4.0` (was
@@ -390,7 +449,9 @@ carry the doubles directly), or a capture property needs more precision than
   `control-points.mjs` to a shared `scripts/utm.mjs`.
 - **A scan the step cannot check is served unaligned, not refused**: one
   missing any of the five files it reads (7 of the 22 delivered have no
-  `map_config.json`), or one whose validation fails (ICP inliers ≤ 40%, or
+  `map_config.json`; *superseded in part* 2026-11-03: the files are those of
+  the scanner module its PLY's `comment source` names, and a source with no
+  module is skipped too), or one whose validation fails (ICP inliers ≤ 40%, or
   RTK p95 > 0.10 m) — the latter with an error line, and the run still
   succeeds. A file that is there but wrong still fails the scan.
 - `source/<scan>.align.json` records what was done to each `.spz`.

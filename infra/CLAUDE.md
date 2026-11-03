@@ -39,6 +39,10 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      cuts -> clean/<scan>.ply + <scan>.align.json
   splat-align.mjs    process-splat.sh's align step: RTK + lidar -> one rigid
                      correction, in the PLY's own frame
+  scanners/          what each scanner delivers, one module per scanner, found
+                     by the PLY's `comment source` (specs/scanners.md):
+                     l2pro.mjs, k2.mjs, lixel-l3.mjs; xgrids.mjs their shared
+                     readers; index.mjs the registry
   splat-density-cut.mjs
                      process-splat.sh's density cut, on splat-transform's library
   splat-mosaic.mjs   every clean/<scan>.ply -> one UTM frame -> 100 m tiles,
@@ -53,6 +57,7 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      build-lod (v2.4.0, in Docker) -> lod/<tile>-lod.rad +
                      <tile>-lod-<n>.radc, the chunked tree the app draws
 specs/               specs for the scripts (process-splat.md, splat-align.md,
+                     scanners.md,
                      splat-mosaic.md, voxel-quality.md, build-lod.md)
 test/                fixture CSVs and run.sh, the loader's test suite, which
                      then runs each tool's: process-splat.sh; splat-align.sh
@@ -130,9 +135,14 @@ right way to start over.
   the handoff's `align.py` converts to ENU, and that part was left out on
   purpose. Its sampling is seeded, so a re-run is byte-identical, but a
   correction near 0.10 m can read `pass` or `corrected` with the seed — it
-  is applied either way. A scan missing a file it reads, or failing its
-  validation, is served unaligned, not refused. Its spec is
-  `specs/splat-align.md`.
+  is applied either way. The scan is read through the module in
+  `scripts/scanners/` that its PLY's `comment source` names — never by
+  sniffing which files are there — and `splat-align.mjs` itself knows no
+  scanner. Its PLY's header is checked first, so a broken PLY is refused
+  whatever its source. A scan with no module for its source, or missing a
+  file its module reads, is skipped (exit 5); one failing validation (exit 4); both
+  are served unaligned, not refused. Its specs are `specs/splat-align.md`
+  and `specs/scanners.md`.
 - **The splat processor's traps live in `process-splat.sh` and
   `splat-density-cut.mjs`, with comments and tests**: `-V` compares `scale_*` in metres though the file
   stores log scale; a negative number passed to `node` without `--` is read as
@@ -229,9 +239,10 @@ The tiles' frame is the delivered PLYs' **georeference**: a scan stores UTM
 (E, N, h) as (E − offsetx, N − offsety, h − offsetz), x east and y north of
 the grid, and the mosaic moves each into the zone by that offset alone (every
 delivered scan is in UTM 51N), never through `poses.csv`, which is in a frame
-of its own (the KZ0918 poses are turned 21.9° and 91.3° from their files;
-`splat-align.mjs` reads them, but only to fit them to RTK, and writes nothing
-in their frame). The header is trusted, not checked against the vertices: it
+of its own on the L2 Pro and K2 (the KZ0918 poses are turned 21.9° and 91.3° from
+their files; the Lixel L3's are in the PLY's, relative to their `#OFFSET`
+line, and its `metadata.oct` lidar is absolute UTM; `splat-align.mjs` reads
+them, but only to fit them to RTK, and writes nothing in their frame). The header is trusted, not checked against the vertices: it
 was verified on the KZ0918 scans by hand. (Where the align step runs, it does
 check the vertices against RTK and the lidar, and moves them to the header's
 frame; its `.align.json` says how far.) Scans in different zones are refused,

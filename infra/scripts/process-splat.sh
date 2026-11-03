@@ -8,11 +8,12 @@
 #   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
 #
 # Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, and for the
-# align step gnss.csv, poses.csv, octree.bin, metadata.json and map_config.json
-# — and never writes it. Writes data/3dgs/clean/<scan>.ply, which the mosaic
-# reads, and <scan>.align.json beside it. It always starts from the original,
-# so re-running never compounds the cuts. The specs are specs/process-splat.md
-# and specs/splat-align.md.
+# align step the files its scanner module reads (specs/scanners.md) — and
+# never writes it. Writes
+# data/3dgs/clean/<scan>.ply, which the mosaic reads, and <scan>.align.json
+# beside it. It always starts from the original, so re-running never
+# compounds the cuts. The specs are specs/process-splat.md and
+# specs/splat-align.md.
 set -euo pipefail
 
 infra=$(cd "$(dirname "$0")/.." && pwd)
@@ -99,22 +100,15 @@ json() { node -e '
 
 echo "==> $scan (${found[0]}): align, density in ${cell} m voxels >= ${min_density} x typical, every axis <= ${max_scale} m, floaters $floaters"
 
-# 0. Align: correct the capture's placement in its own frame. Skipped, and the
-# cuts run on the original, when a file it needs is not there or validation
-# fails; a file that is there but wrong fails the scan.
-skip_align() {
-  node -e 'console.log(JSON.stringify({ scan: process.argv[1], status: "skipped", reason: process.argv[2] }, null, 2))' \
-    -- "$scan" "$1" > "$work/align.json"
-  echo "    align skipped: $1"
-}
-missing=()
-for f in gnss.csv poses.csv octree.bin metadata.json map_config.json; do
-  [ -f "$original_dir/$scan/$f" ] || missing+=("$f")
-done
+# 0. Align: correct the capture's placement in its own frame. splat-align.mjs
+# picks the scanner module by the PLY's `comment source` and skips (exit 5)
+# when there is none or a file it reads is missing; the cuts then run on the
+# original, as they do when validation fails. A file that is there but wrong
+# fails the scan.
 if [ "${found[0]}" != point_cloud.ply ]; then
-  skip_align "${found[0]} is not a point_cloud.ply"
-elif [ ${#missing[@]} -gt 0 ]; then
-  skip_align "no $(IFS=,; echo "${missing[*]}" | sed 's/,/, /g')"
+  node -e 'console.log(JSON.stringify({ scan: process.argv[1], scanner: null, status: "skipped", reason: process.argv[2] }, null, 2))' \
+    -- "$scan" "${found[0]} is not a point_cloud.ply" > "$work/align.json"
+  echo "    align skipped: ${found[0]} is not a point_cloud.ply"
 else
   rc=0
   report=$(node "$infra/scripts/splat-align.mjs" -- "$original_dir/$scan" "$work/aligned.ply" "$work/align.json") || rc=$?
@@ -126,6 +120,7 @@ else
     4)
       reason=$(echo "$report" | json reason)
       echo "error: $scan: align failed ($reason); continuing unaligned" >&2 ;;
+    5) echo "    align skipped: $(echo "$report" | json reason)" ;;
     *) die "$scan: the align step failed; $out is unchanged" ;;
   esac
 fi

@@ -1,6 +1,13 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 10, approved 2026-10-29**: the output is a lossless
+Status: **revision 12, approved 2026-11-03**: the align step chooses the
+scanner module by the PLY's `comment source` and decides its own skips (exit
+5); the script no longer checks the align files itself
+(`specs/scanners.md`, `specs/splat-align.md` revision 4). Revision 11,
+approved 2026-11-02: the align step accepts the
+Lixel L3's `metadata.oct` in place of `metadata.json`
+(`specs/splat-align.md` revision 3); nothing else changes. Revision 10,
+approved 2026-10-29: the output is a lossless
 `clean/<scan>.ply` for the mosaic (`specs/splat-mosaic.md`), not a served
 `source/<scan>.spz`; see *Changes from revision 9*. Revision 9 (approved
 2026-10-29) moved to splat-transform 3.10.x from 3.4.x; see *Changes from
@@ -37,9 +44,9 @@ the tiles the app draws.
 ```
 data/3dgs/original/<scan>/   one folder per scan, as delivered — read-only
   point_cloud.<ext>          the splat, in one supported format (below)
-  gnss.csv, poses.csv,       read by the align step, when every one of them is
-  octree.bin, metadata.json, there and the splat is point_cloud.ply
-  map_config.json
+  the scanner module's files read by the align step, when the splat is
+                             point_cloud.ply: the files of the module for its
+                             `comment source` (specs/scanners.md)
   …                          anything else is ignored
 data/3dgs/clean/<scan>.ply   the scans as cleaned — written only by process-splat.sh
 data/3dgs/clean/<scan>.align.json
@@ -103,11 +110,13 @@ with `<ext>` one of:
 ## What it does, in order
 
 0. **Align** (`scripts/splat-align.mjs`, a node step; spec
-   `specs/splat-align.md`). When the splat is `point_cloud.ply` and the scan
-   has all five files above, fit the trajectory to RTK, match the lidar to
-   the Gaussians, and move every Gaussian by the rigid correction found, in
-   the PLY's own frame, to a temporary `.ply`; the density step reads that.
-   Otherwise it is **skipped**, with the reason printed
+   `specs/splat-align.md`). When the splat is `point_cloud.ply`, run the
+   step: it reads the scan through its scanner's module, fits the trajectory
+   to RTK, matches the lidar to the Gaussians, and moves every Gaussian by
+   the rigid correction found, in the PLY's own frame, to a temporary `.ply`; the density step reads that.
+   It is **skipped** when the splat is not `point_cloud.ply` (the script's
+   own check), or when the step exits 5 — no module for the PLY's `comment
+   source`, or a file the module reads missing — with the reason printed
    (`align skipped: no map_config.json`), and the density step reads the
    original. When the step's validation **fails** (ICP inliers ≤ 40%, or
    RTK p95 > 0.10 m), it prints `error: <scan>: align failed (<reason>);

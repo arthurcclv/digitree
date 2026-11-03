@@ -15,6 +15,16 @@
 //   omit [files]             files not written
 //   encoding                 metadata.json's encoding (default DEFAULT)
 //   noEpsg, noRtkParam       leave those out
+//   source '…' | null        the PLY's `comment source` (default L2Pro, or
+//                            LixelL3 with l3); null leaves the line out
+//   l3                       the Lixel L3's delivery: poses.csv with `#` lines,
+//                            relative to `#OFFSET` (the PLY's offset), and
+//                            metadata.oct, the lidar absolute, 20-byte records
+//   meta 'json'|'oct'|'both' which metadata file(s) to write (default: oct for
+//                            l3, json otherwise); 'json' with l3 is the L3's
+//                            absolute lidar read as if already in the poses' frame
+//   poseOffset [..]          l3: the #OFFSET line's numbers (default OFFSET);
+//                            null leaves the line out
 //
 // Gaussian 0 has a known rotation (non-unit) and normal, Gaussian 1 a zero
 // quaternion. Seeded throughout: the same options give the same bytes.
@@ -27,6 +37,15 @@ if (args[0] === '--') args.shift();
 const [dir, json] = args;
 const o = { shift: [0, 0, 0], turnDeg: 0, lever: [1, 0, 0.5], gnssNoise: 0, omit: [], encoding: 'DEFAULT', ...JSON.parse(json || '{}') };
 o.mapLever ??= o.lever;
+// What differs between the two deliveries the scene writes. The poses' frame
+// is the PLY's turned `posesYawDeg` and moved to `posesOrigin`, as SLAM's is
+// on the L2 Pro and K2; on the L3 it is the PLY's own (UTM less #OFFSET, the
+// PLY's offset), and its lidar is absolute UTM, with a gps-time attribute.
+const delivery = o.l3
+  ? { source: 'LixelL3', meta: 'oct', posesYawDeg: 0, posesOrigin: [0, 0, 0], offsetHeader: true, absoluteLidar: true, gpsTime: true }
+  : { source: 'L2Pro', meta: 'json', posesYawDeg: 30, posesOrigin: [-18, -4, 1.5], offsetHeader: false, absoluteLidar: false, gpsTime: false };
+o.meta ??= delivery.meta;
+if (o.source === undefined) o.source = delivery.source;
 mkdirSync(dir, { recursive: true });
 const write = (name, data) => { if (!o.omit.includes(name)) writeFileSync(join(dir, name), data); };
 
@@ -100,7 +119,7 @@ rows.forEach(([p, opacity], i) => {
   p.forEach((v, k) => { lo[k] = Math.min(lo[k], v); hi[k] = Math.max(hi[k], v); });
 });
 const header = [
-  'ply', 'format binary_little_endian 1.0', 'comment source L2Pro',
+  'ply', 'format binary_little_endian 1.0', ...(o.source === null ? [] : [`comment source ${o.source}`]),
   `comment offsetx ${OFFSET[0].toFixed(16)}`, `comment offsety ${OFFSET[1].toFixed(16)}`, `comment offsetz ${OFFSET[2].toFixed(16)}`,
   ...['x', 'y', 'z'].flatMap((a) => [`comment shift${a} 0.0000000000000000`, `comment scale${a} 1.0000000000000000`]),
   ...(o.noEpsg ? [] : [`comment epsg ${EPSG}`]),
@@ -112,9 +131,9 @@ const header = [
 write('point_cloud.ply', Buffer.concat([Buffer.from(header, 'latin1'), body]));
 
 // ---- the trajectory: out along y = −4 heading +x, a U-turn of radius 4,
-// back along y = +4 heading −x, at 1.5 m/s, a pose every 0.2 s. The poses'
-// frame is the PLY's turned 30° and moved to the first pose, as SLAM's is.
-const Rp = rotZ(30), tp = [-18, -4, 1.5];
+// back along y = +4 heading −x, at 1.5 m/s, a pose every 0.2 s, in the
+// delivery's poses' frame.
+const Rp = rotZ(delivery.posesYawDeg), tp = delivery.posesOrigin;
 const track = [];
 for (let s = 0; ; s += 0.3) {
   if (s <= 36) track.push([[-18 + s, -4, 1.5], 0]);
@@ -131,7 +150,7 @@ track.forEach(([c, yawDeg], i) => {
   const body2ply = rotZ(yawDeg);
   // The pose: position and orientation in the poses' frame.
   const cP = mul(tr(Rp), sub(c, tp));
-  const half = ((yawDeg - 30) * Math.PI) / 360;
+  const half = ((yawDeg - delivery.posesYawDeg) * Math.PI) / 360;
   poses.push([t, ...cP, 0, 0, Math.sin(half), Math.cos(half)].map((v) => v.toFixed(9)).join(','));
   // The fix: the antenna, lever arm turned with the scanner, plus any noise.
   const ant = add(c, mul(body2ply, o.lever)).map((v) => v + o.gnssNoise * gauss());
@@ -141,28 +160,41 @@ track.forEach(([c, yawDeg], i) => {
   // Between fixes, one without a solution: never matched, never read.
   gnss.push(`${(t + 0.11).toFixed(6)},1,nan,nan,nan,17.9,1,1,1,0.01,30,0`);
 });
-write('poses.csv', poses.join('\n') + '\n');
+const poseOffset = o.poseOffset === undefined ? OFFSET : o.poseOffset;
+const posesHead = delivery.offsetHeader
+  ? ['#VERSION 1.0.5', ...(poseOffset ? [`#OFFSET [${poseOffset.map((v) => v.toFixed(5)).join(',')}]`] : []), '#timestamp,x,y,z,qx,qy,qz,qw']
+  : [];
+write('poses.csv', [...posesHead, ...poses].join('\n') + '\n');
 write('gnss.csv', gnss.join('\n') + '\n');
 write('map_config.json', JSON.stringify(o.noRtkParam ? { epsg: EPSG } : { epsg: EPSG, rtk_external_param: o.mapLever }, null, 2));
 
-// ---- the lidar, in the poses' frame, as Potree DEFAULT records.
+// ---- the lidar, as Potree DEFAULT records: in the poses' frame, or absolute
+// UTM, as the delivery has it.
 const truth = o.lidar === 'random'
   ? Array.from({ length: 20000 }, () => [-20 + 40 * random(), -10 + 20 * random(), 8 * random()])
   : surface(15);
-const lidar = truth.map((p) => mul(tr(Rp), sub(p, tp)));
-const SCALE = 1e-4;
+const lidar = delivery.absoluteLidar ? truth.map((p) => add(p, OFFSET)) : truth.map((p) => mul(tr(Rp), sub(p, tp)));
+const SCALE = 1e-4, STRIDE = delivery.gpsTime ? 20 : 16;
 const lmin = [0, 1, 2].map((k) => Math.min(...lidar.map((p) => p[k])));
-const oct = Buffer.alloc(lidar.length * 16);
+const oct = Buffer.alloc(lidar.length * STRIDE);
 lidar.forEach((p, i) => {
-  p.forEach((v, k) => oct.writeInt32LE(Math.round((v - lmin[k]) / SCALE), i * 16 + 4 * k));
-  oct.writeUInt8(100, i * 16 + 12);
+  p.forEach((v, k) => oct.writeInt32LE(Math.round((v - lmin[k]) / SCALE), i * STRIDE + 4 * k));
+  oct.writeUInt8(100, i * STRIDE + 12);
+  if (delivery.gpsTime) oct.writeFloatLE(0.2 * i, i * STRIDE + 16);
 });
 write('octree.bin', oct);
-write('metadata.json', JSON.stringify({
-  version: '2.0', encoding: o.encoding, scale: [SCALE, SCALE, SCALE], offset: lmin,
-  attributes: [
-    { name: 'position', type: 'int32', numElements: 3 },
-    { name: 'intensity', type: 'uint8', numElements: 1 },
-    { name: 'rgb', type: 'uint8', numElements: 3 },
-  ],
-}, null, 2));
+const attributes = [
+  { name: 'position', type: 'int32', numElements: 3 },
+  { name: 'intensity', type: 'uint8', numElements: 1 },
+  { name: 'rgb', type: 'uint8', numElements: 3 },
+  ...(delivery.gpsTime ? [{ name: 'gps-time', type: 'float', numElements: 1 }] : []),
+];
+if (o.meta !== 'oct') {
+  write('metadata.json', JSON.stringify({ version: '2.0', encoding: o.encoding, scale: [SCALE, SCALE, SCALE], offset: lmin, attributes }, null, 2));
+}
+if (o.meta !== 'json') {
+  write('metadata.oct', JSON.stringify({
+    version: '2.1', name: 'XGrids LiDAR Data', encoding: o.encoding, scale: [SCALE, SCALE, SCALE],
+    offset: lmin, shift: OFFSET, attributes,
+  }, null, 2));
+}

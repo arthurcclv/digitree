@@ -158,6 +158,110 @@ for f in brotli noepsg noarm; do
 done
 ok "none of them writes an output"
 
+# The Lixel L3's delivery: poses relative to #OFFSET, the lidar absolute in
+# metadata.oct. The same displacement must come out the same.
+case_ "the L3: a known displacement"
+scene l3shift '{"l3":true,"shift":[0.4,0.3,0],"turnDeg":0.3}'
+align l3shift
+expect "exits 0" "$rc" 0
+expect "status corrected" "$(js l3shift j.status)" corrected
+expect "the correction undoes it within 1 cm at the corners" "$(js l3shift '
+  const R = j.correction.rotation, t = j.correction.translation_m, a = 0.3 * Math.PI / 180;
+  let worst = 0;
+  for (const x of [-20, 20]) for (const y of [-10, 10]) for (const z of [0, 8]) {
+    const m = [Math.cos(a) * x - Math.sin(a) * y + 0.4, Math.sin(a) * x + Math.cos(a) * y + 0.3, z];
+    const c = [0, 1, 2].map((r) => R[r][0] * m[0] + R[r][1] * m[1] + R[r][2] * m[2] + t[r]);
+    worst = Math.max(worst, Math.hypot(c[0] - x, c[1] - y, c[2] - z));
+  }
+  worst < 0.01')" true
+
+case_ "the L3: no displacement"
+scene l3still '{"l3":true}'
+align l3still
+expect "status pass" "$(js l3still j.status)" pass
+expect "moves the capture under 1 cm" "$(js l3still 'j.lidar_vs_ply.correction_max_m < 0.01')" true
+
+# The same absolute lidar read as metadata.json by the L2 Pro module, i.e.
+# without the #OFFSET subtraction: it lands ~2,800 km off, and must fail.
+case_ "the L3's lidar not carried by #OFFSET"
+scene l3json '{"l3":true,"meta":"json","source":"L2Pro"}'
+align l3json
+expect "exits 4" "$rc" 4
+expect_contains "fails on the ICP inliers" "$(js l3json j.reason)" "ICP inliers"
+
+# The scanner is named by the PLY's header, so a metadata.json beside the
+# L3's metadata.oct is not read.
+case_ "the L3 with a stray metadata.json"
+scene l3both '{"l3":true,"meta":"both"}'
+align l3both
+expect "is aligned" "$(js l3both '`${j.scanner} ${j.status}`')" "lixel-l3 pass"
+expect "  as without it" "$(js l3both 'JSON.stringify(j.correction)')" "$(js l3still 'JSON.stringify(j.correction)')"
+expect "  to the same .ply" "$(sum "$work/l3both.ply")" "$(sum "$work/l3still.ply")"
+
+case_ "the L3's files there but wrong"
+scene l3nooff '{"l3":true,"poseOffset":null}'
+align l3nooff
+expect "metadata.oct with no #OFFSET: exit 1" "$rc" 1
+expect_contains "  naming the file" "$log" "l3nooff: poses.csv: has no #OFFSET [x,y,z] line"
+scene l3two '{"l3":true,"poseOffset":[1,2]}'
+align l3two
+expect "an #OFFSET of two numbers: exit 1" "$rc" 1
+expect_contains "  naming the file" "$log" "l3two: poses.csv: line 2: #OFFSET must be [x,y,z]"
+
+# Revision 3 samples octree.bin by offset with a sparse shuffle; it must draw
+# exactly what revision 2 drew. These are revision 2's outputs; revision 4
+# adds only the `"scanner": "l2pro",` line after "scan", so it is taken out
+# before the sum.
+case_ "the L2 Pro cases unchanged by revisions 3 and 4"
+sum_without_scanner() { grep -v '^  "scanner": "l2pro",$' "$1" | shasum -a 256 | cut -d' ' -f1; }
+expect "shift.json" "$(sum_without_scanner "$work/shift.json")" 944530ff42af07157168dc22f5cf63f142c583b24026e44412e0415f11e9d6f7
+expect "shift.ply" "$(sum "$work/shift.ply")" 9b4300c51d1b8bd026ab4a7f581d307ce164aa69e2a0926a6fe1d403c0a30b69
+expect "still.json" "$(sum_without_scanner "$work/still.json")" 11cf3b29dadf51e06a3e05ebd23190022750c315328e911249c385ff7a62049d
+expect "falsefix.json" "$(sum_without_scanner "$work/falsefix.json")" dc5cbcedc1f69eaf05bd3170941233243c7ebc908cad44cb3f9b3357721e3b87
+expect "random.json" "$(sum_without_scanner "$work/random.json")" 5388c7a22e910c7a4b074a081f73c5c4ef8d46e48ebf5212bd4aaf900ff32940
+expect "noisy.json" "$(sum_without_scanner "$work/noisy.json")" a57c00d7d45ff33fd126bdfeaca5904f6716c5ed52b8cbdf1af8e9e540950532
+expect "and each names its scanner" "$(js shift j.scanner)" l2pro
+# Revision 4's own outputs, the `scanner` line in: re-recorded once.
+expect "shift.json, revision 4" "$(sum "$work/shift.json")" 33e029d5c6724ac3bd7dcd30e8c4b7ce56223e5c2cf8897babf2062300e06bc5
+expect "still.json, revision 4" "$(sum "$work/still.json")" 4495d51d68e372d7841f0111f1b35cdc391056c057f2a64077b5ea9ba9c8f2cd
+expect "falsefix.json, revision 4" "$(sum "$work/falsefix.json")" 239a38c162d8038f8c755eeb463476af81bcc88a463ca8fbebe605eea22fbb1a
+expect "random.json, revision 4" "$(sum "$work/random.json")" efca1b9512c581e30ac30a5aba74d5f264d42be17d3aef13d43d70a2da76baae
+expect "noisy.json, revision 4" "$(sum "$work/noisy.json")" ae5a59b58116ef09d978e5e4a029571035478b055adadb2944762f0a0bd793ed
+
+# Which module reads a scan is the PLY's `comment source`.
+case_ "the scanner modules"
+scene k2 '{"source":"K2","shift":[0.4,0.3,0],"turnDeg":0.3}'
+align k2
+expect "a K2 scan is read by k2" "$(js k2 j.scanner)" k2
+expect "  with the L2 Pro's correction" "$(js k2 'JSON.stringify(j.correction)')" "$(js shift 'JSON.stringify(j.correction)')"
+scene drone '{"source":"Drone"}'
+align drone
+expect "a source no module claims: exit 5" "$rc" 5
+expect "  skipped, naming the source" "$(js drone '`${j.status} ${j.scanner} ${j.reason}`')" "skipped null no scanner module for source 'Drone'"
+expect "  and writes no .ply" "$([ -e "$work/drone.ply" ] && echo yes || echo no)" no
+scene nosource '{"source":null}'
+align nosource
+expect "a PLY without comment source: exit 5" "$rc" 5
+expect "  skipped" "$(js nosource j.reason)" "point_cloud.ply has no 'comment source'"
+scene nometa '{"omit":["metadata.json"]}'
+align nometa
+expect "an L2 Pro scan without metadata.json: exit 5" "$rc" 5
+expect "  skipped, naming the file" "$(js nometa '`${j.scanner} ${j.reason}`')" "l2pro no metadata.json"
+scene gnssdir '{"omit":["gnss.csv"]}'
+mkdir "$work/gnssdir/gnss.csv"
+align gnssdir
+expect "a directory under a file's name: exit 5" "$rc" 5
+expect "  skipped, as missing" "$(js gnssdir j.reason)" "no gnss.csv"
+# The PLY's header is checked before the skip is decided.
+scene badnosource '{"source":null,"noEpsg":true}'
+align badnosource
+expect "a broken PLY without comment source: exit 1, not skipped" "$rc" 1
+expect_contains "  naming the file" "$log" "badnosource: point_cloud.ply: has no 'comment epsg'"
+expect "two modules claiming one source throw, naming both" "$(node --input-type=module -e '
+  const { registry } = await import(process.argv[1]);
+  try { registry([{ name: "a", sources: ["X"] }, { name: "b", sources: ["Y", "X"] }]); console.log("no throw"); }
+  catch (e) { console.log(e.message); }' -- "$PWD/scripts/scanners/index.mjs")" "scanner modules a and b both claim source 'X'"
+
 case_ "a re-run"
 first=$(sum "$work/shift.ply") first_json=$(sum "$work/shift.json")
 align shift

@@ -216,19 +216,26 @@ refuses any other. Cleaning needs ~1 GB of free disk per 13M Gaussians for its
 intermediate file, and about as much again for the output.
 
 First it aligns (`scripts/splat-align.mjs`, a port of the XGRIDS handoff's
-`align.py`), when the splat is a `point_cloud.ply` and the folder also has
-`gnss.csv`, `poses.csv`, `octree.bin`, `metadata.json` and `map_config.json`:
-it fits the trajectory to the RTK-fixed GNSS fixes (antenna lever arm from
+`align.py`), when the splat is a `point_cloud.ply`. Which scanner made the
+scan is read from the PLY's `comment source`, and the rest of the scan is
+read by that scanner's module in `scripts/scanners/` (`specs/scanners.md`):
+`gnss.csv`, `poses.csv`, `octree.bin`, `map_config.json`, and the lidar's
+metadata — `metadata.json` from the L2 Pro and K2, `metadata.oct` from the
+Lixel L3, whose lidar is absolute UTM and is placed by `poses.csv`'s
+`#OFFSET` line. A new scanner is a new module there. The step fits the trajectory to the RTK-fixed GNSS fixes (antenna lever arm from
 `map_config.json`), carries the lidar into the PLY's frame with that fit,
 matches it to the Gaussians by ICP, and moves every Gaussian by the rigid
 correction found — within the PLY's own frame, so the header's offset still
 places it. The `.align.json` records the outcome: `pass` (moved under 10 cm),
-`corrected` (more), `fail` or `skipped`. A scan missing one of those files is
-skipped, and one that fails validation (ICP matching under 40% of the lidar,
+`corrected` (more), `fail` or `skipped`, and which module read the scan. A
+scan from a scanner with no module (the drone capture), or missing one of its
+module's files, is skipped, and one that fails validation (ICP matching under 40% of the lidar,
 or the RTK fit's p95 over 10 cm) prints an error and is written unaligned —
-the run still succeeds. Of the 22 scans delivered, 7 have no
-`map_config.json`. The step takes ~20 s and 1.3–1.8 GB, under what the
-density step needs.
+the run still succeeds. Of the 23 scanner scans delivered (24 with the drone capture), 7 have no
+`map_config.json`. The step takes ~20 s and 1.3–1.8 GB on an L2 Pro or K2 scan,
+under what the density step needs; the L3's KZ1012-142213 (37.6M Gaussians, a 9 GB
+`octree.bin`, of which only the sampled records are read) takes ~50 s and
+2.8 GB.
 
 The outlier rule follows the capture's own distribution, not a distance. It
 counts the Gaussians in 2 m cubes (`--cell`), takes the count of the cube the
