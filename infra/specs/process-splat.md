@@ -1,6 +1,13 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 12, approved 2026-11-03**: the align step chooses the
+Status: **revision 14, approved 2026-11-03**: an
+**aerial** capture — a `point_cloud.ply` whose `comment source` is `Drone` —
+skips the density and size cuts; only the floater pass runs on it. See
+*Changes from revision 13*. Revision 13, approved 2026-11-03: the size
+cut's limit follows the capture's own typical Gaussian size, with
+`--max-scale` as its floor, so a drone capture is no longer cut to the
+ground scans' 0.25 m; see *Changes from revision 12*. Revision 12, approved
+2026-11-03: the align step chooses the
 scanner module by the PLY's `comment source` and decides its own skips (exit
 5); the script no longer checks the align files itself
 (`specs/scanners.md`, `specs/splat-align.md` revision 4). Revision 11,
@@ -30,13 +37,14 @@ the mosaic: it corrects the capture's placement against the scanner's RTK
 and lidar (`splat-align.mjs`, when the scan carries what that needs), drops
 the Gaussians that lie outside the capture's own distribution, the ones that
 are too large, and the floaters, and writes the result as a PLY. Every capture gets the same treatment from one command, with
-no per-capture setting to pick. Its output is not served: it is one input of
+no per-capture setting to pick — except an aerial capture, which gets the
+floater pass alone (*Aerial captures*, below). Its output is not served: it is one input of
 the mosaic (`specs/splat-mosaic.md`), which merges every cleaned scan into
 the tiles the app draws.
 
 ```bash
-./scripts/process-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, 0.25 m
-./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+./scripts/process-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, max(0.25 m, 4 × typical size)
+./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 ```
 
 ## Where files live
@@ -66,7 +74,8 @@ was delivered.
 | `<scan>` | — | a bare scan folder name in `original/`; the script reads its one `point_cloud.<ext>` |
 | `--cell <m>` | `2` | edge of the cubic voxels the density is counted in |
 | `--min-density <f>` | `0.01` | keep a Gaussian when its voxel holds at least `f` × the capture's typical density (below) |
-| `--max-scale <m>` | `0.25` | keep Gaussians whose **every** axis is at most this long |
+| `--max-scale <m>` | `0.25` | the size cut's **floor**: its limit is never below this (below) |
+| `--scale-ratio <k>` | `4` | the size cut's limit is at least `k` × the capture's **typical size** (below) |
 | `--floaters <size,op,min>` | `0.05,0.1,0.004` (splat-transform's own) | passed to `-F` |
 | `SPLATS_ORIGINAL_DIR` | `data/3dgs/original` | env: where the scan folders are |
 | `SPLATS_CLEAN_DIR` | `data/3dgs/clean` | env: where the output is written |
@@ -134,13 +143,51 @@ with `<ext>` one of:
    sits in — half of all Gaussians are in voxels at least that
    full. Keep a Gaussian when its voxel holds at least `--min-density` × the
    typical density; write what is kept to a temporary `.ply` (lossless).
-2. **Size cut.** Keep Gaussians with `scale_0`, `scale_1` and `scale_2` each
-   `<= --max-scale` (three `-V … lte`).
+   The same step measures the capture's **typical size**: the median, over
+   the Gaussians it keeps, of each one's largest axis (`exp` of the largest
+   of `scale_0..2`), in metres.
+2. **Size cut.** The **limit** is `max(--max-scale, --scale-ratio × typical
+   size)`. Keep Gaussians with `scale_0`, `scale_1` and `scale_2` each
+   `<= limit` (three `-V … lte`).
 3. **Floaters.** `-F` with `--floaters`.
 4. **Write** a binary `.ply`, lossless, splat-transform's own PLY output.
 5. **Report** the align step's status (and how far it moved the capture),
-   the typical density, and Gaussians before, after each cut, after all, and
-   the % removed.
+   the typical density, the typical size and the size limit used, and
+   Gaussians before, after each cut, after all, and the % removed. The log
+   rounds the typical size to 3 significant figures and the limit to 4;
+   the size cut uses the limit unrounded.
+
+### Aerial captures
+
+A capture is **aerial** when its splat is `point_cloud.ply` and the
+header's `comment source` is one of the script's **aerial sources**, today
+`Drone` alone (a list in `process-splat.sh`). The source is read from the
+header, as the align step reads it (`specs/scanners.md`); a capture in any
+other format has no header source and is never aerial. For an aerial
+capture:
+
+- steps 1 and 2 are **skipped**: no density cut, no size cut, so no typical
+  density, typical size or limit is measured. The log's first line says
+  `align, no density or size cut (aerial), floaters <floaters>` in place of
+  the cuts' settings, and its count line says
+  `density and size cuts skipped: aerial capture (source 'Drone')`;
+- step 0 runs as for any capture (for `Drone`, which no scanner module
+  claims, it is skipped), and step 3, the floater pass, runs on the
+  original — or the aligned file — directly;
+- `--cell`, `--min-density`, `--max-scale` and `--scale-ratio` are still
+  checked, so a bad value is refused whatever the capture, but have no
+  effect;
+- the report gives Gaussians before, after floaters, and the % removed.
+
+Why. Both cuts measure the capture against a ground scan's expectations.
+Seen from above, the drone capture's sparse areas (roof edges, the ground
+between buildings) are real surface, not outliers, and its Gaussians are
+large because its sampling is: even at revision 13's relative limit the two
+cuts removed 5.1% of it, at `--scale-ratio 20` with the density cut off
+only 0.1%: 2,228 by size, and 1,598 (0.03%) by the floater pass, which
+is what an aerial capture still loses. A per-source rule was rejected in revision 13 in favour
+of the ratio; it is taken here because the operator chose to keep the
+drone capture whole rather than tune its cuts.
 
 Step 2 is one splat-transform run on the temporary `.ply`, writing a second
 temporary `.ply`, so the size cut's own count can be reported; steps 3–4 are
@@ -163,6 +210,30 @@ The same rule on 2 m ground columns left Gaussians at z = 90–128 m in every
 capture. Rules depending on the capture's axes (Tukey fences, percentile
 boxes) were rejected: C's side arm reaches 84 m out in y while its middle
 half is 10 m wide, so a y fence cuts it.
+
+Why the size limit follows the capture. A fixed limit suits one capture
+height only. A drone capture's Gaussians are an order of magnitude larger
+than a ground scan's, because its ground sampling is: at a fixed 0.25 m the
+drone scan lost 38.9% of its Gaussians to the size cut alone, the ground
+scans 2–3%. Measured on the originals (a 1-in-11 sample, largest axis):
+
+| capture | source | typical size | p95 | p99 | removed at 0.25 m | limit (rev. 13) | removed at it |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| KY0917A | L2Pro | 0.011 m | 0.126 m | 0.408 m | 2.1% | 0.25 m (floor) | 2.1% |
+| KZ0918-075047 | K2 | 0.037 m | 0.170 m | 0.459 m | 2.7% | 0.25 m (floor) | 2.7% |
+| air_force_headquarter_ariel | Drone | 0.198 m | 0.791 m | 1.481 m | 38.9% | 0.787 m | 4.9% |
+
+The drone row's last two columns are measured by the cleaning run itself
+(typical size 0.197 m after the density cut; 5.1% removed in all).
+
+The ratio, like `--min-density`, is relative to the capture itself, so it
+needs no per-scanner or per-capture setting: a drone flown higher, or a new
+scanner, gets its own limit. The floor keeps every ground scan's cut exactly
+as before (4 × their typical size is 0.04–0.15 m). A ratio alone, without
+the floor, would cut the fine L2 Pro scans at 0.04 m, removing about a
+quarter of them. A percentile limit (keep the smallest 99%) was rejected: it
+always removes a share, however clean the capture is. The typical size is
+taken after the density cut, so the floaters it removes do not shift it.
 
 ## The splat-transform facts the script must encode
 
@@ -227,6 +298,27 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   (`--max-scale 0.25`). SOG stores scales in a 256-entry codebook that pools
   rare values — a single 0.3 m and a single 0.24 m Gaussian both decode as
   0.2683 — so each size has 64 Gaussians and sits well clear of the limit;
+- an **aerial** scene: `coarse` again, with `comment source Drone` in its
+  header and a clump of 8 (below the density threshold) beside it. Every
+  Gaussian is kept by the cuts — the 2 m ones and the clump of 8 too — the
+  log's first line and count line say both cuts were skipped, the second
+  naming the source, and no typical size is reported. The same file with
+  `comment source L2Pro`, which has no module's files here so its align is
+  skipped (its log says so), is cut as `coarse` is;
+- the `drone` align scene is aerial too, and its log says so;
+- a **spread** scene (`point_cloud.ply`): a main block of 1,000, 600 with a
+  0.1 m largest axis and 400 with 0.3 m, and 50 clumps of 8 at 2 m, each in
+  a voxel of its own, which the density cut removes. Its typical size is
+  0.1 m and the limit 0.4 m; a median over all 1,400 would be 0.3 m;
+- every Gaussian of the scene is 0.02 m but the 128 above, so its typical
+  size is 0.02 m, 4 × that is 0.08 m, and the limit is the floor, 0.25 m —
+  the log names both;
+- a **coarse** scene (`point_cloud.ply`, so no codebook): a main block of
+  1,000 whose largest axis is 0.3 m, so its typical size is 0.3 m and the
+  limit is 1.2 m; 64 Gaussians at 0.5 m are kept (the fixed 0.25 m of
+  revision 12 removed them) and 64 at 2 m are removed. At `--scale-ratio 1`
+  the limit is 0.3 m and both go;
+- a non-positive `--scale-ratio`, zero or negative, is refused;
 - the same scene mirrored through the origin, so its coordinates are negative,
   gives the same count;
 - the output is a binary little-endian PLY carrying every property the mosaic
@@ -259,8 +351,48 @@ The align step's own cases are in `test/splat-align.sh`
 ## Docs
 
 `infra/README.md` (*Cleaning*) and `infra/CLAUDE.md` (the layout block and
-the `data/` exceptions) name `clean/<scan>.ply`; the mosaic's entry in
+the `data/` exceptions) name `clean/<scan>.ply`; *Cleaning* states the size
+cut's limit as `max(--max-scale, --scale-ratio × typical size)`, and a
+2026-11-03 entry in `app/ai/DECISIONS.md` records why it follows the
+capture. *Cleaning* also says an aerial capture skips both cuts, and a
+second 2026-11-03 entry records why, partly superseding the first, which
+is marked so. `infra/CLAUDE.md`'s layout block notes the `Drone` exception
+and what `ply-header.mjs` serves. The mosaic's entry in
 `app/ai/DECISIONS.md` records why the output is no longer SPZ.
+
+## Changes from revision 13
+
+- An aerial capture (`comment source` `Drone`) skips the density and size
+  cuts; the floater pass alone runs on it. Every other capture is cleaned
+  as in revision 13, whose relative size limit stays.
+- `process-splat.sh` reads the header's `comment source` itself, for a
+  `point_cloud.ply`, through `scripts/ply-header.mjs`, whose
+  `commentSource` `splat-align.mjs` now reads it through too: one reading
+  of the source for both.
+- After approval, `air_force_headquarter_ariel` is cleaned again with the
+  defaults, and the mosaic rebuilt.
+- Downstream: `specs/splat-mosaic.md`'s note on how far a splat reaches
+  past its voxel names the drone capture as uncut (its p99 largest axis is
+  1.48 m, its largest unbounded); `specs/voxel-quality.md`'s sub-cell note
+  says the drone capture is not size-cut. Neither one's behaviour changes.
+- Docs: `infra/README.md` (*Cleaning*) and a 2026-11-03 entry in
+  `app/ai/DECISIONS.md`, which partly supersedes revision 13's entry
+  ("rules out a limit per scanner source").
+
+## Changes from revision 12
+
+- The size cut's limit is `max(--max-scale, --scale-ratio × typical size)`
+  instead of `--max-scale` alone. `--max-scale` keeps its name and its
+  default, 0.25 m, as the floor; `--scale-ratio` (default 4) is new.
+- `splat-density-cut.mjs` also measures the typical size, over the Gaussians
+  it keeps, and prints it as `typical_scale` in its JSON line.
+- The log's header line and report name the typical size and the limit.
+- Every ground scan delivered so far is cut exactly as before (the floor
+  applies). The drone scan's limit rises to about 0.79 m. After approval,
+  `air_force_headquarter_ariel` is cleaned again and the mosaic rebuilt.
+- Downstream: `specs/splat-mosaic.md` (how far a splat reaches past its
+  voxel) and `specs/voxel-quality.md` (why the sub-cell is 0.25 m) no longer
+  read "no axis is over 0.25 m"; neither one's behaviour changes.
 
 ## Changes from revision 9
 

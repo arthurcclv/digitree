@@ -16,6 +16,7 @@
 import { statSync } from 'node:fs';
 import { open, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { commentSource } from './ply-header.mjs';
 import { scannerFor } from './scanners/index.mjs';
 import { num, refuse, ScanFileError } from './scanners/xgrids.mjs';
 import { utm, utmZone } from './utm.mjs';
@@ -351,9 +352,7 @@ async function readPlyHeader(path) {
       if (comments.has(`scale${axis}`) && field(`scale${axis}`) !== 1) refuse(file, `has scale${axis} ${comments.get(`scale${axis}`)}; only 1 is supported`);
     }
     const offset = [field('offsetx'), field('offsety'), field('offsetz')];
-    const sourceLine = lines.find((l) => /^comment source\s/.test(l));
-    const source = sourceLine ? sourceLine.replace(/^comment source\s+/, '').trim() || null : null;
-    return { lines, headerLen, count, stride, props, normals, epsg, ...zone, offset, source };
+    return { lines, headerLen, count, stride, props, normals, epsg, ...zone, offset, source: commentSource(lines) };
   } finally {
     await fh.close();
   }

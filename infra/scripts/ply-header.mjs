@@ -1,9 +1,10 @@
-// A scan's georeference, from its point_cloud.ply header, and a PLY's body
-// layout, for splat-mosaic.mjs: each cleaned scan is moved into the common
-// frame by its original's offset, and read through its layout. Every refusal
-// throws, naming the scan; the caller prints it and exits. `num` is shared
-// too, and throws the same way. The rules are in specs/splat-mosaic.md,
-// *Inputs*.
+// A scan's georeference and source, from its point_cloud.ply header, and a
+// PLY's body layout. splat-mosaic.mjs moves each cleaned scan into the common
+// frame by its original's offset and reads it through its layout;
+// process-splat.sh reads the source, and splat-align.mjs reads it the same
+// way. Every refusal throws, naming the scan; the caller prints it and exits.
+// `num` is shared too, and throws the same way. The rules are in
+// specs/splat-mosaic.md, *Inputs*.
 import { existsSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -18,9 +19,9 @@ export function num(raw, what) {
   return v;
 }
 
-// The PLY header's comments, read without the vertices (the files are ~1 GB):
-// `comment <key> <value>` lines up to end_header.
-async function plyComments(path) {
+// The PLY header's lines up to end_header, read without the vertices (the
+// files are ~1 GB), or null when the file has no PLY header.
+async function headerLines(path) {
   const fh = await open(path, 'r');
   try {
     const buf = Buffer.alloc(64 * 1024);
@@ -28,15 +29,36 @@ async function plyComments(path) {
     const text = buf.subarray(0, bytesRead).toString('latin1');
     const end = text.indexOf('end_header');
     if (!text.startsWith('ply') || end < 0) return null;
-    const comments = new Map();
-    for (const l of text.slice(0, end).split(/\r?\n/)) {
-      const [kw, key, value, ...rest] = l.trim().split(/\s+/);
-      if (kw === 'comment' && key && value !== undefined && rest.length === 0) comments.set(key, value);
-    }
-    return comments;
+    return text.slice(0, end).split(/\r?\n/);
   } finally {
     await fh.close();
   }
+}
+
+// The header's comments: `comment <key> <value>` lines.
+async function plyComments(path) {
+  const lines = await headerLines(path);
+  if (!lines) return null;
+  const comments = new Map();
+  for (const l of lines) {
+    const [kw, key, value, ...rest] = l.trim().split(/\s+/);
+    if (kw === 'comment' && key && value !== undefined && rest.length === 0) comments.set(key, value);
+  }
+  return comments;
+}
+
+// A header's `comment source` — the rest of the line — or null: which scanner
+// made the scan. splat-align.mjs picks its scanner module by it, and
+// process-splat.sh decides by it whether a capture is aerial.
+export function commentSource(lines) {
+  const line = lines.find((l) => /^comment source\s/.test(l));
+  return line ? line.replace(/^comment source\s+/, '').trim() || null : null;
+}
+
+// The `comment source` of the PLY at `path`, or null.
+export async function plySource(path) {
+  const lines = await headerLines(path);
+  return lines && commentSource(lines);
 }
 
 // The capture's georeference: file (x, y, z) = (E, N, h) − offset, in the UTM

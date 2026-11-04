@@ -4,8 +4,8 @@
 //   node scripts/splat-density-cut.mjs -- <lib> <in> <out.ply> <cell m> <min-density>
 //
 // <lib> is splat-transform's library entry (dist/index.mjs of the global
-// install). Prints one JSON line — before, typical, kept — and exits 3 when
-// nothing would be kept, without writing <out.ply>. The rule and its numbers
+// install). Prints one JSON line — before, typical, kept, typical_scale — and
+// exits 3 when nothing would be kept, without writing <out.ply>. The rule and its numbers
 // are in specs/process-splat.md.
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -60,8 +60,23 @@ const threshold = minDensity * typical;
 
 const keep = [];
 for (let i = 0; i < n; i++) if (perGaussian[i] >= threshold) keep.push(i);
-console.log(JSON.stringify({ before: n, typical, kept: keep.length }));
-if (keep.length === 0) process.exit(3);
+if (keep.length === 0) {
+  console.log(JSON.stringify({ before: n, typical, kept: 0, typical_scale: null }));
+  process.exit(3);
+}
+
+// The typical size, for the size cut's limit: the median largest axis of the
+// Gaussians kept, so the floaters this cut removes do not shift it. The file
+// stores log scale and exp is monotonic, so the median is taken in log.
+const [s0, s1, s2] = ['scale_0', 'scale_1', 'scale_2'].map((c) => table.getColumnByName(c).data);
+const largest = new Float32Array(keep.length);
+for (let j = 0; j < keep.length; j++) {
+  const i = keep[j];
+  largest[j] = Math.max(s0[i], s1[i], s2[i]);
+}
+largest.sort();
+const typicalScale = Math.exp(largest[largest.length >> 1]);
+console.log(JSON.stringify({ before: n, typical, kept: keep.length, typical_scale: typicalScale }));
 
 // 3.10 writes chunk sources only, so the kept rows are gathered into one.
 const outName = basename(outPath);

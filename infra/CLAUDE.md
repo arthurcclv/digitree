@@ -36,7 +36,8 @@ load.sh              the whole bring-up in one command; restarts Martin (it
                      can serve a stale bind mount after a rebuild)
 scripts/             the splat tools, each an explicit step load.sh never runs:
   process-splat.sh   original/<scan>/ -> align -> density, size and floater
-                     cuts -> clean/<scan>.ply + <scan>.align.json
+                     cuts (floaters alone for a Drone capture) ->
+                     clean/<scan>.ply + <scan>.align.json
   splat-align.mjs    process-splat.sh's align step: RTK + lidar -> one rigid
                      correction, in the PLY's own frame
   scanners/          what each scanner delivers, one module per scanner, found
@@ -51,8 +52,9 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
   voxel-quality.mjs  the mosaic's per-voxel choice, behind its own seam
                      (name, version, score, choose)
   utm.mjs            WGS 84 <-> UTM, for splat-align and the tests
-  ply-header.mjs     a scan's point_cloud.ply georeference, and a PLY's body
-                     layout, for the mosaic
+  ply-header.mjs     a scan's point_cloud.ply georeference and source, and a
+                     PLY's body layout: for the mosaic, process-splat.sh's
+                     aerial check and splat-align.mjs's module choice
   build-lod.sh       tiles/<tile>.ply (one, several, or --all) -> Spark's
                      build-lod (v2.4.0, in Docker) -> lod/<tile>-lod.rad +
                      <tile>-lod-<n>.radc, the chunked tree the app draws

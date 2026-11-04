@@ -109,13 +109,84 @@ done
 # A delivered PLY carries a georeference, and the align step refuses one
 # without (splat-align.md revision 5); splat-transform writes none, so it is
 # added. It has no `comment source`, so the step skips it.
-node -e '
+georef() { node -e '
   const fs = require("fs"), p = process.argv[1], buf = fs.readFileSync(p);
   const end = buf.indexOf("end_header\n") + "end_header\n".length;
   const head = buf.subarray(0, end).toString("latin1")
-    .replace(/^(format [^\n]*\n)/m, "$1comment offsetx 0\ncomment offsety 0\ncomment offsetz 0\ncomment epsg 32651\n");
-  fs.writeFileSync(p, Buffer.concat([Buffer.from(head, "latin1"), buf.subarray(end)]));' \
-  -- "$SPLATS_ORIGINAL_DIR/as-ply/point_cloud.ply"
+    .replace(/^(format [^\n]*\n)/m, "$1comment offsetx 0\ncomment offsety 0\ncomment offsetz 0\ncomment epsg 32651\n" + (process.argv[2] ? `comment source ${process.argv[2]}\n` : ""));
+  fs.writeFileSync(p, Buffer.concat([Buffer.from(head, "latin1"), buf.subarray(end)]));' -- "$1" "${2:-}"; }
+georef "$SPLATS_ORIGINAL_DIR/as-ply/point_cloud.ply"
+# coarse: a capture as a drone delivers it, every Gaussian an order of
+# magnitude larger. main is 10³ = 1000 with a 0.3 m largest axis, so the
+# typical size is 0.3 m and the limit 4 × that, 1.2 m; big is 4 × 4 × 8 = 128
+# in a voxel of its own, 64 at 0.5 m (kept; revision 12's fixed 0.25 m
+# removed them) and 64 at 2 m (removed). A .ply, so no codebook pools them.
+# aerial is coarse plus a clump of 8 beside it, as `comment source Drone`:
+# no Gaussian is cut. ground is the same file as `comment source L2Pro`.
+# Both are written from coarse-clump.mjs.
+cat > "$work/gen/coarse.mjs" <<'EOF2'
+const extra = false; // true for aerial and ground: the clump of 8
+const rows = [];
+const clump = (at, n, scaleOf) => {
+  let k = 0;
+  for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let l = 0; l < n[2]; l++, k++) {
+    const scale = scaleOf(k);
+    rows.push({
+      x: at[0] + i * 0.01, y: at[1] + j * 0.01, z: at[2] + l * 0.01,
+      scale_0: Math.log(scale[0]), scale_1: Math.log(scale[1]), scale_2: Math.log(scale[2]),
+      rot_0: 1, rot_1: 0, rot_2: 0, rot_3: 0,
+      f_dc_0: 0.5, f_dc_1: 0.5, f_dc_2: 0.5, opacity: 5,
+    });
+  }
+};
+clump([-29.5, -39.5, 0.5], [10, 10, 10], () => [0.3, 0.3, 0.02]);
+clump([-29.5, -19.5, 0.5], [4, 4, 8], (k) => [k < 64 ? 0.5 : 2, 0.1, 0.02]);
+if (extra) clump([-9.5, -39.5, 0.5], [2, 2, 2], () => [0.3, 0.3, 0.02]);
+export class Generator {
+  static create() {
+    return { count: rows.length, columnNames: Object.keys(rows[0]), getRow: (i, row) => Object.assign(row, rows[i]) };
+  }
+}
+EOF2
+mkdir -p "$SPLATS_ORIGINAL_DIR/coarse"
+splat-transform -q --no-tty -w "$work/gen/coarse.mjs" "$SPLATS_ORIGINAL_DIR/coarse/point_cloud.ply"
+georef "$SPLATS_ORIGINAL_DIR/coarse/point_cloud.ply"
+sed 's/^const extra = false;/const extra = true;/' "$work/gen/coarse.mjs" > "$work/gen/coarse-clump.mjs"
+for d in aerial:Drone ground:L2Pro; do
+  mkdir -p "$SPLATS_ORIGINAL_DIR/${d%%:*}"
+  splat-transform -q --no-tty -w "$work/gen/coarse-clump.mjs" "$SPLATS_ORIGINAL_DIR/${d%%:*}/point_cloud.ply"
+  georef "$SPLATS_ORIGINAL_DIR/${d%%:*}/point_cloud.ply" "${d#*:}"
+done
+# spread: the typical size is taken over what the density cut keeps. main is
+# 10³ = 1000, 600 with a 0.1 m largest axis and 400 with 0.3 m, so over it
+# the median is 0.1 m and the limit 0.4 m. 50 clumps of 8 at 2 m, each in a
+# voxel of its own, are removed by the density cut; over all 1400 the median
+# would be 0.3 m and the limit 1.2 m.
+cat > "$work/gen/spread.mjs" <<'EOF3'
+const rows = [];
+const clump = (at, n, scaleOf) => {
+  let k = 0;
+  for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let l = 0; l < n[2]; l++, k++) {
+    const scale = scaleOf(k);
+    rows.push({
+      x: at[0] + i * 0.01, y: at[1] + j * 0.01, z: at[2] + l * 0.01,
+      scale_0: Math.log(scale[0]), scale_1: Math.log(scale[1]), scale_2: Math.log(scale[2]),
+      rot_0: 1, rot_1: 0, rot_2: 0, rot_3: 0,
+      f_dc_0: 0.5, f_dc_1: 0.5, f_dc_2: 0.5, opacity: 5,
+    });
+  }
+};
+clump([-29.5, -39.5, 0.5], [10, 10, 10], (k) => [k < 600 ? 0.1 : 0.3, 0.05, 0.02]);
+for (let c = 0; c < 50; c++) clump([0.5 + 4 * c, 0.5, 0.5], [2, 2, 2], () => [2, 0.05, 0.02]);
+export class Generator {
+  static create() {
+    return { count: rows.length, columnNames: Object.keys(rows[0]), getRow: (i, row) => Object.assign(row, rows[i]) };
+  }
+}
+EOF3
+mkdir -p "$SPLATS_ORIGINAL_DIR/spread"
+splat-transform -q --no-tty -w "$work/gen/spread.mjs" "$SPLATS_ORIGINAL_DIR/spread/point_cloud.ply"
+georef "$SPLATS_ORIGINAL_DIR/spread/point_cloud.ply"
 sed 's/^const only = Infinity;/const only = 1;/' "$work/gen/scene.mjs" > "$work/gen/main.mjs"
 splat-transform -q --no-tty -w "$work/gen/main.mjs" "$SPLATS_ORIGINAL_DIR/both/point_cloud.ply"
 cp "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog" "$SPLATS_ORIGINAL_DIR/both/"
@@ -134,6 +205,44 @@ expect_contains "reports the size cut on its own" "$log" "1395 kept by size"
 expect_contains "reports what it removed" "$log" "1395 kept after floaters; 80 removed in all (5.4%)"
 expect_contains "skips the align step for a .sog" "$log" "align skipped: point_cloud.sog is not a point_cloud.ply"
 expect "  and says so beside the .ply" "$(node -e 'const j = require(process.argv[1]); console.log(j.status, j.reason)' -- "$SPLATS_CLEAN_DIR/scene.align.json")" "skipped point_cloud.sog is not a point_cloud.ply"
+
+case_ "the size limit follows the capture"
+log=$(process scene)
+expect_contains "the scene's typical size is 0.02 m, so the floor holds" "$log" "typical size 0.02 m; size limit 0.25 m"
+if log=$(process coarse); then
+  expect_contains "a coarse capture's limit is 4 × its 0.3 m" "$log" "typical size 0.3 m; size limit 1.2 m"
+  expect "  so its 0.5 m Gaussians stay and its 2 m ones go" "$(count "$SPLATS_CLEAN_DIR/coarse.ply")" 1064
+else
+  bad "cleans a coarse capture" "$log"
+fi
+log=$(process coarse --scale-ratio 1)
+expect_contains "at --scale-ratio 1 the limit is the typical size" "$log" "size limit 0.3 m"
+expect "  and both sizes go" "$(count "$SPLATS_CLEAN_DIR/coarse.ply")" 1000
+if log=$(process spread); then
+  expect_contains "the typical size is taken after the density cut" "$log" "1400 gaussians; typical voxel holds 1000; 1000 kept by density"
+  expect_contains "  so the floaters it removes do not shift it" "$log" "typical size 0.1 m; size limit 0.4 m"
+else
+  bad "cleans a capture with large floaters" "$log"
+fi
+rm -f "$SPLATS_CLEAN_DIR"/coarse.* "$SPLATS_CLEAN_DIR"/spread.*
+
+case_ "an aerial capture is not cut"
+if log=$(process aerial); then
+  expect_contains "says so on its first line" "$log" "==> aerial (point_cloud.ply): align, no density or size cut (aerial), floaters"
+  expect_contains "names the source and skips both cuts" "$log" "1136 gaussians; density and size cuts skipped: aerial capture (source 'Drone')"
+  expect "  measures no typical size" "$(echo "$log" | grep -c 'typical size' || true)" 0
+  expect "  keeps the 2 m Gaussians and the clump of 8" "$(count "$SPLATS_CLEAN_DIR/aerial.ply")" 1136
+else
+  bad "cleans an aerial capture" "$log"
+fi
+if log=$(process ground); then
+  expect_contains "the same file as L2Pro has no module's files, so its align is skipped" "$log" "align skipped: no "
+  expect_contains "  and it is cut" "$log" "1136 gaussians; typical voxel holds 1000; 1128 kept by density"
+  expect "  as coarse is" "$(count "$SPLATS_CLEAN_DIR/ground.ply")" 1064
+else
+  bad "cleans the same file as L2Pro" "$log"
+fi
+rm -f "$SPLATS_CLEAN_DIR"/aerial.* "$SPLATS_CLEAN_DIR"/ground.*
 
 case_ "every coordinate negative"
 if log=$(process mirror); then
@@ -201,6 +310,8 @@ if log=$(process ../original/scene); then bad "refuses a path" "it succeeded"; e
 if log=$(process scene --cell 0); then bad "refuses a zero cell" "it succeeded"; else expect_contains "refuses a zero cell" "$log" "--cell must be a positive number"; fi
 if log=$(process scene --min-density -1); then bad "refuses a negative density" "it succeeded"; else expect_contains "refuses a negative density" "$log" "--min-density must be a positive fraction"; fi
 if log=$(process scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
+if log=$(process scene --scale-ratio 0); then bad "refuses a zero ratio" "it succeeded"; else expect_contains "refuses a zero ratio" "$log" "--scale-ratio must be a positive number"; fi
+if log=$(process scene --scale-ratio -2); then bad "refuses a negative ratio" "it succeeded"; else expect_contains "refuses a negative ratio" "$log" "--scale-ratio must be a positive number"; fi
 # The density step is written against 3.10's library, so another version is
 # refused before anything runs.
 mkdir -p "$work/old"
@@ -256,6 +367,7 @@ log=$(process nometa)
 expect_contains "skips an L2 Pro scan without metadata.json" "$log" "align skipped: no metadata.json"
 if log=$(process drone); then
   expect_contains "cleans a Drone scan, skipping align" "$log" "align skipped: no scanner module for source 'Drone'"
+  expect_contains "  as an aerial capture" "$log" "density and size cuts skipped: aerial capture (source 'Drone')"
   expect "  and records it" "$(status_of drone)" skipped
 else
   bad "cleans a Drone scan, skipping align" "$log"

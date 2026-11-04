@@ -202,8 +202,8 @@ around and above the scene, oversized blobs, and floaters.
 as a lossless `.ply`:
 
 ```bash
-./scripts/process-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= 0.25 m
-./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+./scripts/process-splat.sh KZ0918-075047                          # 2 m voxels, 1%, every axis <= max(0.25 m, 4 × typical size)
+./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 ```
 
 It reads the scan's one `point_cloud.<ext>` — `.ply`, `.compressed.ply`,
@@ -241,7 +241,12 @@ The outlier rule follows the capture's own distribution, not a distance. It
 counts the Gaussians in 2 m cubes (`--cell`), takes the count of the cube the
 median Gaussian sits in as the capture's typical density, and drops every
 cube holding less than 1% of that (`--min-density`). Then it drops the
-Gaussians with any axis over `--max-scale` and runs splat-transform's floater
+Gaussians with any axis over the size limit, `max(--max-scale, --scale-ratio ×
+typical size)`, where the typical size is the median largest axis of what the
+density cut kept: 0.25 m, the floor, for every ground scan. An aerial capture — a
+`point_cloud.ply` whose `comment source` is `Drone` — skips both cuts and
+gets the floater filter alone: seen from above, its sparse areas are real
+surface and its large Gaussians its sampling. Then it runs splat-transform's floater
 filter (`--floaters`, its defaults). So a long or L-shaped street is kept
 whole, and a sky floater above a dense street goes. It always reads
 `original/`, so re-running with other settings never compounds the cuts.

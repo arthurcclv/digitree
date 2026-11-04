@@ -2,10 +2,11 @@
 # Process one Gaussian splat capture for serving: correct its placement
 # against the scanner's RTK and lidar, drop the Gaussians outside the capture's
 # own distribution, the oversized ones and the floaters, and write it as a
-# lossless .ply for splat-mosaic.mjs.
+# lossless .ply for splat-mosaic.mjs. An aerial capture (comment source
+# Drone) gets the floater pass alone.
 #
-#   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, 0.25 m
-#   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5
+#   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, max(0.25 m, 4 × typical size)
+#   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 #
 # Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, and for the
 # align step the files its scanner module reads (specs/scanners.md) — and
@@ -22,13 +23,21 @@ clean_dir=${SPLATS_CLEAN_DIR:-$infra/data/3dgs/clean}
 
 cell=2
 min_density=0.01
+# The size cut's limit is max(max_scale, scale_ratio × the capture's typical
+# size): a drone capture's Gaussians are ~10× a ground scan's, and the floor
+# keeps every ground scan at 0.25 m.
 max_scale=0.25
+scale_ratio=4
+# The `comment source` values of aerial captures, which skip the density and
+# size cuts: seen from above, sparse areas are real surface and large
+# Gaussians are the sampling, not outliers.
+aerial_sources=(Drone)
 # splat-transform's own defaults for -F, spelled out so a change in its
 # defaults does not silently change what this script does.
 floaters=0.05,0.1,0.004
 
 die() { echo "error: $*" >&2; exit 1; }
-usage() { echo "usage: $0 <scan> [--cell <m>] [--min-density <f>] [--max-scale <m>] [--floaters <size,op,min>]" >&2; exit 2; }
+usage() { echo "usage: $0 <scan> [--cell <m>] [--min-density <f>] [--max-scale <m>] [--scale-ratio <k>] [--floaters <size,op,min>]" >&2; exit 2; }
 is_positive() { [[ $1 =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] && [[ ! $1 =~ ^0*\.?0*$ ]]; }
 
 [ $# -ge 1 ] || usage
@@ -38,6 +47,7 @@ while [ $# -gt 0 ]; do
     --cell)        [ $# -ge 2 ] || usage; cell=$2; shift 2 ;;
     --min-density) [ $# -ge 2 ] || usage; min_density=$2; shift 2 ;;
     --max-scale)   [ $# -ge 2 ] || usage; max_scale=$2; shift 2 ;;
+    --scale-ratio) [ $# -ge 2 ] || usage; scale_ratio=$2; shift 2 ;;
     --floaters)    [ $# -ge 2 ] || usage; floaters=$2; shift 2 ;;
     *) usage ;;
   esac
@@ -46,6 +56,7 @@ done
 is_positive "$cell"        || die "--cell must be a positive number of metres, got '$cell'"
 is_positive "$min_density" || die "--min-density must be a positive fraction, got '$min_density'"
 is_positive "$max_scale"   || die "--max-scale must be a positive number of metres, got '$max_scale'"
+is_positive "$scale_ratio" || die "--scale-ratio must be a positive number, got '$scale_ratio'"
 case $scan in
   */*|.|..|"") die "'$scan' must be a bare scan folder name in $original_dir" ;;
 esac
@@ -98,7 +109,34 @@ json() { node -e '
     console.log(process.argv.slice(1).map(k => j[k]).join(" "));
   });' -- "$@"; }
 
-echo "==> $scan (${found[0]}): align, density in ${cell} m voxels >= ${min_density} x typical, every axis <= ${max_scale} m, floaters $floaters"
+# One splat-transform run, failing the script with the reason if it fails.
+transform() {
+  local log
+  if ! log=$(splat-transform --no-tty -w "$@" 2>&1); then
+    echo "$log" >&2
+    case $log in
+      *"No Gaussians to write"*) die "$scan: these settings remove every Gaussian; $out is unchanged" ;;
+      *) die "$scan: splat-transform failed; $out is unchanged" ;;
+    esac
+  fi
+}
+gaussians() { splat-transform -q --no-tty "$1" --info json null | json numGaussians; }
+
+# Aerial when the PLY's header names an aerial source; other formats carry none.
+capture_source=
+if [ "${found[0]}" = point_cloud.ply ]; then
+  capture_source=$(node --input-type=module -e '
+    const { plySource } = await import(process.argv[1]);
+    console.log((await plySource(process.argv[2])) ?? "");' -- "$infra/scripts/ply-header.mjs" "$in")
+fi
+aerial=
+for s in "${aerial_sources[@]}"; do [ "$capture_source" = "$s" ] && aerial=1; done
+
+if [ -n "$aerial" ]; then
+  echo "==> $scan (${found[0]}): align, no density or size cut (aerial), floaters $floaters"
+else
+  echo "==> $scan (${found[0]}): align, density in ${cell} m voxels >= ${min_density} x typical, every axis <= max(${max_scale} m, ${scale_ratio} x typical size), floaters $floaters"
+fi
 
 # 0. Align: correct the capture's placement in its own frame. splat-align.mjs
 # picks the scanner module by the PLY's `comment source` and skips (exit 5)
@@ -125,40 +163,40 @@ else
   esac
 fi
 
-# 1. The density cut, which splat-transform's CLI cannot express.
-rc=0
-report=$(node "$infra/scripts/splat-density-cut.mjs" -- "$lib" "$in" "$work/dense.ply" "$cell" "$min_density") || rc=$?
-[ "$rc" = 3 ] && die "$scan: these settings remove every Gaussian; $out is unchanged"
-[ "$rc" = 0 ] || die "$scan: the density step failed; $out is unchanged"
-read -r before typical dense < <(echo "$report" | json before typical kept)
-rm -f "$work/aligned.ply" # ~1 GB per 13M Gaussians; dense.ply holds the rest
-echo "    $before gaussians; typical voxel holds $typical; $dense kept by density"
+if [ -n "$aerial" ]; then
+  # 1–2 skipped: the floater pass reads the original, or the aligned file.
+  before=$(gaussians "$in")
+  echo "    $before gaussians; density and size cuts skipped: aerial capture (source '$capture_source')"
+  floater_input=$in
+else
+  # 1. The density cut, which splat-transform's CLI cannot express.
+  rc=0
+  report=$(node "$infra/scripts/splat-density-cut.mjs" -- "$lib" "$in" "$work/dense.ply" "$cell" "$min_density") || rc=$?
+  [ "$rc" = 3 ] && die "$scan: these settings remove every Gaussian; $out is unchanged"
+  [ "$rc" = 0 ] || die "$scan: the density step failed; $out is unchanged"
+  read -r before typical dense typical_scale < <(echo "$report" | json before typical kept typical_scale)
+  rm -f "$work/aligned.ply" # ~1 GB per 13M Gaussians; dense.ply holds the rest
+  echo "    $before gaussians; typical voxel holds $typical; $dense kept by density"
+  # The limit goes to -V exact; only the log rounds it, so a Gaussian at the
+  # limit is never cut by the rounding.
+  read -r limit typical_shown limit_shown < <(node -e '
+    const [f, k, t] = process.argv.slice(1).map(Number), limit = Math.max(f, k * t);
+    console.log(limit, +t.toPrecision(3), +limit.toPrecision(4));' -- "$max_scale" "$scale_ratio" "$typical_scale")
+  echo "    typical size $typical_shown m; size limit $limit_shown m"
 
-# One splat-transform run, failing the script with the reason if it fails.
-transform() {
-  local log
-  if ! log=$(splat-transform --no-tty -w "$@" 2>&1); then
-    echo "$log" >&2
-    case $log in
-      *"No Gaussians to write"*) die "$scan: these settings remove every Gaussian; $out is unchanged" ;;
-      *) die "$scan: splat-transform failed; $out is unchanged" ;;
-    esac
-  fi
-}
-gaussians() { splat-transform -q --no-tty "$1" --info json null | json numGaussians; }
-
-# 2. Size cut, to a second lossless .ply so its own count can be reported.
-# -V on scale_* compares in metres, though the file stores log scale:
-# scale_0,lte,0 keeps nothing.
-transform "$work/dense.ply" \
-  -V "scale_0,lte,$max_scale" -V "scale_1,lte,$max_scale" -V "scale_2,lte,$max_scale" \
-  "$work/sized.ply"
-sized=$(gaussians "$work/sized.ply")
-echo "    $sized kept by size"
+  # 2. Size cut, to a second lossless .ply so its own count can be reported.
+  # -V on scale_* compares in metres, though the file stores log scale:
+  # scale_0,lte,0 keeps nothing.
+  transform "$work/dense.ply" \
+    -V "scale_0,lte,$limit" -V "scale_1,lte,$limit" -V "scale_2,lte,$limit" \
+    "$work/sized.ply"
+  echo "    $(gaussians "$work/sized.ply") kept by size"
+  floater_input=$work/sized.ply
+fi
 
 # 3. Floaters, to the lossless .ply the mosaic reads. No SPZ: nothing fetches
 # the file itself any more, and build-lod reads the tiles' .ply.
-transform "$work/sized.ply" -F "$floaters" "$tmp"
+transform "$floater_input" -F "$floaters" "$tmp"
 
 after=$(gaussians "$tmp")
 mv "$work/align.json" "$align_out"

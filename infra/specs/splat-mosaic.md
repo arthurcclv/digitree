@@ -157,8 +157,12 @@ The grid is fixed in the zone, not to the data:
 - **A voxel** covers `[e, e + 1) × [n, n + 1) × [h, h + 1)` in (E, N, H) for
   integers e, n, h. 10,000 voxel columns make a tile.
 - **A splat belongs to the voxel holding its centre.** Its extent is not
-  considered. After the size cut no axis is over 0.25 m, so a splat reaches at
-  most about 0.75 m (3σ) into a neighbouring voxel or tile.
+  considered. After the size cut no axis is over its scan's limit
+  (`specs/process-splat.md`): 0.25 m on the ground scans, so a splat reaches
+  at most about 0.75 m (3σ) into a neighbouring voxel or tile. The drone
+  scan is not size-cut (`process-splat.md`, *Aerial captures*): its p99
+  largest axis is 1.48 m, so most of its splats reach under about 4.5 m,
+  and a few reach further.
 
 Because the grid is fixed, adding a scan or re-cleaning one can change only
 the voxels it reaches. Every other voxel keeps its winner.

@@ -6,6 +6,58 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-03 — an aerial splat capture skips the density and size cuts
+
+**Decision.** `process-splat.sh` treats a `point_cloud.ply` whose `comment
+source` is in its `aerial_sources` (today `Drone`) as aerial, and runs only
+the floater pass on it. Every other capture is cleaned as before.
+`infra/specs/process-splat.md` revision 14. Partly supersedes the entry
+below, which ruled out a rule per scanner source.
+
+**Why.** Both cuts measure a capture against a ground scan's expectations.
+On the drone capture they removed 5.1% even with the relative size limit;
+what they removed was roof edges and ground between buildings, not
+outliers. The operator chose to keep it whole rather than tune its cuts.
+
+**Rules out.** Detecting aerial captures by their Gaussians' sizes or
+extent; per-aerial-capture cut settings.
+
+**Revisit if** a drone capture arrives with real sky floaters or blobs the
+floater pass misses, or an aerial source other than `Drone` is delivered
+(add it to `aerial_sources`).
+
+---
+
+## 2026-11-03 — the splat size cut follows the capture's typical size
+
+> **Superseded in part** by "an aerial splat capture skips the density and
+> size cuts" (2026-11-03): an aerial capture is no longer size-cut at all,
+> so a rule per scanner source is no longer ruled out. Every other capture
+> keeps this limit.
+
+**Decision.** `process-splat.sh` keeps a Gaussian when every axis is at most
+`max(--max-scale, --scale-ratio × typical size)`, the typical size being the
+median largest axis of what the density cut kept. `--max-scale` (0.25 m)
+becomes the floor; `--scale-ratio` defaults to 4.
+`infra/specs/process-splat.md` revision 13.
+
+**Why.** The fixed 0.25 m removed 38.9% of the drone capture
+(`air_force_headquarter_ariel`, typical size 0.198 m), against 2–3% of the
+ground scans (0.011–0.037 m): it was cutting the drone capture's body, not
+its outliers. A limit relative to the capture, like the density cut's, needs
+no setting per scanner or per flight; the floor leaves every ground scan
+exactly as it was.
+
+**Rules out.** A limit per scanner source; a percentile cut (it removes a
+share of even a clean capture); a ratio without the floor (4 × 0.011 m would
+cut the L2 Pro scans at 0.04 m).
+
+**Revisit if** a capture mixes ground and aerial imagery in one PLY, so its
+median sits between the two, or if the mosaic's choice starts preferring the
+drone's larger splats over a ground scan's.
+
+---
+
 ## 2026-11-03 — splat-align reads each scanner through its own module
 
 **Decision.** What a scanner delivers is read by one module per scanner in
