@@ -34,7 +34,11 @@ services:
       retries: 30
 
   martin:
-    image: ghcr.io/maplibre/martin:latest
+    # Pinned, not :latest, so a new Martin release never arrives unannounced:
+    # martin.yaml's syntax and how Martin reads it can change between versions.
+    # test/martin.sh checks that this image serves martin.yaml; upgrade by
+    # changing the tag and re-running it (app/ai/DECISIONS.md 2026-11-06).
+    image: ghcr.io/maplibre/martin:1.16.1
     depends_on:
       db:
         condition: service_healthy

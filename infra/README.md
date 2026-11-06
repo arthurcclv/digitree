@@ -60,6 +60,12 @@ scans or tiles it generates in a scratch directory, and runs on its own too:
 `node` and `splat-transform`). `run.sh` also loads a `georef.csv` the real
 mosaic wrote through the real `04_splats.sql`.
 
+`./test/martin.sh` runs on its own, after `./load.sh`: it starts a throwaway
+Martin from the image `docker-compose.yml` pins, with the real `martin.yaml`,
+and checks that it connects and publishes `trees` and `splats`. Run it after
+changing the Martin tag; it needs the loaded development database, which is
+why `run.sh` does not run it.
+
 `sql/03_checks.sql` also runs as the last step of `./load.sh`, so a load that
 produces a structurally wrong table fails there rather than on the map.
 

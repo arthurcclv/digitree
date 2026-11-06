@@ -23,7 +23,8 @@ the cleaning rules, the published property names — are recorded in
 change here that needs one appends it there.
 
 ```
-docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin + nginx (files)
+docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin (pinned, 1.16.1)
+                     + nginx (files)
 martin.yaml          which tables are published, and under what names
 files.conf           the files service: data/3dgs/tiles/ read-only at /3dgs/,
                      data/3dgs/lod/ at /3dgs-lod/
@@ -66,7 +67,9 @@ test/                fixture CSVs and run.sh, the loader's test suite, which
                      (+ splat-align-scene.mjs, its scan generator);
                      voxel-quality.sh (+ voxel-quality-cases.mjs);
                      splat-mosaic.sh (+ splat-mosaic-scene.mjs, its PLY
-                     writer and reader); build-lod.sh
+                     writer and reader); build-lod.sh. martin.sh, apart:
+                     the pinned Martin serves martin.yaml, against the
+                     loaded dev database
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 data/3dgs/           splat captures and georef.csv (gitignored):

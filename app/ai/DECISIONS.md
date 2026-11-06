@@ -6,6 +6,31 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — infra's Martin image is pinned to an exact version
+
+**Decision.** `infra/docker-compose.yml` runs `ghcr.io/maplibre/martin:1.16.1`
+instead of `:latest`. `infra/test/martin.sh` checks that the pinned image,
+given the real `martin.yaml`, connects to the loaded database and publishes
+`trees` and `splats`. (Martin's tags have no `v` prefix: `v1.16.1` does not
+exist on GHCR.)
+
+**Why.** With `:latest`, a new Martin arrives on any fresh pull, and nobody
+chooses it or checks it. Martin's config format and its
+database discovery change between releases, and a Martin that fails to start
+shows in the app only as a proxy error on `/tiles`. 1.16.1 is what `:latest`
+pointed to when this was pinned (the same image digest), so nothing changes
+today. The pin did not cause or fix the startup failure that prompted it: one
+Martin container could not reach `db` while every container created
+afterwards could. The cause was not found, and recreating the container
+cleared it.
+
+**Rules out.** Floating tags (`latest`, `1`, `1.16`) for Martin.
+
+**Revisit if** a Martin release is wanted. Change the tag and run
+`./test/martin.sh`.
+
+---
+
 ## 2026-11-03 — an aerial splat capture skips the density and size cuts
 
 **Decision.** `process-splat.sh` treats a `point_cloud.ply` whose `comment
