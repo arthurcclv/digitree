@@ -6,6 +6,34 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — infra can publish Martin and `files` on the network, opt-in
+
+**Decision.** `PUBLISH_ADDR` (default `127.0.0.1`) is the host address
+Compose publishes Martin and `files` on; `db` stays on `127.0.0.1` always.
+`files.conf` sends `Access-Control-Allow-Origin: *`, exposes the range
+headers and answers the `Range` preflight, whatever `PUBLISH_ADDR` is.
+Martin's CORS stays its default (any origin), pinned by `test/martin.sh`.
+`infra/specs/network-access.md`. Partly reverses infra's "development
+fixture, ports on `127.0.0.1`, no deployment story", which no earlier entry
+records (it was stated only in `infra/CLAUDE.md`, now revised): a deploy may
+now opt in to serving other machines.
+
+**Why.** A frontend hosted on another machine wants the splats from infra
+directly, at `192.168.81.32:3001` and `:3080`. With both on `127.0.0.1` it
+could only go through the app's `:4173` proxy, or rebuild that proxy in its
+own server. `files` sent no CORS headers, so even reachable, a browser on
+another origin could not read a `.rad`. Opt-in keeps every development
+machine as closed as before.
+
+**Rules out.** Publishing `db`; an echoed or allow-listed origin for `files`
+(the files are public and fetched without credentials); authentication, TLS
+or rate limiting in infra; a separate address per service.
+
+**Revisit if** the host faces anything but a trusted LAN, a client needs
+credentials, or an HTTPS frontend needs TLS on infra itself.
+
+---
+
 ## 2026-11-06 — a splat scan's config skips steps; no rule by scanner source
 
 **Decision.** A scan's `process_splat_config.json` may hold `skip`, naming

@@ -380,13 +380,16 @@ docker compose exec -T db psql -q -U taipei -d taipei -c "DROP DATABASE IF EXIST
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 
-# --- the splat tools ------------------------------------------------------------
+# --- the splat tools, and the serving config --------------------------------
 #
 # Each has its own suite, with its own count, and runs on its own as
 # ./test/<tool>.sh: they need splat-transform, node or Docker rather than the
-# database.
+# database. files and compose test the stack's serving config, not a tool:
+# files.conf's CORS against the pinned nginx, and the addresses Compose
+# publishes on (specs/network-access.md).
 suites_ok=1
-for suite in process-splat splat-align voxel-quality splat-mosaic build-lod; do
+for suite in process-splat splat-align voxel-quality splat-mosaic build-lod \
+             files compose; do
   printf '\n== %s ==\n' "$suite"
   ./test/$suite.sh || suites_ok=0
 done

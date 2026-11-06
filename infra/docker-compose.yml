@@ -1,5 +1,6 @@
-# Local-only data stack. Credentials are deliberately trivial and the ports are
-# published on localhost: this is a development fixture, not a deployment.
+# Local data stack. Credentials are deliberately trivial and the ports are
+# published on localhost by default: this is a development fixture. Martin and
+# files can be published on the network with PUBLISH_ADDR; db never is.
 services:
   db:
     # imresamu/postgis is the multi-arch build of the PostGIS image (the Docker
@@ -10,6 +11,8 @@ services:
       POSTGRES_USER: taipei
       POSTGRES_PASSWORD: taipei
       POSTGRES_DB: taipei
+    # Never PUBLISH_ADDR: the credentials are trivial, and only load.sh and
+    # the tests talk to it (specs/network-access.md).
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -45,8 +48,10 @@ services:
     # MARTIN_PORT moves the host side only, for a machine whose :3000 is
     # taken; Martin itself always listens on 3000 (martin.yaml). The app's
     # proxy must follow it: TILES_PROXY_TARGET, see app/src/lib/tiles/specs/proxy.md.
+    # PUBLISH_ADDR is the host address it is published on: 127.0.0.1 unless a
+    # deploy opts in to serving other machines (specs/network-access.md).
     ports:
-      - "127.0.0.1:${MARTIN_PORT:-3000}:3000"
+      - "${PUBLISH_ADDR:-127.0.0.1}:${MARTIN_PORT:-3000}:3000"
     volumes:
       - ./martin.yaml:/config/martin.yaml:ro
     command: ["--config", "/config/martin.yaml"]
@@ -61,8 +66,10 @@ services:
   # remote host uses for Martin.
   files:
     image: nginx:1.28.0-alpine
+    # PUBLISH_ADDR as for Martin. files.conf sends CORS headers, so a
+    # browser on another origin can read the files when it is set.
     ports:
-      - "127.0.0.1:${FILES_PORT:-3080}:80"
+      - "${PUBLISH_ADDR:-127.0.0.1}:${FILES_PORT:-3080}:80"
     volumes:
       - ./data/3dgs/tiles:/srv/3dgs:ro
       - ./data/3dgs/lod:/srv/3dgs-lod:ro

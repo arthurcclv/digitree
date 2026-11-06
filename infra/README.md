@@ -36,6 +36,48 @@ Check what answers on the port first. Another web server on `:3000` makes the
 app fail with `Unimplemented type: 4`, because it gets back an HTML page where
 a tile should be.
 
+### Serving other machines
+
+By default nothing here is reachable from another machine. To let a frontend
+hosted elsewhere talk to Martin and `files` directly, publish them on the
+network with `PUBLISH_ADDR` (`specs/network-access.md`). `db` stays on
+`127.0.0.1` either way.
+
+```bash
+PUBLISH_ADDR=0.0.0.0 MARTIN_PORT=3001 ./load.sh
+```
+
+Set the same variables for every later `docker compose` command, or Compose
+moves the services back to `127.0.0.1`. `PUBLISH_ADDR` may also be one
+interface's address, such as `192.168.81.32`; then nothing answers on
+`localhost`, and the app on the same host needs
+`TILES_PROXY_TARGET=http://192.168.81.32:3001` and
+`FILES_PROXY_TARGET=http://192.168.81.32:3080`. Docker publishes past `ufw`,
+so restricting who may connect is a host firewall rule (`DOCKER-USER`).
+
+A frontend then uses, with no `/tiles` or `/files` prefix:
+
+| what | URL |
+| --- | --- |
+| splat placements (MVT) | `http://<host>:3001/splats/{z}/{x}/{y}` |
+| a tile's LoD header | `http://<host>:3080/3dgs-lod/<stem>-lod.rad` |
+| its chunks | `http://<host>:3080/3dgs-lod/<stem>-lod-<n>.radc` |
+
+Martin allows any origin by default, and `files.conf` sends
+`Access-Control-Allow-Origin: *` and answers the `Range` preflight. Check from
+another machine:
+
+```bash
+curl -sI -H 'Origin: http://x' http://<host>:3001/catalog | grep -i access-control-allow-origin
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Range: bytes=0-15' \
+  http://<host>:3080/3dgs-lod/<tile>-lod.rad            # 206
+curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS -H 'Origin: http://x' \
+  -H 'Access-Control-Request-Headers: range' http://<host>:3080/3dgs-lod/<tile>-lod.rad   # 204
+```
+
+An HTTPS frontend cannot call these `http://` URLs (mixed content); it still
+needs its own proxy, as the app does.
+
 `docker compose down` stops it. `docker compose down -v` also drops the database
 volume — the right way to start over.
 
@@ -60,9 +102,15 @@ scans or tiles it generates in a scratch directory, and runs on its own too:
 `node` and `splat-transform`). `run.sh` also loads a `georef.csv` the real
 mosaic wrote through the real `04_splats.sql`.
 
+`./test/files.sh` (Docker) starts the pinned nginx with the real `files.conf`
+over stand-in files and checks the CORS headers, ranges, the preflight, `304`
+and `404`. `./test/compose.sh` checks the addresses Compose publishes on, with
+and without `PUBLISH_ADDR`, without starting anything. `run.sh` runs both.
+
 `./test/martin.sh` runs on its own, after `./load.sh`: it starts a throwaway
 Martin from the image `docker-compose.yml` pins, with the real `martin.yaml`,
-and checks that it connects and publishes `trees` and `splats`. Run it after
+and checks that it connects, publishes `trees` and `splats`, and allows a
+request from another origin. Run it after
 changing the Martin tag; it needs the loaded development database, which is
 why `run.sh` does not run it.
 

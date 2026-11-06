@@ -498,6 +498,10 @@ image), serves `./data/3dgs/tiles` read-only at `/3dgs/`, and
 `sendfile`, byte ranges, `Cache-Control: no-cache` with ETags (a replaced file
 is refetched, an unchanged one is not), no directory listing, and no gzip.
 The layer fetches only from `/3dgs-lod/`.
+It also sends CORS headers for any origin, and `PUBLISH_ADDR` can publish it
+beyond `127.0.0.1`, for frontends other than this app that read it directly
+(`infra/specs/network-access.md`). The app is unaffected: it still goes
+through its same-origin proxy.
 
 The app reaches it through a second same-origin proxy, exactly like `/tiles`
 (`src/lib/tiles/specs/proxy.md` gains the entry): `/files/*` →
@@ -849,7 +853,9 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
    misalignment as a step.
 3. **`FILES_PORT` default `3080`** (decided). Free on the development machine;
    it avoids `3000` and the remote host's `3001`. Check the remote host before
-   deploying.
+   deploying, and before publishing it there with `PUBLISH_ADDR`
+   (`infra/specs/network-access.md`): another machine's frontend then uses
+   that port in its URLs.
 4. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
 

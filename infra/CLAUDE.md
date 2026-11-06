@@ -11,11 +11,15 @@ dropped into `data/custom/` — to `app/` as Mapbox Vector Tiles, and the
 Gaussian splat captures in `data/3dgs/`, as a mosaic of 100 m tiles: their
 placements as tiles from Martin, their LoD trees from a static `files`
 service. It is a
-**development fixture**: credentials are trivial, ports bind to `127.0.0.1`,
-and there is no deployment story. Do not add one without a decision
-entry. The one concession is `MARTIN_PORT`, which moves Martin's host port off
-a taken `:3000` (DECISIONS 2026-10-12), and `FILES_PORT`, its twin for the
-`files` service (default `:3080`).
+**development fixture**: credentials are trivial, ports bind to `127.0.0.1`
+by default, and there is no deployment story beyond the settings below. Do not
+add more without a decision entry. `MARTIN_PORT` moves Martin's host port off
+a taken `:3000` (DECISIONS 2026-10-12), and `FILES_PORT` is its twin for the
+`files` service (default `:3080`). `PUBLISH_ADDR` (default `127.0.0.1`) opts
+Martin and `files` in to serving other machines, for a frontend that talks
+to them directly; `files.conf` sends CORS headers for that
+(`specs/network-access.md`, DECISIONS 2026-11-06). `db` is never published
+beyond `127.0.0.1`, whatever `PUBLISH_ADDR` says.
 
 `infra/` has no `DECISIONS.md` of its own. Its decisions — the drop-in schema,
 the cleaning rules, the published property names — are recorded in
@@ -27,7 +31,8 @@ docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin (pinned, 1.16.1)
                      + nginx (files)
 martin.yaml          which tables are published, and under what names
 files.conf           the files service: data/3dgs/tiles/ read-only at /3dgs/,
-                     data/3dgs/lod/ at /3dgs-lod/
+                     data/3dgs/lod/ at /3dgs-lod/, with CORS headers for
+                     any origin
 sql/01_schema.sql    the trees and splats tables and their indexes
 sql/02_load.sql      staging COPY -> normalise -> clean -> insert
 sql/03_checks.sql    assertions over the loaded table; fails the load
@@ -66,15 +71,21 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      <tile>-lod-<n>.radc, the chunked tree the app draws
 specs/               specs for the scripts (process-splat.md, splat-align.md,
                      scanners.md,
-                     splat-mosaic.md, voxel-quality.md, build-lod.md)
+                     splat-mosaic.md, voxel-quality.md, build-lod.md), and
+                     network-access.md for who can reach Martin and files
 test/                fixture CSVs and run.sh, the loader's test suite, which
                      then runs each tool's: process-splat.sh; splat-align.sh
                      (+ splat-align-scene.mjs, its scan generator);
                      voxel-quality.sh (+ voxel-quality-cases.mjs);
                      splat-mosaic.sh (+ splat-mosaic-scene.mjs, its PLY
-                     writer and reader); build-lod.sh. martin.sh, apart:
-                     the pinned Martin serves martin.yaml, against the
-                     loaded dev database
+                     writer and reader); build-lod.sh; then the serving
+                     config's: files.sh (files.conf's CORS, on the pinned
+                     nginx) and compose.sh (the addresses Compose
+                     publishes on); compose-config.mjs reads one field of
+                     `docker compose config` for those two and martin.sh.
+                     martin.sh, apart: the pinned Martin
+                     serves martin.yaml and allows other origins, against
+                     the loaded dev database
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 data/3dgs/           splat captures and georef.csv (gitignored):

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Martin's test: the image docker-compose.yml pins, given the real martin.yaml,
-# connects to the database and publishes both sources.
+# connects to the database, publishes both sources, and allows other origins.
 #
 # It runs a throwaway Martin from the compose service (same image, same config,
 # same network) with no host port, so the stack's own Martin and MARTIN_PORT
@@ -20,9 +20,7 @@ bad() { printf '  \033[31mFAIL\033[0m %s\n       %s\n' "$1" "$2"; fail=$((fail +
 
 NAME=infra-martin-test
 
-image=$(docker compose config --format json | node -e '
-  let s = ""; process.stdin.on("data", d => s += d).on("end", () =>
-    console.log(JSON.parse(s).services.martin.image))')
+image=$(docker compose config --format json | node test/compose-config.mjs martin image)
 case "$image" in
   *:latest | *[!0-9.]) bad "the image is pinned to an exact version" "got [$image]" ;;
   *) ok "the image is pinned to an exact version ($image)" ;;
@@ -62,6 +60,18 @@ for source in trees splats; do
     *) bad "  publishes $source" "not in the catalog" ;;
   esac
 done
+
+# Martin's default CORS lets a browser on any origin read it: what a frontend
+# that talks to Martin directly relies on (specs/network-access.md, rule 10).
+# A Martin upgrade that changes the default fails here.
+cors=$(docker compose exec -T db bash -c "
+  exec 3<>/dev/tcp/$NAME/3000 || exit 1
+  printf 'GET /catalog HTTP/1.0\r\nHost: martin\r\nOrigin: http://frontend.example:8080\r\n\r\n' >&3
+  cat <&3" 2>/dev/null | tr -d '\r' | sed -n 's/^[Aa]ccess-[Cc]ontrol-[Aa]llow-[Oo]rigin: //p')
+case "$cors" in
+  "*" | "http://frontend.example:8080") ok "allows a request from another origin (CORS)" ;;
+  *) bad "allows a request from another origin (CORS)" "Access-Control-Allow-Origin: [$cors]" ;;
+esac
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -72,17 +72,31 @@ echo "==> starting the files service (splat captures)"
 docker compose up -d files
 docker compose restart files
 
+# PUBLISH_ADDR opts Martin and files in to serving other machines
+# (specs/network-access.md); db stays on 127.0.0.1 whatever it says.
+publish=${PUBLISH_ADDR:-127.0.0.1}
 echo
-echo "done. verify with:"
-echo "  curl -s localhost:${MARTIN_PORT:-3000}/catalog | jq"
-echo "  curl -s localhost:${MARTIN_PORT:-3000}/trees | jq"
-echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs/<tile>.ply"
-echo "  curl -sI localhost:${FILES_PORT:-3080}/3dgs-lod/<tile>-lod.rad"
-if [ "${MARTIN_PORT:-3000}" != "3000" ]; then
-  echo "and start the app with TILES_PROXY_TARGET=http://localhost:${MARTIN_PORT}"
+echo "done. martin on ${publish}:${MARTIN_PORT:-3000}, files on ${publish}:${FILES_PORT:-3080}, db on 127.0.0.1:5432."
+if [ "$publish" != "127.0.0.1" ]; then
+  echo "Martin and files are reachable from other machines. Set PUBLISH_ADDR=${publish}"
+  echo "for every later docker compose command too, or they move back to 127.0.0.1."
 fi
-if [ "${FILES_PORT:-3080}" != "3080" ]; then
-  echo "and start the app with FILES_PROXY_TARGET=http://localhost:${FILES_PORT}"
+# Published on one address only, nothing answers on localhost: the checks
+# and the app's proxy targets must name that address.
+case "$publish" in
+  127.0.0.1 | 0.0.0.0) host=localhost ;;
+  *) host=$publish ;;
+esac
+echo "verify with:"
+echo "  curl -s ${host}:${MARTIN_PORT:-3000}/catalog | jq"
+echo "  curl -s ${host}:${MARTIN_PORT:-3000}/trees | jq"
+echo "  curl -sI ${host}:${FILES_PORT:-3080}/3dgs/<tile>.ply"
+echo "  curl -sI ${host}:${FILES_PORT:-3080}/3dgs-lod/<tile>-lod.rad"
+if [ "${MARTIN_PORT:-3000}" != "3000" ] || [ "$host" != localhost ]; then
+  echo "and start the app with TILES_PROXY_TARGET=http://${host}:${MARTIN_PORT:-3000}"
+fi
+if [ "${FILES_PORT:-3080}" != "3080" ] || [ "$host" != localhost ]; then
+  echo "and start the app with FILES_PROXY_TARGET=http://${host}:${FILES_PORT:-3080}"
 fi
 
 if [ "$splats_ok" = 0 ]; then
