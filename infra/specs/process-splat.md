@@ -1,6 +1,12 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 16, approved 2026-11-06**: a scan's
+Status: **revision 17, approved 2026-11-06**: a new first
+cut, **footprint pruning**, runs right after the align step. It puts every
+Gaussian in a 1 m voxel (`--footprint-cell`), joins occupied voxels that
+touch (26-connected) into groups, and keeps only the Gaussians of the
+group with the most voxels. A config may skip it as `footprint`. See
+*Footprint pruning* and *Changes from revision 16*.
+Revision 16, approved 2026-11-06: a scan's
 `process_splat_config.json` may name steps to **skip** — any of the
 density cut, the size cut and the floater pass — and those steps do not
 run on that scan. The aerial exception of revision 14 is removed: a
@@ -44,7 +50,8 @@ splat-transform reads. Revision 4
 
 A script in `infra/scripts/` that prepares one Gaussian splat capture for
 the mosaic: it corrects the capture's placement against the scanner's RTK
-and lidar (`splat-align.mjs`, when the scan carries what that needs), drops
+and lidar (`splat-align.mjs`, when the scan carries what that needs), keeps
+only the capture's main connected body (its footprint), drops
 the Gaussians that lie outside the capture's own distribution, the ones that
 are too large, and the floaters, and writes the result as a PLY. Every capture gets the same treatment from one command — except a
 scan whose folder holds a `process_splat_config.json`, which is cut with
@@ -57,7 +64,7 @@ the mosaic (`specs/splat-mosaic.md`), which merges every cleaned scan into
 the tiles the app draws.
 
 ```bash
-./scripts/process-splat.sh KZ0918-075047             # defaults: 2 m voxels, 1%, max(0.25 m, 4 × typical size)
+./scripts/process-splat.sh KZ0918-075047             # defaults: 1 m footprint, 2 m voxels, 1%, max(0.25 m, 4 × typical size)
 ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 ```
 
@@ -92,6 +99,7 @@ with travel with the scan. No tool writes it.
 | input | default | meaning |
 | --- | --- | --- |
 | `<scan>` | — | a bare scan folder name in `original/`; the script reads its one `point_cloud.<ext>` |
+| `--footprint-cell <m>` | `1` | edge of the cubic voxels footprint pruning joins into groups (below) |
 | `--cell <m>` | `2` | edge of the cubic voxels the density is counted in |
 | `--min-density <f>` | `0.01` | keep a Gaussian when its voxel holds at least `f` × the capture's typical density (below) |
 | `--max-scale <m>` | `0.25` | the size cut's **floor**: its limit is never below this (below) |
@@ -103,7 +111,7 @@ with travel with the scan. No tool writes it.
 The two directories are variables for the same reason the loader's inputs are
 psql variables: the test points the real script at a scratch directory.
 
-Each of the five cut settings is taken from, in order: its flag on the
+Each of the six cut settings is taken from, in order: its flag on the
 command line; else the scan's `process_splat_config.json`, when the file
 has that key; else the default above. Each setting is resolved on its own,
 so a config with `min_density` alone still takes the default `cell`.
@@ -115,6 +123,7 @@ so a config with `min_density` alone still takes the default `cell`.
 ```json
 {
   "version": 1,
+  "footprint_cell": 1,
   "cell": 2,
   "min_density": 0.01,
   "max_scale": 0.25,
@@ -128,12 +137,13 @@ so a config with `min_density` alone still takes the default `cell`.
 | key | type | required | flag it stands for | rule |
 | --- | --- | --- | --- | --- |
 | `version` | integer | yes | — | `1`, the only version this revision reads |
+| `footprint_cell` | number | no | `--footprint-cell` | > 0 |
 | `cell` | number | no | `--cell` | > 0 |
 | `min_density` | number | no | `--min-density` | > 0 |
 | `max_scale` | number | no | `--max-scale` | > 0 |
 | `scale_ratio` | number | no | `--scale-ratio` | > 0 |
 | `floaters` | object | no | `--floaters size,op,min` | exactly the keys `size`, `opacity`, `min`, each a number ≥ 0; passed to `-F` as `size,opacity,min` |
-| `skip` | array | no | — (no flag) | distinct step names, each `density`, `size` or `floaters`; `size` is required whenever `density` is named (*Skipped steps*) |
+| `skip` | array | no | — (no flag) | distinct step names, each `footprint`, `density`, `size` or `floaters`; `size` is required whenever `density` is named (*Skipped steps*) |
 | `note` | string | no | — | read by nobody; says why the scan has a config |
 
 - A value's rule is its flag's: the config is checked the way the flags
@@ -163,17 +173,19 @@ A config's `skip` names steps that do not run on the scan:
 
 | name | step | settings it makes unused |
 | --- | --- | --- |
-| `density` | 1, the density cut | `cell`, `min_density` |
-| `size` | 2, the size cut | `max_scale`, `scale_ratio` |
-| `floaters` | 3, the floater pass | `floaters` |
+| `footprint` | 1, footprint pruning | `footprint_cell` |
+| `density` | 2, the density cut | `cell`, `min_density` |
+| `size` | 3, the size cut | `max_scale`, `scale_ratio` |
+| `floaters` | 4, the floater pass | `floaters` |
 
 - `skip` is **refused** when it is not an array, when an entry is not one
-  of the three names (a misspelt `floater` would otherwise run the pass),
+  of the four names (a misspelt `floater` would otherwise run the pass),
   when a name repeats, or when it names `density` without `size`: the size
   cut's limit follows the typical size, which the density step measures,
-  so there is no limit to cut by without it. An empty array is valid and
-  changes nothing.
-- The align step (0) and the write (4) always run. With every step
+  so there is no limit to cut by without it. `footprint` is independent of
+  the others: it may be skipped alone or with any of them. An empty array
+  is valid and changes nothing.
+- The align step (0) and the write (5) always run. With every step
   skipped, the output is the original — or the aligned file — written by
   splat-transform as the same lossless `.ply` it always writes, with no
   Gaussian removed.
@@ -183,12 +195,13 @@ A config's `skip` names steps that do not run on the scan:
 - There is no `--skip` flag: a scan's skips are what it needs, and they
   live beside it. A flag for a skipped step is checked and unused.
 - **The log.** The first line names a skipped step in place of its
-  settings: `no density cut (skip)`, `no size cut (skip)`, `no floater pass
-  (skip)`. The `settings:` line's groups leave out a skipped
+  settings: `no footprint pruning (skip)`, `no density cut (skip)`, `no
+  size cut (skip)`, `no floater pass (skip)`. The `settings:` line's groups leave out a skipped
   step's settings; those a config or flag set are named after the groups as
   `unused, skipped (min_density)`. The line ends with
   `; skip (density, size)` naming the config's skips, in table order. The
-  count lines say `density and size cuts skipped: process_splat_config.json`
+  count lines say `footprint pruning skipped: process_splat_config.json`
+  in place of the footprint report, and `density and size cuts skipped: process_splat_config.json`
   in place of the density report when both are skipped, `size cut skipped:
   process_splat_config.json` in place of the limit's line and the size
   count when `size` alone is, and `<n> kept, floater pass skipped:
@@ -244,11 +257,11 @@ with `<ext>` one of:
    `specs/splat-align.md`). When the splat is `point_cloud.ply`, run the
    step: it reads the scan through its scanner's module, fits the trajectory
    to RTK, matches the lidar to the Gaussians, and moves every Gaussian by
-   the rigid correction found, in the PLY's own frame, to a temporary `.ply`; the density step reads that.
+   the rigid correction found, in the PLY's own frame, to a temporary `.ply`; the first cut that runs reads that.
    It is **skipped** when the splat is not `point_cloud.ply` (the script's
    own check), or when the step exits 5 — no module for the PLY's `comment
    source`, or a file the module reads missing — with the reason printed
-   (`align skipped: no map_config.json`), and the density step reads the
+   (`align skipped: no map_config.json`), and the first cut reads the
    original. When the step's validation **fails** (ICP inliers ≤ 40%, or
    RTK p95 > 0.10 m), it prints `error: <scan>: align failed (<reason>);
    continuing unaligned` on stderr and goes on with the original: the scan
@@ -257,7 +270,14 @@ with `<ext>` one of:
    fails the scan, naming the file. Either way the step's report is written
    to `clean/<scan>.align.json`, with `status` `pass`, `corrected`, `fail`
    or `skipped`.
-1. **Density cut** (`scripts/splat-density-cut.mjs`, a node step). Read the capture,
+1. **Footprint pruning** (`scripts/splat-footprint.mjs`, a node step; see
+   *Footprint pruning* below). Put every Gaussian in a cubic voxel of edge
+   `--footprint-cell` by its centre; a voxel holding at least one Gaussian
+   is **valid**. Valid voxels that share a face, an edge or a corner
+   (26-connectivity) are joined, transitively, into **groups**. Keep the
+   Gaussians of the group with the most valid voxels; write them to a
+   temporary `.ply` (lossless), which the density step reads.
+2. **Density cut** (`scripts/splat-density-cut.mjs`, a node step). Read the capture,
    put every Gaussian in a cubic voxel of edge `--cell` by its centre, and count
    each voxel. The voxels sit on multiples of `--cell` from the capture's
    origin, so their boundaries do not move with the capture's extremes. The
@@ -268,26 +288,28 @@ with `<ext>` one of:
    The same step measures the capture's **typical size**: the median, over
    the Gaussians it keeps, of each one's largest axis (`exp` of the largest
    of `scale_0..2`), in metres.
-2. **Size cut.** The **limit** is `max(--max-scale, --scale-ratio × typical
+3. **Size cut.** The **limit** is `max(--max-scale, --scale-ratio × typical
    size)`. Keep Gaussians with `scale_0`, `scale_1` and `scale_2` each
    `<= limit` (three `-V … lte`).
-3. **Floaters.** `-F` with `--floaters`.
-4. **Write** a binary `.ply`, lossless, splat-transform's own PLY output.
-5. **Report** the align step's status (and how far it moved the capture),
-   the typical density, the typical size and the size limit used, and
+4. **Floaters.** `-F` with `--floaters`.
+5. **Write** a binary `.ply`, lossless, splat-transform's own PLY output.
+6. **Report** the align step's status (and how far it moved the capture),
+   the footprint's groups, the typical density, the typical size and the
+   size limit used, and
    Gaussians before, after each cut, after all, and the % removed. The log
    rounds the typical size to 3 significant figures and the limit to 4;
    the size cut uses the limit unrounded.
 
 The log names where the settings came from, on a line after its first,
 before the align step's: `settings: config process_splat_config.json
-(min_density, floaters); flags (max_scale); defaults (cell, scale_ratio)`,
+(min_density, floaters); flags (max_scale); defaults (footprint_cell, cell,
+scale_ratio)`,
 each group listed only when it has a setting, and `settings: defaults`
 when no setting in use comes from a config or a flag — with no config,
 with one that holds only `version` (and `note`, or `skip`), and with no
 flag passed. When every step is skipped and nothing is set, no default is
-in use either and the groups are empty: `settings: skip (density, size,
-floaters)`. The first line still
+in use either and the groups are empty: `settings: skip (footprint,
+density, size, floaters)`. The first line still
 gives every value used. A skipped step's settings are named as in
 *Skipped steps*.
 
@@ -306,9 +328,61 @@ scanner source decided the skips for every capture of that source; a skip
 in the scan's own folder decides them for that scan, and is the one
 mechanism for every scan.
 
-Step 2 is one splat-transform run on the temporary `.ply`, writing a second
-temporary `.ply`, so the size cut's own count can be reported; steps 3–4 are
+Step 3 is one splat-transform run on the temporary `.ply`, writing a second
+temporary `.ply`, so the size cut's own count can be reported; steps 4–5 are
 a second run on that.
+
+### Footprint pruning
+
+- **The grid.** Voxels sit on multiples of `--footprint-cell` from the
+  capture's origin, as the density cut's do, so their boundaries do not move
+  with the capture's extremes.
+- **Valid voxels.** A voxel is valid when at least one Gaussian's centre is
+  in it; no count threshold.
+- **Groups.** Two valid voxels are neighbours when their indices differ by
+  at most 1 on every axis (26-connectivity: a shared face, edge or corner).
+  A group is a maximal set of valid voxels joined by neighbours. The
+  diagonal links keep thin, slanted surfaces — a railing, a cable, a
+  sloping roof — in one piece where face links alone would cut them into
+  steps.
+- **The kept group** is the one with the most valid voxels. Voxels, not
+  Gaussians: a small, dense detached clump (a passer-by, a reflection
+  trained into a far wall) can hold more Gaussians than a long sparse
+  street edge, but the capture's footprint is where it spreads. Ties are
+  broken by the most Gaussians, then by the group holding the lowest voxel
+  (x, then y, then z, in the file's own coordinates — splat-transform's
+  library reads x and y negated, and the step undoes that before it
+  compares), so the result never depends on read order.
+- **What it reports**, as one JSON line: Gaussians before, the number of
+  groups, the kept group's voxels and Gaussians. The log's first line names
+  the step as `footprint in <c> m voxels (largest 26-connected group)`, and
+  its count line is `<n> gaussians; <g> groups in <c> m voxels, largest <v>
+  voxels; <k> kept by footprint`, `<c>` being `--footprint-cell` as given.
+- **The `before` count** is on whichever count line comes first: the
+  footprint line, or `<n> gaussians; footprint pruning skipped: …` when the
+  step is skipped. The density cut's line no longer repeats it: it is
+  `typical voxel holds <t>; <d> kept by density`.
+- It never removes every Gaussian: the kept group holds at least one. With
+  one group it removes nothing, and still writes its `.ply`, so the steps
+  after it always read the same kind of file.
+- **An empty capture** — a `point_cloud` holding no Gaussians — has no
+  group to keep. The step writes nothing and the run exits 1 with
+  `error: <scan>: the capture has no Gaussians; <out> is unchanged`, as the
+  density cut does when its settings would remove every Gaussian.
+- It runs on the aligned file when the align step aligned; the correction
+  is rigid and small, so the footprint barely moves with it.
+
+Why. Every cut after it measures the capture against itself — its typical
+density, its typical size — and a detached cluster, however dense, is part
+of that measure. A scan delivered with a stray island (a second session's
+fragment, a mirror image beyond a window, a cluster 150 m off) passes the
+density cut whenever the island is dense enough, as the test scene's `far`
+block of 216 does. Footprint pruning removes it by shape, not density, and
+does it first, so the density and size statistics are taken over the
+capture's own body. The 1 m cell is coarse enough that an ordinary scan's
+sparse patches still touch (a gap of under one cell is bridged by a
+diagonal or a face) and fine enough that an island a few metres off is its
+own group.
 
 Why this rule. The threshold is relative to the capture itself, so it needs no
 centre, no extent and no orientation: a long street, an L-shaped one and a
@@ -361,7 +435,7 @@ script, each with a comment, and each has a test.
   `scale_0,lte,0` keeps nothing.
 - **Every `node -e` / `node <script>` argument goes after `--`**: node reads a
   negative number such as `-26.86` as one of its own options.
-- The density step reads and writes through splat-transform's library
+- The footprint and density steps read and write through splat-transform's library
   (`readFile`, `materializeToDataTable`, `dataTableToChunkSource` with the kept
   rows' indices, `writeSource`) with its in-memory file systems, because the
   library exports no Node file system. 3.10 has no `writeFile`: a table is
@@ -370,7 +444,10 @@ script, each with a comment, and each has a test.
   at 2.6 GB and the splat-transform run at 3.5 GB for KZ0918-075047 (19.3M
   Gaussians, a 222 MB `.sog`), which takes ~2.5 min and serves 269 MB. A
   937 MB `.ply` (KZ0918-090946, 13.8M) peaks at 2.2 GB in the density step.
-  The intermediate `.ply` in `clean/` needs ~1 GB of disk per 13M Gaussians
+  The footprint step holds the same table and a map of occupied voxels, so
+  it is expected to peak near the density step (not measured); the two run
+  one after the other, never at once, and the aligned `.ply` is deleted once
+  the footprint step has written its own. The intermediate `.ply` in `clean/` needs ~1 GB of disk per 13M Gaussians
   while the script runs, and the output is about that size too: lossless, 14
   floats a Gaussian plus the normals.
 
@@ -514,6 +591,42 @@ Skipped steps (revision 16):
   output untouched: `"skip": "size"`; `"skip": ["floater"]`; `"skip":
   ["size", "size"]`; `"skip": ["density"]` (without `size`); `"skip": [1]`.
 
+Footprint pruning (revision 17). Every scene above is a set of detached
+clumps, so footprint pruning would leave only one of each; the cases above
+run with `--footprint-cell 1000`, which puts every clump of a scene in one
+group so that nothing is pruned and each later cut is seen alone, and their
+expected `settings:` lines name `footprint_cell` as a flag. The cases that
+check `settings: defaults` run without it. The align cases run with the
+default, so footprint pruning runs on real-shaped scans too. A **footprint**
+scene (`point_cloud.ply`), each voxel a clump of 8 small Gaussians in the
+middle of a 1 m voxel unless stated:
+
+- **body**: 6 voxels in a row along x (face links), plus one voxel touching
+  the row's end at a corner only (+1 on x, y and z) — 7 voxels, 56
+  Gaussians, one group only under 26-connectivity;
+- **dense**: 3 voxels in a row, each holding 125 Gaussians, 5 m from the
+  body — more Gaussians (375) but fewer voxels than the body: removed;
+- **speck**: 1 Gaussian alone, 20 m off: removed;
+- with the defaults: 3 groups, the largest 7 voxels, 56 kept by footprint,
+  and the log line says so;
+- the corner voxel is kept — 6-connectivity would have dropped it;
+- `--footprint-cell 10` puts body and dense in two neighbouring 10 m
+  voxels, one group, and the speck in its own: 2 groups, 431 kept;
+- **tie**: a second scene of two 3-voxel rows 10 m apart, one of 8 per
+  voxel and one of 27: the 81 are kept (most Gaussians); with both rows of
+  8, the row at the lower x is kept;
+- `"skip": ["footprint"]` keeps all 432, the first line says `no footprint
+  pruning (skip)`, and the count line says `footprint pruning skipped:
+  process_splat_config.json`; with every step skipped the settings line is
+  `settings: skip (footprint, density, size, floaters)`;
+- `{"version": 1, "footprint_cell": 10}` acts as the flag does and is named
+  as from the config; `--footprint-cell 0`, `-1`, and a config
+  `footprint_cell` of `0` or `"1"` are refused.
+- the first line says `footprint in 1 m voxels (largest 26-connected
+  group)` with the defaults, and the density line has no `before` count;
+- a scan whose `point_cloud.ply` holds no Gaussians is refused with `the
+  capture has no Gaussians`, and its `clean/<scan>.ply` is not written.
+
 The align step's own cases are in `test/splat-align.sh`
 (`specs/splat-align.md`).
 
@@ -535,6 +648,38 @@ layout block); and a 2026-11-06 entry in `app/ai/DECISIONS.md` records why
 per-scan settings live in the scan folder. *Cleaning* also describes
 `skip`, and a second 2026-11-06 entry records why a skip and not a
 threshold that removes nothing, and why it replaces the aerial rule.
+*Cleaning* also describes footprint pruning and `--footprint-cell`;
+`infra/CLAUDE.md`'s layout block names `splat-footprint.mjs` and
+`splat-table.mjs`; and a third 2026-11-06 entry in `app/ai/DECISIONS.md`
+records why the footprint is the largest 26-connected group by voxels, and
+why it runs first.
+
+## Changes from revision 16
+
+- New step 1, **footprint pruning** (`scripts/splat-footprint.mjs`), after
+  the align step and before the density cut, which is now step 2; the size
+  cut, floaters, write and report are renumbered 3–6.
+- New setting `--footprint-cell` / `footprint_cell`, default 1 m, positive,
+  resolved flag → config → default like the others.
+- `skip` accepts `footprint`, alone or with any other name.
+- The density cut reads the footprint step's output, so its typical
+  density and the typical size are now taken over the kept group alone.
+- The log's first line, its settings line and a new count line name the
+  step; the `before` count is now reported by whichever cut runs first.
+- The library read and write the density step does is shared with the
+  footprint step through a small module (`scripts/splat-table.mjs`), so the
+  two do not drift; the density step's behaviour does not change.
+- **Every scan's output may change** when it is processed again: every
+  delivered scan's config skips the density and size cuts and none skips
+  `footprint`, so each loses its detached groups. No scan is reprocessed by
+  this change; an operator who wants a scan kept whole adds `footprint` to
+  its `skip`.
+- Tests: the existing cases run with `--footprint-cell 1000`, and a
+  footprint scene and a tie scene are added (*Tests*).
+- Docs: `infra/README.md` (*Cleaning*), `infra/CLAUDE.md` (the layout
+  block's `process-splat.sh` line, and the new `splat-footprint.mjs` and
+  `splat-table.mjs`), and a 2026-11-06 entry in `app/ai/DECISIONS.md`
+  recording why the largest group by voxels, 26-connected, and why first.
 
 ## Changes from revision 15
 
@@ -715,7 +860,13 @@ on 2026-10-22, the day it was approved.
 - Pinning splat-transform in an `infra/package.json`. The script checks the
   global version instead. (3.5–3.10 did change the library; it was ported,
   and the global check kept.)
-- Connectivity (`-C`), box (`-B`) or opacity cuts, SH or decimation.
+- splat-transform's own connectivity filter (`-C`), box (`-B`) or opacity
+  cuts, SH or decimation. Footprint pruning is this script's own step, not
+  `-C`: it keeps one group by its voxel count, on a grid the script fixes,
+  and reports what it found.
+- Keeping more than one group (say every group over some share of the
+  largest). A scan delivered in two disjoint parts loses the smaller; it is
+  skipped by its config until there is a case for a rule.
 - Converting the capture's frame. (The SOG first delivered was y-up; the
   PLYs now delivered are z-up and georeferenced, and the mosaic moves them
   into one frame by that.) Its cuts are the same on every axis, and the align

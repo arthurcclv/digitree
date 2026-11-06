@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — a splat scan keeps only its largest connected body, first
+
+**Decision.** `process-splat.sh` gains footprint pruning as its first cut,
+right after align: every Gaussian goes in a 1 m voxel (`--footprint-cell`,
+`footprint_cell`), occupied voxels that share a face, an edge or a corner
+(26-connectivity) form groups, and only the group with the most voxels is
+kept — ties to the most Gaussians, then to the lowest voxel in the file's
+coordinates. A config's `skip` may name `footprint`.
+`infra/specs/process-splat.md` revision 17.
+
+**Why.** The density and size cuts measure a capture against itself, and a
+detached island dense enough passes them and skews the statistics they take.
+Pruning by shape removes it whatever its density, and doing it first means
+the typical density and size are those of the capture's own body. Voxels,
+not Gaussians, pick the group: a small dense clump can outnumber a long
+sparse street, but a footprint is where the capture spreads. 26-connectivity
+keeps thin slanted surfaces (railings, cables, roofs) in one piece where
+face links would break them into steps. It runs after align, not before:
+the align step reads `point_cloud.ply` and its header from the scan folder,
+and the correction is rigid and small.
+
+**Rules out.** Keeping more than one group (say every group over a share of
+the largest); splat-transform's own `-C`; pruning before align.
+
+**Revisit if** a delivered scan is legitimately in disjoint parts often
+enough that skipping `footprint` per scan becomes a chore, or a capture's
+main body breaks into pieces at 1 m.
+
+---
+
 ## 2026-11-06 — infra can publish Martin and `files` on the network, opt-in
 
 **Decision.** `PUBLISH_ADDR` (default `127.0.0.1`) is the host address

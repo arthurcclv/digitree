@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Process one Gaussian splat capture for serving: correct its placement
-# against the scanner's RTK and lidar, drop the Gaussians outside the capture's
-# own distribution, the oversized ones and the floaters, and write it as a
-# lossless .ply for splat-mosaic.mjs. A scan's config may skip any of the
-# density cut, the size cut and the floater pass.
+# against the scanner's RTK and lidar, keep only its largest connected body
+# (footprint pruning), drop the Gaussians outside the capture's own
+# distribution, the oversized ones and the floaters, and write it as a
+# lossless .ply for splat-mosaic.mjs. A scan's config may skip any of
+# footprint pruning, the density cut, the size cut and the floater pass.
 #
-#   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, max(0.25 m, 4 × typical size)
+#   ./scripts/process-splat.sh KZ0918-075047                        # 1 m footprint, 2 m voxels, 1%, max(0.25 m, 4 × typical size)
 #   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 #
 # Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, for the
@@ -22,6 +23,9 @@ infra=$(cd "$(dirname "$0")/.." && pwd)
 original_dir=${SPLATS_ORIGINAL_DIR:-$infra/data/3dgs/original}
 clean_dir=${SPLATS_CLEAN_DIR:-$infra/data/3dgs/clean}
 
+# Footprint pruning joins occupied voxels of this edge that touch into groups
+# and keeps the one with the most voxels.
+footprint_cell=1
 cell=2
 min_density=0.01
 # The size cut's limit is max(max_scale, scale_ratio × the capture's typical
@@ -34,14 +38,15 @@ scale_ratio=4
 floaters=0.05,0.1,0.004
 
 die() { echo "error: $*" >&2; exit 1; }
-usage() { echo "usage: $0 <scan> [--cell <m>] [--min-density <f>] [--max-scale <m>] [--scale-ratio <k>] [--floaters <size,op,min>]" >&2; exit 2; }
+usage() { echo "usage: $0 <scan> [--footprint-cell <m>] [--cell <m>] [--min-density <f>] [--max-scale <m>] [--scale-ratio <k>] [--floaters <size,op,min>]" >&2; exit 2; }
 
 # The cut settings, each a variable above, a flag (--min-density for
 # min_density) and a key of the scan's config. Each one's rule, which its flag
 # and the config share, so the file can never pass a value the command line
 # would refuse:
-settings=(cell min_density max_scale scale_ratio floaters)
+settings=(footprint_cell cell min_density max_scale scale_ratio floaters)
 declare -A rule=(
+  [footprint_cell]="a positive number of metres"
   [cell]="a positive number of metres"
   [min_density]="a positive fraction"
   [max_scale]="a positive number of metres"
@@ -61,7 +66,7 @@ declare -A origin=()
 # The step each setting belongs to, and the steps the config skips (a set,
 # and the config's list in the order the steps run). A skipped step's
 # settings are still checked, but unused.
-declare -A step_of=([cell]=density [min_density]=density [max_scale]=size [scale_ratio]=size [floaters]=floaters)
+declare -A step_of=([footprint_cell]=footprint [cell]=density [min_density]=density [max_scale]=size [scale_ratio]=size [floaters]=floaters)
 declare -A skipped=()
 skips=
 is_skipped() { [ -n "${skipped[$1]:-}" ]; }
@@ -70,7 +75,7 @@ is_skipped() { [ -n "${skipped[$1]:-}" ]; }
 scan=$1; shift
 while [ $# -gt 0 ]; do
   case $1 in
-    --cell|--min-density|--max-scale|--scale-ratio|--floaters)
+    --footprint-cell|--cell|--min-density|--max-scale|--scale-ratio|--floaters)
       [ $# -ge 2 ] || usage
       key=${1#--}; key=${key//-/_}
       printf -v "$key" '%s' "$2"; origin[$key]=flags; shift 2 ;;
@@ -209,6 +214,7 @@ gaussians() { splat-transform -q --no-tty "$1" --info json null | json numGaussi
 # The first line: every step that runs, with the values it uses, and every
 # skipped one by name.
 plan=align
+if is_skipped footprint; then plan+=", no footprint pruning (skip)"; else plan+=", footprint in ${footprint_cell} m voxels (largest 26-connected group)"; fi
 if is_skipped density; then plan+=", no density cut (skip)"; else plan+=", density in ${cell} m voxels >= ${min_density} x typical"; fi
 if is_skipped size; then plan+=", no size cut (skip)"; else plan+=", every axis <= max(${max_scale} m, ${scale_ratio} x typical size)"; fi
 if is_skipped floaters; then plan+=", no floater pass (skip)"; else plan+=", floaters $floaters"; fi
@@ -240,21 +246,36 @@ else
   esac
 fi
 
-if is_skipped density; then
-  # 1–2 skipped (the config cannot skip density alone): the floater pass
-  # reads the original, or the aligned file.
+# 1. Footprint pruning: keep the largest 26-connected group of occupied
+# voxels. It never removes every Gaussian, so it never fails for its setting.
+if is_skipped footprint; then
   before=$(gaussians "$in")
-  echo "    $before gaussians; density and size cuts skipped: $config_name"
+  echo "    $before gaussians; footprint pruning skipped: $config_name"
+else
+  rc=0
+  report=$(node "$infra/scripts/splat-footprint.mjs" -- "$lib" "$in" "$work/footprint.ply" "$footprint_cell") || rc=$?
+  [ "$rc" = 3 ] && die "$scan: the capture has no Gaussians; $out is unchanged"
+  [ "$rc" = 0 ] || die "$scan: the footprint step failed; $out is unchanged"
+  read -r before groups voxels kept < <(echo "$report" | json before groups voxels kept)
+  rm -f "$work/aligned.ply" # ~1 GB per 13M Gaussians; footprint.ply holds the rest
+  in=$work/footprint.ply
+  echo "    $before gaussians; $groups groups in ${footprint_cell} m voxels, largest $voxels voxels; $kept kept by footprint"
+fi
+
+if is_skipped density; then
+  # 2–3 skipped (the config cannot skip density alone): the floater pass
+  # reads what step 1 kept, or the original, or the aligned file.
+  echo "    density and size cuts skipped: $config_name"
   floater_input=$in
 else
-  # 1. The density cut, which splat-transform's CLI cannot express.
+  # 2. The density cut, which splat-transform's CLI cannot express.
   rc=0
   report=$(node "$infra/scripts/splat-density-cut.mjs" -- "$lib" "$in" "$work/dense.ply" "$cell" "$min_density") || rc=$?
   [ "$rc" = 3 ] && die "$scan: these settings remove every Gaussian; $out is unchanged"
   [ "$rc" = 0 ] || die "$scan: the density step failed; $out is unchanged"
-  read -r before typical dense typical_scale < <(echo "$report" | json before typical kept typical_scale)
-  rm -f "$work/aligned.ply" # ~1 GB per 13M Gaussians; dense.ply holds the rest
-  echo "    $before gaussians; typical voxel holds $typical; $dense kept by density"
+  read -r typical dense typical_scale < <(echo "$report" | json typical kept typical_scale)
+  rm -f "$work/aligned.ply" "$work/footprint.ply" # dense.ply holds the rest
+  echo "    typical voxel holds $typical; $dense kept by density"
   # The limit goes to -V exact; only the log rounds it, so a Gaussian at the
   # limit is never cut by the rounding.
   read -r limit typical_shown limit_shown < <(node -e '
@@ -267,7 +288,7 @@ else
   else
     echo "    typical size $typical_shown m; size limit $limit_shown m"
 
-    # 2. Size cut, to a second lossless .ply so its own count can be reported.
+    # 3. Size cut, to a second lossless .ply so its own count can be reported.
     # -V on scale_* compares in metres, though the file stores log scale:
     # scale_0,lte,0 keeps nothing.
     transform "$work/dense.ply" \
@@ -278,7 +299,7 @@ else
   fi
 fi
 
-# 3. Floaters, to the lossless .ply the mosaic reads. No SPZ: nothing fetches
+# 4. Floaters, to the lossless .ply the mosaic reads. No SPZ: nothing fetches
 # the file itself any more, and build-lod reads the tiles' .ply. Skipped, the
 # same run writes the same .ply with no filter, so the output's format never
 # depends on the skips.

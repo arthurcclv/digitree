@@ -7,10 +7,10 @@
 import { readFileSync } from 'node:fs';
 
 export const VERSION = 1;
-const SCALARS = ['cell', 'min_density', 'max_scale', 'scale_ratio'];
+const SCALARS = ['footprint_cell', 'cell', 'min_density', 'max_scale', 'scale_ratio'];
 const FLOATERS = ['size', 'opacity', 'min'];
 // The steps a config may skip, in the order they run.
-export const STEPS = ['density', 'size', 'floaters'];
+export const STEPS = ['footprint', 'density', 'size', 'floaters'];
 const KNOWN = ['version', 'note', 'floaters', 'skip', ...SCALARS];
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);

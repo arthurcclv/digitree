@@ -41,7 +41,8 @@ load.sh              the whole bring-up in one command; restarts Martin (it
                      reads the schema once) and files (a running container
                      can serve a stale bind mount after a rebuild)
 scripts/             the splat tools, each an explicit step load.sh never runs:
-  process-splat.sh   original/<scan>/ -> align -> density, size and floater
+  process-splat.sh   original/<scan>/ -> align -> footprint pruning ->
+                     density, size and floater
                      cuts -> clean/<scan>.ply + <scan>.align.json; settings
                      from flag, else the scan's process_splat_config.json,
                      else the default; the config's `skip` drops steps
@@ -55,8 +56,14 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      by the PLY's `comment source` (specs/scanners.md):
                      l2pro.mjs, k2.mjs, lixel-l3.mjs; xgrids.mjs their shared
                      readers; index.mjs the registry
+  splat-footprint.mjs
+                     process-splat.sh's footprint pruning: the largest
+                     26-connected group of occupied 1 m voxels
   splat-density-cut.mjs
-                     process-splat.sh's density cut, on splat-transform's library
+                     process-splat.sh's density cut
+  splat-table.mjs    those two steps' shared argument parsing, read and write
+                     of a whole capture through splat-transform's library,
+                     and their voxel grid (its keys, and the way back to x/y/z)
   splat-mosaic.mjs   every clean/<scan>.ply -> one UTM frame -> 100 m tiles,
                      the best scan per 1 m voxel -> tiles/<tile>.ply,
                      tiles/mosaic.json, georef.csv
@@ -170,17 +177,19 @@ right way to start over.
   are served unaligned, not refused. Its specs are `specs/splat-align.md`
   and `specs/scanners.md`.
 - **The splat processor's traps live in `process-splat.sh`,
-  `process-splat-config.mjs` and
+  `process-splat-config.mjs`, `splat-table.mjs`,
+  `splat-footprint.mjs` and
   `splat-density-cut.mjs`, with comments and tests**: `-V` compares `scale_*` in metres though the file
   stores log scale; a negative number passed to `node` without `--` is read as
   a node option; a config number must reach the script as a plain decimal,
   never `1e-7`, and is checked as that decimal, so one too small to write
   is refused as `0`; and splat-transform's `--stats`, `.csv` output and library
   report x and y negated relative to the coordinates `-V`/`-S` filter on (the
-  density count does not care, but anything that turns a reported position
+  density count does not care; footprint pruning's tie-break negates them
+  back to compare in the file's coordinates; anything else that turns a reported position
   into a filter argument must negate it). Its `.ply` output keeps x and y as
   stored, which is what lets the mosaic place it by the original's offset.
-  The density step uses splat-transform's library API, so the script refuses
+  The footprint and density steps use splat-transform's library API, so the script refuses
   any version but 3.10.x. Its spec is `specs/process-splat.md`.
 - **The mosaic reads PLY itself, never through splat-transform**, so the
   negation above never reaches it. Its tiles are fixed to the UTM grid, not

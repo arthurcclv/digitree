@@ -291,6 +291,14 @@ under what the density step needs; the L3's KZ1012-142213 (37.6M Gaussians, a 9 
 `octree.bin`, of which only the sampled records are read) takes ~50 s and
 2.8 GB.
 
+First comes footprint pruning: every Gaussian goes in a 1 m cube
+(`--footprint-cell`), every cube holding one or more is valid, cubes that
+touch — by a face, an edge or a corner — form groups, and only the group
+with the most cubes is kept (ties to the one with more Gaussians, then to
+the one at the lowest x, y, z). So a detached island — a second session's
+fragment, a reflection past a window — goes however dense it is, and the
+cuts after it measure the capture's own body.
+
 The outlier rule follows the capture's own distribution, not a distance. It
 counts the Gaussians in 2 m cubes (`--cell`), takes the count of the cube the
 median Gaussian sits in as the capture's typical density, and drops every
@@ -317,7 +325,7 @@ delivered folder, and one no tool writes:
 }
 ```
 
-Only `version` (1) is required; any of `cell`, `min_density`, `max_scale`,
+Only `version` (1) is required; any of `footprint_cell`, `cell`, `min_density`, `max_scale`,
 `scale_ratio`, `floaters` and `skip` may follow. Each setting comes from its flag on
 the command line, else the config, else the default, and the log's
 `settings:` line says which. The file is checked whole before anything runs:
@@ -326,16 +334,19 @@ the flag would refuse fails the scan, naming the file — even when a flag
 overrides the bad key. `--floaters` and the config's `floaters` take three
 numbers, each ≥ 0.
 
-`skip` names steps that do not run on the scan: any of `density`, `size`
-and `floaters` (`density` only together with `size`, since the size limit
-is measured by the density step). The align step and the write always run,
-so skipping all three writes the scan as delivered (or as aligned), with
+`skip` names steps that do not run on the scan: any of `footprint`,
+`density`, `size` and `floaters` (`density` only together with `size`,
+since the size limit is measured by the density step). The align step and
+the write always run, so skipping all four writes the scan as delivered (or as aligned), with
 nothing removed. A skipped step's settings are still checked but unused,
 and the log names the skips. There is no flag for it. No capture is
 treated differently for its scanner: the drone scans (`*_ariel`) keep
 their sparse areas and large Gaussians — real surface and their sampling,
 seen from above — because each one's config skips `density` and `size`.
-Every `KY*`/`KZ*` scan's config skips all three.
+Every `KY*`/`KZ*` scan's config skips the three cuts. No config skips
+`footprint` yet, so a scan processed again loses its detached groups; add
+`footprint` to a scan's `skip` to keep it whole (one delivered in two
+disjoint parts, say).
 
 With the defaults the KY0917 captures lost 3.7–5.3%. It needs
 `splat-transform` 3.10.x installed globally with npm (the density step uses its
