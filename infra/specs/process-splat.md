@@ -1,6 +1,16 @@
 # Spec — `process-splat.sh`: align, then strip outlying, oversized and floating Gaussians
 
-Status: **revision 14, approved 2026-11-03**: an
+Status: **revision 16, approved 2026-11-06**: a scan's
+`process_splat_config.json` may name steps to **skip** — any of the
+density cut, the size cut and the floater pass — and those steps do not
+run on that scan. The aerial exception of revision 14 is removed: a
+`Drone` capture is cut like any other unless its config skips the cuts.
+See *Skipped steps* and *Changes from revision 15*.
+Revision 15, approved 2026-11-06: a scan
+folder may hold a `process_splat_config.json`, whose values replace the
+defaults of the cut settings for that scan; a flag on the command line
+still wins over both. See *Per-scan config* and *Changes from revision 14*.
+Revision 14, approved 2026-11-03: an
 **aerial** capture — a `point_cloud.ply` whose `comment source` is `Drone` —
 skips the density and size cuts; only the floater pass runs on it. See
 *Changes from revision 13*. Revision 13, approved 2026-11-03: the size
@@ -36,9 +46,13 @@ A script in `infra/scripts/` that prepares one Gaussian splat capture for
 the mosaic: it corrects the capture's placement against the scanner's RTK
 and lidar (`splat-align.mjs`, when the scan carries what that needs), drops
 the Gaussians that lie outside the capture's own distribution, the ones that
-are too large, and the floaters, and writes the result as a PLY. Every capture gets the same treatment from one command, with
-no per-capture setting to pick — except an aerial capture, which gets the
-floater pass alone (*Aerial captures*, below). Its output is not served: it is one input of
+are too large, and the floaters, and writes the result as a PLY. Every capture gets the same treatment from one command — except a
+scan whose folder holds a `process_splat_config.json`, which is cut with
+the values it records, or skips the steps it names (*Per-scan config* and
+*Skipped steps*, below). No capture is treated differently for its
+scanner source. The command
+stays the same for every scan: the settings a scan needs live beside it,
+not in whoever runs it. Its output is not served: it is one input of
 the mosaic (`specs/splat-mosaic.md`), which merges every cleaned scan into
 the tiles the app draws.
 
@@ -55,6 +69,9 @@ data/3dgs/original/<scan>/   one folder per scan, as delivered — read-only
   the scanner module's files read by the align step, when the splat is
                              point_cloud.ply: the files of the module for its
                              `comment source` (specs/scanners.md)
+  process_splat_config.json  optional: this scan's cut settings (below) —
+                             the one file an operator adds to a delivered
+                             folder; the script only reads it
   …                          anything else is ignored
 data/3dgs/clean/<scan>.ply   the scans as cleaned — written only by process-splat.sh
 data/3dgs/clean/<scan>.align.json
@@ -65,7 +82,10 @@ data/3dgs/clean/<scan>.align.json
 `data/`" keeps one exception for this script: `process-splat.sh` owns
 `data/3dgs/clean/`.
 `original/` stays read-only, so a capture can always be cleaned again from what
-was delivered.
+was delivered. The one exception, for operators rather than tools, is a
+scan's `process_splat_config.json`: it is added by hand, beside the
+delivered files and changing none of them, so the settings a scan was cut
+with travel with the scan. No tool writes it.
 
 ## Inputs
 
@@ -76,12 +96,114 @@ was delivered.
 | `--min-density <f>` | `0.01` | keep a Gaussian when its voxel holds at least `f` × the capture's typical density (below) |
 | `--max-scale <m>` | `0.25` | the size cut's **floor**: its limit is never below this (below) |
 | `--scale-ratio <k>` | `4` | the size cut's limit is at least `k` × the capture's **typical size** (below) |
-| `--floaters <size,op,min>` | `0.05,0.1,0.004` (splat-transform's own) | passed to `-F` |
+| `--floaters <size,op,min>` | `0.05,0.1,0.004` (splat-transform's own) | passed to `-F`; three plain decimals, each ≥ 0, else refused |
 | `SPLATS_ORIGINAL_DIR` | `data/3dgs/original` | env: where the scan folders are |
 | `SPLATS_CLEAN_DIR` | `data/3dgs/clean` | env: where the output is written |
 
 The two directories are variables for the same reason the loader's inputs are
 psql variables: the test points the real script at a scratch directory.
+
+Each of the five cut settings is taken from, in order: its flag on the
+command line; else the scan's `process_splat_config.json`, when the file
+has that key; else the default above. Each setting is resolved on its own,
+so a config with `min_density` alone still takes the default `cell`.
+
+### Per-scan config
+
+`original/<scan>/process_splat_config.json`, optional. A JSON object:
+
+```json
+{
+  "version": 1,
+  "cell": 2,
+  "min_density": 0.01,
+  "max_scale": 0.25,
+  "scale_ratio": 4,
+  "floaters": { "size": 0.05, "opacity": 0.1, "min": 0.004 },
+  "skip": ["size"],
+  "note": "why this scan needs its own values"
+}
+```
+
+| key | type | required | flag it stands for | rule |
+| --- | --- | --- | --- | --- |
+| `version` | integer | yes | — | `1`, the only version this revision reads |
+| `cell` | number | no | `--cell` | > 0 |
+| `min_density` | number | no | `--min-density` | > 0 |
+| `max_scale` | number | no | `--max-scale` | > 0 |
+| `scale_ratio` | number | no | `--scale-ratio` | > 0 |
+| `floaters` | object | no | `--floaters size,op,min` | exactly the keys `size`, `opacity`, `min`, each a number ≥ 0; passed to `-F` as `size,opacity,min` |
+| `skip` | array | no | — (no flag) | distinct step names, each `density`, `size` or `floaters`; `size` is required whenever `density` is named (*Skipped steps*) |
+| `note` | string | no | — | read by nobody; says why the scan has a config |
+
+- A value's rule is its flag's: the config is checked the way the flags
+  are, so no value is accepted from the file that the command line would
+  refuse. A value is checked as it is passed on — the plain decimal the
+  script writes, to 20 decimal places — so a positive value too small to
+  write (`1e-25`, which writes as `0`) is refused as `0` is.
+- The file is **refused**, naming it and what is wrong, before any step
+  runs — and so before anything in `clean/` is touched — when it is not
+  valid JSON, is not an object, has no `version` or a `version` other than
+  `1`, has a key not in the table (a misspelt `min_densty` would otherwise
+  be silently ignored, and the scan cut with the default), or has a value
+  of the wrong type (a number written as a string, `"0.02"`, included) or
+  outside its rule. It is refused even when a flag overrides the bad key:
+  the file is checked whole, so a bad file is found on the first run, not
+  on the first run without the flag.
+- The file is parsed with `node` (already required), not `jq`, so it adds
+  no dependency.
+- An empty object with only `version` is valid and changes nothing.
+- The file is one input of the run, like the flags: re-running with the
+  same file and flags is idempotent. Changing it changes the output only
+  when the scan is processed again.
+
+### Skipped steps
+
+A config's `skip` names steps that do not run on the scan:
+
+| name | step | settings it makes unused |
+| --- | --- | --- |
+| `density` | 1, the density cut | `cell`, `min_density` |
+| `size` | 2, the size cut | `max_scale`, `scale_ratio` |
+| `floaters` | 3, the floater pass | `floaters` |
+
+- `skip` is **refused** when it is not an array, when an entry is not one
+  of the three names (a misspelt `floater` would otherwise run the pass),
+  when a name repeats, or when it names `density` without `size`: the size
+  cut's limit follows the typical size, which the density step measures,
+  so there is no limit to cut by without it. An empty array is valid and
+  changes nothing.
+- The align step (0) and the write (4) always run. With every step
+  skipped, the output is the original — or the aligned file — written by
+  splat-transform as the same lossless `.ply` it always writes, with no
+  Gaussian removed.
+- A skipped step's settings are still **checked**, from their flags and
+  the config alike, so a bad value is refused whatever the skips, but have
+  no effect.
+- There is no `--skip` flag: a scan's skips are what it needs, and they
+  live beside it. A flag for a skipped step is checked and unused.
+- **The log.** The first line names a skipped step in place of its
+  settings: `no density cut (skip)`, `no size cut (skip)`, `no floater pass
+  (skip)`. The `settings:` line's groups leave out a skipped
+  step's settings; those a config or flag set are named after the groups as
+  `unused, skipped (min_density)`. The line ends with
+  `; skip (density, size)` naming the config's skips, in table order. The
+  count lines say `density and size cuts skipped: process_splat_config.json`
+  in place of the density report when both are skipped, `size cut skipped:
+  process_splat_config.json` in place of the limit's line and the size
+  count when `size` alone is, and `<n> kept, floater pass skipped:
+  process_splat_config.json; …` in place of `<n> kept after floaters; …`.
+  With the density cut run and the size cut skipped, the typical size is
+  still reported, without a limit.
+
+Why. The cuts measure a capture against a ground scan's expectations, and
+some captures are better kept whole than tuned: the operator's call, made
+per scan. Setting a cut's threshold so it removes nothing (a `min_density`
+of `1e-20`, a `max_scale` of `1e9`) would still run it — and the floater
+pass cannot be set to keep everything at all: splat-transform refuses a
+voxel size of 0, and an opacity cutoff of 0 still voxelises the whole
+capture on the GPU, for a result nothing guarantees. A skip says what it
+means and costs nothing.
 
 Requires `splat-transform` 3.10.x, installed globally (`npm install -g
 @playcanvas/splat-transform@3.10`), and `node` on `PATH`; fails with a clear
@@ -157,37 +279,32 @@ with `<ext>` one of:
    rounds the typical size to 3 significant figures and the limit to 4;
    the size cut uses the limit unrounded.
 
-### Aerial captures
+The log names where the settings came from, on a line after its first,
+before the align step's: `settings: config process_splat_config.json
+(min_density, floaters); flags (max_scale); defaults (cell, scale_ratio)`,
+each group listed only when it has a setting, and `settings: defaults`
+when no setting in use comes from a config or a flag — with no config,
+with one that holds only `version` (and `note`, or `skip`), and with no
+flag passed. When every step is skipped and nothing is set, no default is
+in use either and the groups are empty: `settings: skip (density, size,
+floaters)`. The first line still
+gives every value used. A skipped step's settings are named as in
+*Skipped steps*.
 
-A capture is **aerial** when its splat is `point_cloud.ply` and the
-header's `comment source` is one of the script's **aerial sources**, today
-`Drone` alone (a list in `process-splat.sh`). The source is read from the
-header, as the align step reads it (`specs/scanners.md`); a capture in any
-other format has no header source and is never aerial. For an aerial
-capture:
+### No aerial exception
 
-- steps 1 and 2 are **skipped**: no density cut, no size cut, so no typical
-  density, typical size or limit is measured. The log's first line says
-  `align, no density or size cut (aerial), floaters <floaters>` in place of
-  the cuts' settings, and its count line says
-  `density and size cuts skipped: aerial capture (source 'Drone')`;
-- step 0 runs as for any capture (for `Drone`, which no scanner module
-  claims, it is skipped), and step 3, the floater pass, runs on the
-  original — or the aligned file — directly;
-- `--cell`, `--min-density`, `--max-scale` and `--scale-ratio` are still
-  checked, so a bad value is refused whatever the capture, but have no
-  effect;
-- the report gives Gaussians before, after floaters, and the % removed.
-
-Why. Both cuts measure the capture against a ground scan's expectations.
-Seen from above, the drone capture's sparse areas (roof edges, the ground
-between buildings) are real surface, not outliers, and its Gaussians are
-large because its sampling is: even at revision 13's relative limit the two
-cuts removed 5.1% of it, at `--scale-ratio 20` with the density cut off
-only 0.1%: 2,228 by size, and 1,598 (0.03%) by the floater pass, which
-is what an aerial capture still loses. A per-source rule was rejected in revision 13 in favour
-of the ratio; it is taken here because the operator chose to keep the
-drone capture whole rather than tune its cuts.
+Revisions 14 and 15 treated a `point_cloud.ply` whose `comment source` was
+`Drone` as **aerial** and skipped its density and size cuts. Revision 16
+removes that rule: the script no longer reads the header's source, and a
+drone capture runs every step unless its config skips some. The reason
+for keeping a drone capture whole — seen from above, its sparse areas are
+real surface and its large Gaussians are its sampling; with the cuts run,
+revision 13's relative limit still removed 5.1% of
+`air_force_headquarter_ariel` — still holds, and is now recorded beside
+each drone scan as `"skip": ["density", "size"]`. A rule keyed on the
+scanner source decided the skips for every capture of that source; a skip
+in the scan's own folder decides them for that scan, and is the one
+mechanism for every scan.
 
 Step 2 is one splat-transform run on the temporary `.ply`, writing a second
 temporary `.ply`, so the size cut's own count can be reported; steps 3–4 are
@@ -298,14 +415,12 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   (`--max-scale 0.25`). SOG stores scales in a 256-entry codebook that pools
   rare values — a single 0.3 m and a single 0.24 m Gaussian both decode as
   0.2683 — so each size has 64 Gaussians and sits well clear of the limit;
-- an **aerial** scene: `coarse` again, with `comment source Drone` in its
-  header and a clump of 8 (below the density threshold) beside it. Every
-  Gaussian is kept by the cuts — the 2 m ones and the clump of 8 too — the
-  log's first line and count line say both cuts were skipped, the second
-  naming the source, and no typical size is reported. The same file with
-  `comment source L2Pro`, which has no module's files here so its align is
-  skipped (its log says so), is cut as `coarse` is;
-- the `drone` align scene is aerial too, and its log says so;
+- a **drone** scene: `coarse` again, with `comment source Drone` in its
+  header and a clump of 8 (below the density threshold) beside it. It is
+  cut as `coarse` is — the clump of 8 removed — and its log names no aerial
+  capture: the source decides nothing. The same file with `comment source
+  L2Pro`, which has no module's files here so its align is skipped (its
+  log says so), gives the same count;
 - a **spread** scene (`point_cloud.ply`): a main block of 1,000, 600 with a
   0.1 m largest axis and 400 with 0.3 m, and 50 clumps of 8 at 2 m, each in
   a voxel of its own, which the density cut removes. Its typical size is
@@ -345,6 +460,60 @@ floater pass keeps it and each cut is seen alone. The scene, with 2 m voxels:
   writes a `.ply` byte-identical to that of the same `point_cloud.ply`
   skipped for missing files, whose log names them.
 
+Per-scan config (revision 15), on the main scene:
+
+- `{"version": 1, "min_density": 0.03}` removes the clump of 27, as
+  `--min-density 0.03` does, and the settings line names `min_density` as
+  from the config and the other four as defaults;
+- the same file with `--min-density 0.01` on the command line keeps the
+  clump: the flag wins, and the settings line names it as a flag;
+- the same file with `--max-scale 0.6` names config, flags and defaults on
+  one line;
+- `{"version": 1, "max_scale": 0.6}` keeps the 64 at 0.5 m;
+- a `cell` of `0.0000001` reaches the first line as `0.0000001`, not
+  `1e-7`;
+- `{"version": 1, "floaters": {"size": 0.05, "opacity": 0.1, "min":
+  0.004}}` gives the same count as no config;
+- `{"version": 1}` gives the same count and output as no config, and the
+  settings line says `defaults`;
+- each of these is refused, naming the file and leaving the previous
+  output untouched and no temporary file: not JSON; a JSON array; no
+  `version`; `"version": 2`; an unknown key (`min_densty`); `"min_density":
+  "0.02"`; `"cell": 0`; `"scale_ratio": -1`; `floaters` missing `min`, with
+  an extra key, or as the string `"0.05,0.1,0.004"`; a `note` that is not
+  a string; a bad `cell`
+  overridden by `--cell 2`; a `cell` of `1e-25`, which writes as `0`; and
+  a negative `floaters.opacity`;
+- a `floaters` with a `0` part is accepted and reaches `-F` as `0`;
+- `--floaters` is refused when it is not three non-negative plain decimals
+  (`0.05,0.1`, `0.05,-0.1,0.004`, `a,b,c`);
+- the config file's checksum is unchanged by a run.
+
+Skipped steps (revision 16):
+
+- on the main scene, `{"version": 1, "skip": ["density", "size",
+  "floaters"]}` keeps every Gaussian — the clumps of 8 and the 64 at 0.5 m
+  included — writes the same lossless `.ply` format, and the log names all
+  three as skipped, on the first line, the count lines and the `settings:`
+  line;
+- `"skip": ["density", "size"]` keeps the clumps of 8 and the 64 at 0.5 m,
+  and the floater pass still runs (its `-F` value on the first line);
+- `"skip": ["size"]` removes the clumps of 8 and keeps the 64 at 0.5 m,
+  names the size cut as skipped on the first line, between the two steps
+  that run, reports the typical size, and reports no limit;
+- `"skip": ["floaters"]` gives the same counts as no config on the main
+  scene (whose clumps the floater pass keeps) and the log says the pass was
+  skipped;
+- `"skip": []` gives the same count as no config;
+- `{"version": 1, "min_density": 0.5, "skip": ["density", "size"]}`, run
+  with `--max-scale 0.6`, names both `min_density` and `max_scale` as
+  `unused, skipped`, and keeps the clumps;
+- on the drone scene, `"skip": ["density", "size"]` keeps the clump of 8
+  and the 2 m Gaussians, as revision 15's aerial rule did;
+- each of these is refused, naming the file and leaving the previous
+  output untouched: `"skip": "size"`; `"skip": ["floater"]`; `"skip":
+  ["size", "size"]`; `"skip": ["density"]` (without `size`); `"skip": [1]`.
+
 The align step's own cases are in `test/splat-align.sh`
 (`specs/splat-align.md`).
 
@@ -354,11 +523,70 @@ The align step's own cases are in `test/splat-align.sh`
 the `data/` exceptions) name `clean/<scan>.ply`; *Cleaning* states the size
 cut's limit as `max(--max-scale, --scale-ratio × typical size)`, and a
 2026-11-03 entry in `app/ai/DECISIONS.md` records why it follows the
-capture. *Cleaning* also says an aerial capture skips both cuts, and a
-second 2026-11-03 entry records why, partly superseding the first, which
-is marked so. `infra/CLAUDE.md`'s layout block notes the `Drone` exception
-and what `ply-header.mjs` serves. The mosaic's entry in
+capture. The second 2026-11-03 entry, which made an aerial capture skip
+both cuts, is marked superseded by revision 16's entry, and *Cleaning* no
+longer describes an aerial capture. `infra/CLAUDE.md`'s layout block says
+what `ply-header.mjs` serves. The mosaic's entry in
 `app/ai/DECISIONS.md` records why the output is no longer SPZ.
+`infra/README.md` (*Cleaning*) describes `process_splat_config.json` and
+the order flag → config → default; `infra/CLAUDE.md` names it as the one
+file an operator adds to `original/<scan>/` (the `data/` rule and the
+layout block); and a 2026-11-06 entry in `app/ai/DECISIONS.md` records why
+per-scan settings live in the scan folder. *Cleaning* also describes
+`skip`, and a second 2026-11-06 entry records why a skip and not a
+threshold that removes nothing, and why it replaces the aerial rule.
+
+## Changes from revision 15
+
+- A config may hold `skip`, naming any of `density`, `size` and `floaters`
+  (*Skipped steps*); those steps do not run on the scan. `density` needs
+  `size` with it. There is no flag for it.
+- The log names skipped steps on its first line, its count lines and its
+  `settings:` line.
+- The aerial exception (revision 14) is **removed**: the script no longer
+  reads the PLY's `comment source`, `aerial_sources` is gone, and the log
+  never names an aerial capture. A `Drone` capture without a config is now
+  cut by both cuts. `ply-header.mjs`'s `plySource`, which only that check
+  used, is removed; `commentSource`, which `splat-align.mjs` reads, stays.
+- After approval, configs are added: every `KY*` and `KZ*` scan skips
+  `density`, `size` and `floaters`; every other scan (the five `*_ariel`
+  drone captures) skips `density` and `size` and keeps the floater pass —
+  so each drone capture is cleaned as before.
+- Downstream: `specs/splat-mosaic.md`'s note on how far a splat reaches
+  past its voxel, and `specs/voxel-quality.md`'s sub-cell note, say a scan
+  whose config skips the size cut is unbounded — with these configs, every
+  delivered scan — and no longer point at *Aerial captures*. Neither one's
+  behaviour changes.
+- Docs: `infra/README.md` (*Cleaning*), `infra/CLAUDE.md` (the layout
+  block's `process-splat.sh` and `ply-header.mjs` lines), and a 2026-11-06
+  entry in `app/ai/DECISIONS.md` superseding the 2026-11-03 aerial entry.
+
+## Changes from revision 14
+
+- A scan folder may hold `process_splat_config.json` (*Per-scan config*):
+  `version` 1 and any of `cell`, `min_density`, `max_scale`, `scale_ratio`,
+  `floaters`, plus a free `note`. Each setting comes from its flag, else the
+  config, else the default.
+- The file is checked whole and strictly, before any step runs; a bad file
+  fails the scan and leaves the previous output.
+- The log gains a `settings:` line naming where each setting came from;
+  on an aerial capture, the density and size settings a config or flag set
+  are named as unused.
+- `--floaters` is checked, as the other flags are: three plain decimals,
+  each ≥ 0. Revision 14 passed it to `-F` unchecked. The config's
+  `floaters` follows the same rule, and every config value is checked as
+  the decimal it is written as, so one that rounds to `0` is refused.
+- "No per-capture setting to pick" is dropped from *What it is*: revision 13
+  and 14 kept the rule for every capture alike, and they still do — the
+  defaults, the relative limits and the aerial exception are unchanged — but
+  a scan that needs other values now records them beside itself instead of
+  in an operator's command line, where they were lost after the run.
+- `original/` stays read-only for every tool; the config is the one file
+  an operator adds there.
+- No scan's output changes until a config is added for it; with no config,
+  every run is as in revision 14.
+- Docs: `infra/README.md` (*Cleaning*), `infra/CLAUDE.md`, and a 2026-11-06
+  entry in `app/ai/DECISIONS.md`.
 
 ## Changes from revision 13
 

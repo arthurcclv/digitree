@@ -249,13 +249,45 @@ median Gaussian sits in as the capture's typical density, and drops every
 cube holding less than 1% of that (`--min-density`). Then it drops the
 Gaussians with any axis over the size limit, `max(--max-scale, --scale-ratio ×
 typical size)`, where the typical size is the median largest axis of what the
-density cut kept: 0.25 m, the floor, for every ground scan. An aerial capture — a
-`point_cloud.ply` whose `comment source` is `Drone` — skips both cuts and
-gets the floater filter alone: seen from above, its sparse areas are real
-surface and its large Gaussians its sampling. Then it runs splat-transform's floater
+density cut kept: 0.25 m, the floor, for every ground scan. Then it runs splat-transform's floater
 filter (`--floaters`, its defaults). So a long or L-shaped street is kept
 whole, and a sky floater above a dense street goes. It always reads
 `original/`, so re-running with other settings never compounds the cuts.
+
+A scan that needs its own settings keeps them beside it, in
+`original/<scan>/process_splat_config.json` — the one file you add to a
+delivered folder, and one no tool writes:
+
+```json
+{
+  "version": 1,
+  "min_density": 0.02,
+  "max_scale": 0.5,
+  "floaters": { "size": 0.05, "opacity": 0.1, "min": 0.004 },
+  "skip": ["size"],
+  "note": "why this scan needs its own values"
+}
+```
+
+Only `version` (1) is required; any of `cell`, `min_density`, `max_scale`,
+`scale_ratio`, `floaters` and `skip` may follow. Each setting comes from its flag on
+the command line, else the config, else the default, and the log's
+`settings:` line says which. The file is checked whole before anything runs:
+bad JSON, an unknown (misspelt) key, a number written as a string or a value
+the flag would refuse fails the scan, naming the file — even when a flag
+overrides the bad key. `--floaters` and the config's `floaters` take three
+numbers, each ≥ 0.
+
+`skip` names steps that do not run on the scan: any of `density`, `size`
+and `floaters` (`density` only together with `size`, since the size limit
+is measured by the density step). The align step and the write always run,
+so skipping all three writes the scan as delivered (or as aligned), with
+nothing removed. A skipped step's settings are still checked but unused,
+and the log names the skips. There is no flag for it. No capture is
+treated differently for its scanner: the drone scans (`*_ariel`) keep
+their sparse areas and large Gaussians — real surface and their sampling,
+seen from above — because each one's config skips `density` and `size`.
+Every `KY*`/`KZ*` scan's config skips all three.
 
 With the defaults the KY0917 captures lost 3.7–5.3%. It needs
 `splat-transform` 3.10.x installed globally with npm (the density step uses its

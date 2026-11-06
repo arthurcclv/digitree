@@ -6,6 +6,72 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — a splat scan's config skips steps; no rule by scanner source
+
+**Decision.** A scan's `process_splat_config.json` may hold `skip`, naming
+any of `density`, `size` and `floaters`; those steps do not run on the scan
+(`density` only with `size`, whose limit the density step measures). The
+aerial rule is removed: `process-splat.sh` no longer reads the PLY's
+`comment source`, and a `Drone` capture is cut like any other unless its
+config skips the cuts. Each `*_ariel` drone scan's config skips `density`
+and `size`, so it is cleaned as before; each `KY*`/`KZ*` scan's skips all
+three. `infra/specs/process-splat.md` revision 16. Supersedes "an aerial
+splat capture skips the density and size cuts" (2026-11-03).
+
+**Why.** A skip says what it means. A threshold set to remove nothing still
+runs the step, and the floater pass cannot be set to keep everything at
+all: splat-transform refuses a voxel size of 0, and an opacity cutoff of 0
+still voxelises the whole capture. With skips available per scan, a rule
+keyed on the scanner source is a second mechanism for the same choice, and
+one that decides for every capture of that source at once; one mechanism,
+recorded beside each scan, replaces it.
+
+**Rules out.** Skipping a step by an out-of-range threshold; a `--skip`
+flag (a scan's skips live beside it); treating a capture differently for
+its `comment source` in `process-splat.sh`.
+
+**Revisit if** many scans of one source all need the same skips and their
+configs start to drift — then a default per source, with the config still
+winning.
+
+---
+
+## 2026-11-06 — a splat scan's own cut settings live in its folder
+
+> **Superseded in part** by "a splat scan's config skips steps; no rule by
+> scanner source" (2026-11-06): there is no aerial capture any more; a drone
+> scan's density and size settings apply unless its config skips the cuts.
+
+**Decision.** `process-splat.sh` reads an optional
+`original/<scan>/process_splat_config.json` (`version` 1; any of `cell`,
+`min_density`, `max_scale`, `scale_ratio`, `floaters`; a free `note`). Each
+setting comes from its flag, else the config, else the default. The file is
+checked whole and strictly before anything runs: an unknown key, a wrong
+type or a value the flag would refuse fails the scan, even when a flag
+overrides that key. It is the one file an operator adds to `original/`,
+which no tool writes. `infra/specs/process-splat.md` revision 15. Partly
+supersedes "an aerial splat capture skips the density and size cuts"
+(2026-11-03), which ruled out per-aerial-capture cut settings: a config's
+`floaters` now applies to an aerial capture, though its density and size
+settings still have no effect.
+
+**Why.** The defaults suit most scans, but a scan that needs other values
+had them only in whoever ran it, and a re-run, or the next person's, lost
+them. Beside the scan they travel with it and are reproducible, and the
+command stays the same for every scan. Strictness is because a lenient
+reader fails silently: a misspelt `min_densty` would cut the scan with the
+default and say nothing.
+
+**Rules out.** A central settings file for all scans (keyed by scan name,
+it drifts from the folders); a config written by any tool; lenient parsing
+(ignored unknown keys, numbers as strings); a config overriding a flag.
+
+**Revisit if** the settings need to differ by more than a scan (per tile,
+per region), or a second tool wants per-scan settings — then a shared format
+and reader, not a second file.
+
+---
+
 ## 2026-11-06 — infra's Martin image is pinned to an exact version
 
 **Decision.** `infra/docker-compose.yml` runs `ghcr.io/maplibre/martin:1.16.1`
@@ -32,6 +98,12 @@ cleared it.
 ---
 
 ## 2026-11-03 — an aerial splat capture skips the density and size cuts
+
+> **Superseded** by "a splat scan's config skips steps; no rule by scanner
+> source" (2026-11-06): no capture skips a step for its source; each drone
+> scan's `process_splat_config.json` skips the two cuts instead. Earlier,
+> in part, by "a splat scan's own cut settings live in its folder"
+> (2026-11-06): a config's `floaters` applied to an aerial capture.
 
 **Decision.** `process-splat.sh` treats a `point_cloud.ply` whose `comment
 source` is in its `aerial_sources` (today `Drone`) as aerial, and runs only

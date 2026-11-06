@@ -104,7 +104,7 @@ would not be transitive and would depend on that order.
 | constant | value | what it means |
 | --- | --- | --- |
 | opaque | `sigmoid ≥ 0.5` | which splats count towards the score |
-| sub-cell | 0.25 m (4 per axis) | the coverage resolution: the size cut's 0.25 m floor, the limit of every ground scan (`specs/process-splat.md`); the drone scan is not size-cut and its splats are larger, which only lowers its `S` (its typical largest axis is 0.198 m against 0.011–0.037 m), so where both reach a voxel the ground scan still usually wins |
+| sub-cell | 0.25 m (4 per axis) | the coverage resolution: the size cut's 0.25 m floor, the limit of a ground scan cut with the defaults (`specs/process-splat.md`); a scan whose config skips the size cut keeps larger splats, and the drone scan's are larger still, which only lowers its `S` (its typical largest axis is 0.198 m against 0.011–0.037 m), so where both reach a voxel the ground scan still usually wins |
 | band | 0.9 | how close a score must be to the best to compete on `count` |
 
 These are this revision's values, chosen by reasoning, not tuned. Tuning

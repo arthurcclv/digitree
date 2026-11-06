@@ -2,15 +2,16 @@
 # Process one Gaussian splat capture for serving: correct its placement
 # against the scanner's RTK and lidar, drop the Gaussians outside the capture's
 # own distribution, the oversized ones and the floaters, and write it as a
-# lossless .ply for splat-mosaic.mjs. An aerial capture (comment source
-# Drone) gets the floater pass alone.
+# lossless .ply for splat-mosaic.mjs. A scan's config may skip any of the
+# density cut, the size cut and the floater pass.
 #
 #   ./scripts/process-splat.sh KZ0918-075047                        # 2 m voxels, 1%, max(0.25 m, 4 × typical size)
 #   ./scripts/process-splat.sh KZ0918-075047 --min-density 0.02 --max-scale 0.5 --scale-ratio 6
 #
-# Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, and for the
-# align step the files its scanner module reads (specs/scanners.md) — and
-# never writes it. Writes
+# Reads data/3dgs/original/<scan>/ — the one point_cloud.<ext>, for the
+# align step the files its scanner module reads (specs/scanners.md), and the
+# optional process_splat_config.json, the scan's own cut settings, which a
+# flag still overrides, and the steps it skips — and never writes it. Writes
 # data/3dgs/clean/<scan>.ply, which the mosaic reads, and <scan>.align.json
 # beside it. It always starts from the original, so re-running never
 # compounds the cuts. The specs are specs/process-splat.md and
@@ -28,35 +29,58 @@ min_density=0.01
 # keeps every ground scan at 0.25 m.
 max_scale=0.25
 scale_ratio=4
-# The `comment source` values of aerial captures, which skip the density and
-# size cuts: seen from above, sparse areas are real surface and large
-# Gaussians are the sampling, not outliers.
-aerial_sources=(Drone)
 # splat-transform's own defaults for -F, spelled out so a change in its
 # defaults does not silently change what this script does.
 floaters=0.05,0.1,0.004
 
 die() { echo "error: $*" >&2; exit 1; }
 usage() { echo "usage: $0 <scan> [--cell <m>] [--min-density <f>] [--max-scale <m>] [--scale-ratio <k>] [--floaters <size,op,min>]" >&2; exit 2; }
-is_positive() { [[ $1 =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] && [[ ! $1 =~ ^0*\.?0*$ ]]; }
+
+# The cut settings, each a variable above, a flag (--min-density for
+# min_density) and a key of the scan's config. Each one's rule, which its flag
+# and the config share, so the file can never pass a value the command line
+# would refuse:
+settings=(cell min_density max_scale scale_ratio floaters)
+declare -A rule=(
+  [cell]="a positive number of metres"
+  [min_density]="a positive fraction"
+  [max_scale]="a positive number of metres"
+  [scale_ratio]="a positive number"
+  [floaters]="three non-negative numbers size,opacity,min"
+)
+decimal='([0-9]+\.?[0-9]*|\.[0-9]+)'
+valid() {
+  case $1 in
+    floaters) [[ $2 =~ ^$decimal,$decimal,$decimal$ ]] ;;
+    *) [[ $2 =~ ^$decimal$ ]] && [[ ! $2 =~ ^0*\.?0*$ ]] ;;
+  esac
+}
+# Where each setting came from: flags, config or defaults. A flag wins over
+# the scan's config.
+declare -A origin=()
+# The step each setting belongs to, and the steps the config skips (a set,
+# and the config's list in the order the steps run). A skipped step's
+# settings are still checked, but unused.
+declare -A step_of=([cell]=density [min_density]=density [max_scale]=size [scale_ratio]=size [floaters]=floaters)
+declare -A skipped=()
+skips=
+is_skipped() { [ -n "${skipped[$1]:-}" ]; }
 
 [ $# -ge 1 ] || usage
 scan=$1; shift
 while [ $# -gt 0 ]; do
   case $1 in
-    --cell)        [ $# -ge 2 ] || usage; cell=$2; shift 2 ;;
-    --min-density) [ $# -ge 2 ] || usage; min_density=$2; shift 2 ;;
-    --max-scale)   [ $# -ge 2 ] || usage; max_scale=$2; shift 2 ;;
-    --scale-ratio) [ $# -ge 2 ] || usage; scale_ratio=$2; shift 2 ;;
-    --floaters)    [ $# -ge 2 ] || usage; floaters=$2; shift 2 ;;
+    --cell|--min-density|--max-scale|--scale-ratio|--floaters)
+      [ $# -ge 2 ] || usage
+      key=${1#--}; key=${key//-/_}
+      printf -v "$key" '%s' "$2"; origin[$key]=flags; shift 2 ;;
     *) usage ;;
   esac
 done
 
-is_positive "$cell"        || die "--cell must be a positive number of metres, got '$cell'"
-is_positive "$min_density" || die "--min-density must be a positive fraction, got '$min_density'"
-is_positive "$max_scale"   || die "--max-scale must be a positive number of metres, got '$max_scale'"
-is_positive "$scale_ratio" || die "--scale-ratio must be a positive number, got '$scale_ratio'"
+for key in "${settings[@]}"; do
+  valid "$key" "${!key}" || die "--${key//_/-} must be ${rule[$key]}, got '${!key}'"
+done
 case $scan in
   */*|.|..|"") die "'$scan' must be a bare scan folder name in $original_dir" ;;
 esac
@@ -77,6 +101,66 @@ done
 for tool in splat-transform node npm; do
   command -v "$tool" > /dev/null || die "$tool is not on PATH (npm install -g @playcanvas/splat-transform)"
 done
+
+# The scan's own settings, if an operator recorded any beside it. The file is
+# checked whole, and strictly, before anything runs: a misspelt key would
+# otherwise be ignored and the scan cut with the default, and a bad key is
+# refused even when a flag overrides it, so it is found on the first run.
+# Each setting comes from its flag, else the config, else the default.
+config_name=process_splat_config.json
+config=$original_dir/$scan/$config_name
+if [ -e "$config" ]; then
+  # `<key> <value> <raw>` per setting the file has, its shape and types
+  # checked; or the reason it is refused, exiting 1. Fields are split on the
+  # unit separator, not a space: a skip's value is empty when its array is,
+  # and a run of spaces or tabs would collapse into one separator.
+  config_lines=$(node --input-type=module -e '
+    const { readConfig } = await import(process.argv[1]);
+    try { for (const fields of readConfig(process.argv[2])) console.log(fields.join("\x1f")); }
+    catch (e) { console.log(e.message); process.exit(1); }' -- "$infra/scripts/process-splat-config.mjs" "$config") || die "$config_lines"
+  while IFS=$'\x1f' read -r key value raw; do
+    [ -n "$key" ] || continue
+    # The skips are checked whole by readConfig; no flag shares their rule.
+    if [ "$key" = skip ]; then
+      skips=$value
+      for step in ${value//,/ }; do skipped[$step]=1; done
+      continue
+    fi
+    # Checked before a flag can override it: the file is checked whole.
+    valid "$key" "$value" || die "$config: \"$key\" must be ${rule[$key]}, got $raw"
+    [ "${origin[$key]:-}" = flags ] && continue
+    # Safe to assign by name: readConfig returns only keys of $settings.
+    printf -v "$key" '%s' "$value"
+    origin[$key]=config
+  done <<< "$config_lines"
+fi
+for key in "${settings[@]}"; do : "${origin[$key]:=defaults}"; done
+# `settings: config <file> (…); flags (…); defaults (…)`, each group only when
+# it has a setting; `settings: defaults` when nothing came from either. A
+# skipped step's settings are left out of the groups, and those a config or
+# flag set follow as `unused, skipped (…)`; the config's skips end the line.
+settings_line() {
+  local key line= unused=
+  local -A group=([config]= [flags]= [defaults]=)
+  for key in "${settings[@]}"; do
+    if is_skipped "${step_of[$key]}"; then
+      [ "${origin[$key]}" = defaults ] || unused+=", $key"
+    else
+      group[${origin[$key]}]+=", $key"
+    fi
+  done
+  [ -z "${group[config]}" ] || line+="; config $config_name (${group[config]#, })"
+  [ -z "${group[flags]}" ] || line+="; flags (${group[flags]#, })"
+  if [ -z "$line" ]; then
+    # Every step skipped, and nothing set: there is no default in use either.
+    [ -z "${group[defaults]}" ] && [ -n "$skips" ] || line=defaults
+  else
+    [ -z "${group[defaults]}" ] || line+="; defaults (${group[defaults]#, })"
+  fi
+  [ -z "$unused" ] || line+="; unused, skipped (${unused#, })"
+  [ -z "$skips" ] || line+="; skip (${skips//,/, })"
+  echo "    settings: ${line#; }"
+}
 
 # The density step uses splat-transform's library API, not just its CLI, so
 # the version is held to the one it was written against.
@@ -122,21 +206,14 @@ transform() {
 }
 gaussians() { splat-transform -q --no-tty "$1" --info json null | json numGaussians; }
 
-# Aerial when the PLY's header names an aerial source; other formats carry none.
-capture_source=
-if [ "${found[0]}" = point_cloud.ply ]; then
-  capture_source=$(node --input-type=module -e '
-    const { plySource } = await import(process.argv[1]);
-    console.log((await plySource(process.argv[2])) ?? "");' -- "$infra/scripts/ply-header.mjs" "$in")
-fi
-aerial=
-for s in "${aerial_sources[@]}"; do [ "$capture_source" = "$s" ] && aerial=1; done
-
-if [ -n "$aerial" ]; then
-  echo "==> $scan (${found[0]}): align, no density or size cut (aerial), floaters $floaters"
-else
-  echo "==> $scan (${found[0]}): align, density in ${cell} m voxels >= ${min_density} x typical, every axis <= max(${max_scale} m, ${scale_ratio} x typical size), floaters $floaters"
-fi
+# The first line: every step that runs, with the values it uses, and every
+# skipped one by name.
+plan=align
+if is_skipped density; then plan+=", no density cut (skip)"; else plan+=", density in ${cell} m voxels >= ${min_density} x typical"; fi
+if is_skipped size; then plan+=", no size cut (skip)"; else plan+=", every axis <= max(${max_scale} m, ${scale_ratio} x typical size)"; fi
+if is_skipped floaters; then plan+=", no floater pass (skip)"; else plan+=", floaters $floaters"; fi
+echo "==> $scan (${found[0]}): $plan"
+settings_line
 
 # 0. Align: correct the capture's placement in its own frame. splat-align.mjs
 # picks the scanner module by the PLY's `comment source` and skips (exit 5)
@@ -163,10 +240,11 @@ else
   esac
 fi
 
-if [ -n "$aerial" ]; then
-  # 1–2 skipped: the floater pass reads the original, or the aligned file.
+if is_skipped density; then
+  # 1–2 skipped (the config cannot skip density alone): the floater pass
+  # reads the original, or the aligned file.
   before=$(gaussians "$in")
-  echo "    $before gaussians; density and size cuts skipped: aerial capture (source '$capture_source')"
+  echo "    $before gaussians; density and size cuts skipped: $config_name"
   floater_input=$in
 else
   # 1. The density cut, which splat-transform's CLI cannot express.
@@ -182,21 +260,33 @@ else
   read -r limit typical_shown limit_shown < <(node -e '
     const [f, k, t] = process.argv.slice(1).map(Number), limit = Math.max(f, k * t);
     console.log(limit, +t.toPrecision(3), +limit.toPrecision(4));' -- "$max_scale" "$scale_ratio" "$typical_scale")
-  echo "    typical size $typical_shown m; size limit $limit_shown m"
+  if is_skipped size; then
+    echo "    typical size $typical_shown m"
+    echo "    size cut skipped: $config_name"
+    floater_input=$work/dense.ply
+  else
+    echo "    typical size $typical_shown m; size limit $limit_shown m"
 
-  # 2. Size cut, to a second lossless .ply so its own count can be reported.
-  # -V on scale_* compares in metres, though the file stores log scale:
-  # scale_0,lte,0 keeps nothing.
-  transform "$work/dense.ply" \
-    -V "scale_0,lte,$limit" -V "scale_1,lte,$limit" -V "scale_2,lte,$limit" \
-    "$work/sized.ply"
-  echo "    $(gaussians "$work/sized.ply") kept by size"
-  floater_input=$work/sized.ply
+    # 2. Size cut, to a second lossless .ply so its own count can be reported.
+    # -V on scale_* compares in metres, though the file stores log scale:
+    # scale_0,lte,0 keeps nothing.
+    transform "$work/dense.ply" \
+      -V "scale_0,lte,$limit" -V "scale_1,lte,$limit" -V "scale_2,lte,$limit" \
+      "$work/sized.ply"
+    echo "    $(gaussians "$work/sized.ply") kept by size"
+    floater_input=$work/sized.ply
+  fi
 fi
 
 # 3. Floaters, to the lossless .ply the mosaic reads. No SPZ: nothing fetches
-# the file itself any more, and build-lod reads the tiles' .ply.
-transform "$floater_input" -F "$floaters" "$tmp"
+# the file itself any more, and build-lod reads the tiles' .ply. Skipped, the
+# same run writes the same .ply with no filter, so the output's format never
+# depends on the skips.
+if is_skipped floaters; then
+  transform "$floater_input" "$tmp"
+else
+  transform "$floater_input" -F "$floaters" "$tmp"
+fi
 
 after=$(gaussians "$tmp")
 mv "$work/align.json" "$align_out"
@@ -204,5 +294,9 @@ mv "$tmp" "$out"
 
 removed=$((before - after))
 pct=$(node -e 'console.log((100 * process.argv[1] / process.argv[2]).toFixed(1))' -- "$removed" "$before")
-echo "    $after kept after floaters; $removed removed in all ($pct%)"
+if is_skipped floaters; then
+  echo "    $after kept, floater pass skipped: $config_name; $removed removed in all ($pct%)"
+else
+  echo "    $after kept after floaters; $removed removed in all ($pct%)"
+fi
 echo "    wrote $out and $align_out"

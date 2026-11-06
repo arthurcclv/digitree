@@ -121,11 +121,11 @@ georef "$SPLATS_ORIGINAL_DIR/as-ply/point_cloud.ply"
 # typical size is 0.3 m and the limit 4 × that, 1.2 m; big is 4 × 4 × 8 = 128
 # in a voxel of its own, 64 at 0.5 m (kept; revision 12's fixed 0.25 m
 # removed them) and 64 at 2 m (removed). A .ply, so no codebook pools them.
-# aerial is coarse plus a clump of 8 beside it, as `comment source Drone`:
-# no Gaussian is cut. ground is the same file as `comment source L2Pro`.
-# Both are written from coarse-clump.mjs.
+# flown is coarse plus a clump of 8 beside it, as `comment source Drone`:
+# the source decides nothing, so it is cut as any capture is. ground is the
+# same file as `comment source L2Pro`. Both are written from coarse-clump.mjs.
 cat > "$work/gen/coarse.mjs" <<'EOF2'
-const extra = false; // true for aerial and ground: the clump of 8
+const extra = false; // true for flown and ground: the clump of 8
 const rows = [];
 const clump = (at, n, scaleOf) => {
   let k = 0;
@@ -152,7 +152,7 @@ mkdir -p "$SPLATS_ORIGINAL_DIR/coarse"
 splat-transform -q --no-tty -w "$work/gen/coarse.mjs" "$SPLATS_ORIGINAL_DIR/coarse/point_cloud.ply"
 georef "$SPLATS_ORIGINAL_DIR/coarse/point_cloud.ply"
 sed 's/^const extra = false;/const extra = true;/' "$work/gen/coarse.mjs" > "$work/gen/coarse-clump.mjs"
-for d in aerial:Drone ground:L2Pro; do
+for d in flown:Drone ground:L2Pro; do
   mkdir -p "$SPLATS_ORIGINAL_DIR/${d%%:*}"
   splat-transform -q --no-tty -w "$work/gen/coarse-clump.mjs" "$SPLATS_ORIGINAL_DIR/${d%%:*}/point_cloud.ply"
   georef "$SPLATS_ORIGINAL_DIR/${d%%:*}/point_cloud.ply" "${d#*:}"
@@ -226,14 +226,13 @@ else
 fi
 rm -f "$SPLATS_CLEAN_DIR"/coarse.* "$SPLATS_CLEAN_DIR"/spread.*
 
-case_ "an aerial capture is not cut"
-if log=$(process aerial); then
-  expect_contains "says so on its first line" "$log" "==> aerial (point_cloud.ply): align, no density or size cut (aerial), floaters"
-  expect_contains "names the source and skips both cuts" "$log" "1136 gaussians; density and size cuts skipped: aerial capture (source 'Drone')"
-  expect "  measures no typical size" "$(echo "$log" | grep -c 'typical size' || true)" 0
-  expect "  keeps the 2 m Gaussians and the clump of 8" "$(count "$SPLATS_CLEAN_DIR/aerial.ply")" 1136
+case_ "a Drone capture is cut like any other"
+if log=$(process flown); then
+  expect_contains "runs both cuts" "$log" "1136 gaussians; typical voxel holds 1000; 1128 kept by density"
+  expect "  so its clump of 8 and its 2 m Gaussians go" "$(count "$SPLATS_CLEAN_DIR/flown.ply")" 1064
+  expect "  and its log names no aerial capture" "$(echo "$log" | grep -c 'aerial' || true)" 0
 else
-  bad "cleans an aerial capture" "$log"
+  bad "cleans a Drone capture" "$log"
 fi
 if log=$(process ground); then
   expect_contains "the same file as L2Pro has no module's files, so its align is skipped" "$log" "align skipped: no "
@@ -242,7 +241,7 @@ if log=$(process ground); then
 else
   bad "cleans the same file as L2Pro" "$log"
 fi
-rm -f "$SPLATS_CLEAN_DIR"/aerial.* "$SPLATS_CLEAN_DIR"/ground.*
+rm -f "$SPLATS_CLEAN_DIR"/flown.* "$SPLATS_CLEAN_DIR"/ground.*
 
 case_ "every coordinate negative"
 if log=$(process mirror); then
@@ -272,6 +271,136 @@ log=$(process scene --cell 100)
 # and far's 216 still clears 1% of it: the cell is what tells a sky floater
 # from the street below it.
 expect_contains "in 100 m voxels the sky clump shares main's, and nothing goes" "$log" "1475 kept by density"
+
+case_ "a scan's own config"
+# configured is scene again, with a process_splat_config.json beside it that
+# each case writes; flown-config is flown again.
+mkdir -p "$SPLATS_ORIGINAL_DIR/configured" "$SPLATS_ORIGINAL_DIR/flown-config"
+cp "$SPLATS_ORIGINAL_DIR/scene/point_cloud.sog" "$SPLATS_ORIGINAL_DIR/configured/"
+cp "$SPLATS_ORIGINAL_DIR/flown/point_cloud.ply" "$SPLATS_ORIGINAL_DIR/flown-config/"
+cfg=$SPLATS_ORIGINAL_DIR/configured/process_splat_config.json
+cout=$SPLATS_CLEAN_DIR/configured.ply
+log=$(process configured)
+expect_contains "with no config and no flag, every setting is a default" "$log" "    settings: defaults"
+plain=$(sum "$cout")
+echo '{"version": 1, "min_density": 0.03, "note": "c27 is noise here"}' > "$cfg"
+cfg_sum=$(sum "$cfg")
+log=$(process configured)
+expect "the config's min_density removes c27, as the flag does" "$(count "$cout")" 1368
+expect_contains "  the first line gives the value used" "$log" ">= 0.03 x typical"
+expect_contains "  and the settings line names where each came from" "$log" "settings: config process_splat_config.json (min_density); defaults (cell, max_scale, scale_ratio, floaters)"
+log=$(process configured --min-density 0.01)
+expect "a flag wins over the config" "$(count "$cout")" 1395
+expect_contains "  and is named as a flag" "$log" "settings: flags (min_density); defaults (cell, max_scale, scale_ratio, floaters)"
+log=$(process configured --max-scale 0.6)
+expect_contains "config and flags are named together" "$log" "settings: config process_splat_config.json (min_density); flags (max_scale); defaults (cell, scale_ratio, floaters)"
+expect "the config file is never written" "$(sum "$cfg")" "$cfg_sum"
+echo '{"version": 1, "max_scale": 0.6}' > "$cfg"
+process configured > /dev/null
+expect "the config's max_scale keeps the 0.5 m Gaussians" "$(count "$cout")" 1459
+echo '{"version": 1, "floaters": {"size": 0.05, "opacity": 0.1, "min": 0.004}}' > "$cfg"
+log=$(process configured)
+expect "floaters at splat-transform's own values change nothing" "$(count "$cout")" 1395
+expect_contains "  and reach -F as size,opacity,min" "$log" "floaters 0.05,0.1,0.004"
+echo '{"version": 1, "cell": 0.0000001}' > "$cfg"
+expect_contains "a tiny value is passed as a plain decimal, not 1e-7" "$(process configured --min-density 2 || true)" "density in 0.0000001 m voxels"
+echo '{"version": 1}' > "$cfg"
+log=$(process configured)
+expect "a config with only version gives the same output as none" "$(sum "$cout")" "$plain"
+expect_contains "  and says defaults" "$log" "    settings: defaults"
+echo '{"version": 1, "floaters": {"size": 0.05, "opacity": 0, "min": 0.004}}' > "$cfg"
+log=$(process configured)
+expect_contains "a floaters part of 0 is accepted and reaches -F as 0" "$log" "floaters 0.05,0,0.004"
+# Every bad file is refused, naming it, before anything in clean/ is touched.
+process configured > /dev/null
+kept=$(sum "$cout")
+refused() {
+  local label=$1 body=$2 want=$3; shift 3
+  printf '%s' "$body" > "$cfg"
+  if log=$(process configured "$@"); then bad "refuses $label" "it succeeded"; return; fi
+  expect_contains "refuses $label" "$log" "error: $cfg: $want"
+}
+refused "a file that is not JSON"      '{"version": 1,'                          "not valid JSON"
+refused "a JSON array"                 '[1]'                                     "must be a JSON object"
+refused "a file with no version"       '{"cell": 2}'                             'has no "version"'
+refused "version 2"                    '{"version": 2}'                          "has version 2"
+refused "a misspelt key"               '{"version": 1, "min_densty": 0.02}'      'unknown key "min_densty"'
+refused "a number written as a string" '{"version": 1, "min_density": "0.02"}'   '"min_density" must be a number, got "0.02"'
+refused "a zero cell"                  '{"version": 1, "cell": 0}'               '"cell" must be a positive number of metres, got 0'
+refused "a cell that writes as 0"      '{"version": 1, "cell": 1e-25}'           '"cell" must be a positive number of metres, got 1e-25'
+refused "a negative ratio"             '{"version": 1, "scale_ratio": -1}'       '"scale_ratio" must be a positive number, got -1'
+refused "floaters missing min"         '{"version": 1, "floaters": {"size": 0.05, "opacity": 0.1}}'                         '"floaters" must have exactly the keys'
+refused "floaters with an extra key"   '{"version": 1, "floaters": {"size": 0.05, "opacity": 0.1, "min": 0.004, "x": 1}}'   '"floaters" must have exactly the keys'
+refused "floaters as -F's string"      '{"version": 1, "floaters": "0.05,0.1,0.004"}'                                       '"floaters" must be an object'
+refused "a negative floaters.opacity"  '{"version": 1, "floaters": {"size": 0.05, "opacity": -0.1, "min": 0.004}}'         '"floaters" must be three non-negative numbers size,opacity,min'
+refused "a non-string note"            '{"version": 1, "note": 3}'               '"note" must be a string'
+refused "a bad cell a flag overrides"  '{"version": 1, "cell": 0}'               '"cell" must be a positive number' --cell 2
+refused "a skip that is not an array"  '{"version": 1, "skip": "size"}'          '"skip" must be an array of step names'
+refused "a misspelt step"              '{"version": 1, "skip": ["floater"]}'     '"skip" names an unknown step "floater"'
+refused "a step that is not a name"    '{"version": 1, "skip": [1]}'             '"skip" names an unknown step 1'
+refused "a step named twice"           '{"version": 1, "skip": ["size", "size"]}' '"skip" names a step more than once'
+refused "density skipped without size" '{"version": 1, "skip": ["density"]}'     '"skip" names "density" without "size"'
+expect "  each leaves the previous output" "$(sum "$cout")" "$kept"
+expect "  and no temporary file" "$(ls -A "$SPLATS_CLEAN_DIR" | grep -c '^\.' || true)" 0
+rm -f "$cfg" "$SPLATS_CLEAN_DIR"/configured.*
+
+case_ "a config's skipped steps"
+cfg=$SPLATS_ORIGINAL_DIR/configured/process_splat_config.json
+echo '{"version": 1, "skip": ["density", "size", "floaters"]}' > "$cfg"
+if log=$(process configured); then
+  expect "skipping every step keeps every Gaussian" "$(count "$cout")" 1475
+  expect_contains "  names all three on the first line" "$log" "==> configured (point_cloud.sog): align, no density cut (skip), no size cut (skip), no floater pass (skip)"
+  expect_contains "  and in place of the cuts' counts" "$log" "1475 gaussians; density and size cuts skipped: process_splat_config.json"
+  expect_contains "  and of the floater pass's" "$log" "1475 kept, floater pass skipped: process_splat_config.json; 0 removed in all (0.0%)"
+  expect_contains "  and on the settings line" "$log" "    settings: skip (density, size, floaters)"
+  expect "  still writes a binary little-endian PLY" "$(head -c 200 "$cout" | LC_ALL=C sed -n 2p)" "format binary_little_endian 1.0"
+else
+  bad "skips every step" "$log"
+fi
+echo '{"version": 1, "skip": ["density", "size"]}' > "$cfg"
+if log=$(process configured); then
+  expect "skipping both cuts keeps the clumps of 8 and the 0.5 m Gaussians" "$(count "$cout")" 1475
+  expect_contains "  and the floater pass still runs" "$log" "no density cut (skip), no size cut (skip), floaters 0.05,0.1,0.004"
+  expect_contains "  as the settings line says" "$log" "settings: defaults; skip (density, size)"
+  expect_contains "  and reports it" "$log" "1475 kept after floaters"
+else
+  bad "skips both cuts" "$log"
+fi
+echo '{"version": 1, "skip": ["size"]}' > "$cfg"
+if log=$(process configured); then
+  expect "skipping the size cut removes the clumps of 8 and keeps the 0.5 m Gaussians" "$(count "$cout")" 1459
+  expect_contains "  names it on the first line, between the cuts that run" "$log" "align, density in 2 m voxels >= 0.01 x typical, no size cut (skip), floaters 0.05,0.1,0.004"
+  expect_contains "  reports the typical size" "$log" "    typical size 0.02 m"
+  expect_contains "  and that the cut was skipped" "$log" "    size cut skipped: process_splat_config.json"
+  expect "  and no limit" "$(echo "$log" | grep -c 'size limit' || true)" 0
+else
+  bad "skips the size cut" "$log"
+fi
+echo '{"version": 1, "skip": ["floaters"]}' > "$cfg"
+if log=$(process configured); then
+  expect "skipping the floater pass keeps what it would (the scene has no floaters)" "$(count "$cout")" 1395
+  expect_contains "  and says it was skipped" "$log" "1395 kept, floater pass skipped: process_splat_config.json"
+else
+  bad "skips the floater pass" "$log"
+fi
+echo '{"version": 1, "skip": []}' > "$cfg"
+log=$(process configured)
+expect "an empty skip gives the same output as no config" "$(sum "$cout")" "$plain"
+expect_contains "  and says defaults" "$log" "    settings: defaults"
+echo '{"version": 1, "min_density": 0.5, "skip": ["density", "size"]}' > "$cfg"
+if log=$(process configured --max-scale 0.6); then
+  expect_contains "a skipped step's settings, from config and flag, are named unused" "$log" "settings: defaults; unused, skipped (min_density, max_scale); skip (density, size)"
+  expect "  and have no effect" "$(count "$cout")" 1475
+else
+  bad "skips the cuts with their settings set" "$log"
+fi
+echo '{"version": 1, "skip": ["density", "size"]}' > "$SPLATS_ORIGINAL_DIR/flown-config/process_splat_config.json"
+if log=$(process flown-config); then
+  expect "a Drone capture skipping both cuts keeps the clump of 8 and the 2 m Gaussians" "$(count "$SPLATS_CLEAN_DIR/flown-config.ply")" 1136
+else
+  bad "skips both cuts on a Drone capture" "$log"
+fi
+rm -f "$cfg" "$SPLATS_CLEAN_DIR"/configured.* "$SPLATS_CLEAN_DIR"/flown-config.*
 
 case_ "the output"
 process scene > /dev/null
@@ -312,6 +441,9 @@ if log=$(process scene --min-density -1); then bad "refuses a negative density" 
 if log=$(process scene --max-scale 0); then bad "refuses a zero size" "it succeeded"; else expect_contains "refuses a zero size" "$log" "--max-scale must be a positive number"; fi
 if log=$(process scene --scale-ratio 0); then bad "refuses a zero ratio" "it succeeded"; else expect_contains "refuses a zero ratio" "$log" "--scale-ratio must be a positive number"; fi
 if log=$(process scene --scale-ratio -2); then bad "refuses a negative ratio" "it succeeded"; else expect_contains "refuses a negative ratio" "$log" "--scale-ratio must be a positive number"; fi
+for f in 0.05,0.1 0.05,-0.1,0.004 a,b,c; do
+  if log=$(process scene --floaters "$f"); then bad "refuses --floaters $f" "it succeeded"; else expect_contains "refuses --floaters $f" "$log" "--floaters must be three non-negative numbers size,opacity,min, got '$f'"; fi
+done
 # The density step is written against 3.10's library, so another version is
 # refused before anything runs.
 mkdir -p "$work/old"
@@ -367,7 +499,7 @@ log=$(process nometa)
 expect_contains "skips an L2 Pro scan without metadata.json" "$log" "align skipped: no metadata.json"
 if log=$(process drone); then
   expect_contains "cleans a Drone scan, skipping align" "$log" "align skipped: no scanner module for source 'Drone'"
-  expect_contains "  as an aerial capture" "$log" "density and size cuts skipped: aerial capture (source 'Drone')"
+  expect_contains "  and cuts it as any capture" "$log" "kept by density"
   expect "  and records it" "$(status_of drone)" skipped
 else
   bad "cleans a Drone scan, skipping align" "$log"

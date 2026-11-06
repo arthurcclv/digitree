@@ -1,8 +1,8 @@
 // A scan's georeference and source, from its point_cloud.ply header, and a
 // PLY's body layout. splat-mosaic.mjs moves each cleaned scan into the common
 // frame by its original's offset and reads it through its layout;
-// process-splat.sh reads the source, and splat-align.mjs reads it the same
-// way. Every refusal throws, naming the scan; the caller prints it and exits.
+// splat-align.mjs reads the source, to pick the scanner module. Every
+// refusal throws, naming the scan; the caller prints it and exits.
 // `num` is shared too, and throws the same way. The rules are in
 // specs/splat-mosaic.md, *Inputs*.
 import { existsSync } from 'node:fs';
@@ -48,17 +48,10 @@ async function plyComments(path) {
 }
 
 // A header's `comment source` — the rest of the line — or null: which scanner
-// made the scan. splat-align.mjs picks its scanner module by it, and
-// process-splat.sh decides by it whether a capture is aerial.
+// made the scan. splat-align.mjs picks its scanner module by it.
 export function commentSource(lines) {
   const line = lines.find((l) => /^comment source\s/.test(l));
   return line ? line.replace(/^comment source\s+/, '').trim() || null : null;
-}
-
-// The `comment source` of the PLY at `path`, or null.
-export async function plySource(path) {
-  const lines = await headerLines(path);
-  return lines && commentSource(lines);
 }
 
 // The capture's georeference: file (x, y, z) = (E, N, h) − offset, in the UTM

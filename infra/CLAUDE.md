@@ -37,8 +37,13 @@ load.sh              the whole bring-up in one command; restarts Martin (it
                      can serve a stale bind mount after a rebuild)
 scripts/             the splat tools, each an explicit step load.sh never runs:
   process-splat.sh   original/<scan>/ -> align -> density, size and floater
-                     cuts (floaters alone for a Drone capture) ->
-                     clean/<scan>.ply + <scan>.align.json
+                     cuts -> clean/<scan>.ply + <scan>.align.json; settings
+                     from flag, else the scan's process_splat_config.json,
+                     else the default; the config's `skip` drops steps
+  process-splat-config.mjs
+                     process-splat.sh's reader of that config: its shape
+                     and types; each value's rule stays the script's, shared
+                     with its flag
   splat-align.mjs    process-splat.sh's align step: RTK + lidar -> one rigid
                      correction, in the PLY's own frame
   scanners/          what each scanner delivers, one module per scanner, found
@@ -54,8 +59,8 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      (name, version, score, choose)
   utm.mjs            WGS 84 <-> UTM, for splat-align and the tests
   ply-header.mjs     a scan's point_cloud.ply georeference and source, and a
-                     PLY's body layout: for the mosaic, process-splat.sh's
-                     aerial check and splat-align.mjs's module choice
+                     PLY's body layout: for the mosaic and splat-align.mjs's
+                     module choice
   build-lod.sh       tiles/<tile>.ply (one, several, or --all) -> Spark's
                      build-lod (v2.4.0, in Docker) -> lod/<tile>-lod.rad +
                      <tile>-lod-<n>.radc, the chunked tree the app draws
@@ -73,7 +78,8 @@ test/                fixture CSVs and run.sh, the loader's test suite, which
 data/                raw open-data extracts (gitignored, not redistributed)
 data/custom/         optional drop-in CSVs, loaded as kind = 'custom'
 data/3dgs/           splat captures and georef.csv (gitignored):
-                     original/<scan>/ as delivered, clean/<scan>.ply as
+                     original/<scan>/ as delivered (+ an operator's
+                     process_splat_config.json), clean/<scan>.ply as
                      aligned and cleaned (+ .align.json), tiles/<tile>.ply as
                      merged (+ mosaic.json), lod/<tile>-lod.rad and
                      -lod-<n>.radc as drawn
@@ -127,7 +133,11 @@ right way to start over.
   re-run it:
   - `data/3dgs/clean/` (`<scan>.ply` and `.align.json`) is
     `process-splat.sh`'s, derived from `data/3dgs/original/`, which is
-    read-only like the extracts (`specs/process-splat.md`);
+    read-only like the extracts (`specs/process-splat.md`) — but for one
+    file an operator may add to a scan's folder: its
+    `process_splat_config.json`, that scan's cut settings, which
+    `process-splat.sh` reads and no tool writes. A scan that needs other
+    settings records them there, not in a command line;
   - `data/3dgs/tiles/` and `data/3dgs/georef.csv` are `splat-mosaic.mjs`'s,
     rewritten whole from every `clean/<scan>.ply` (`specs/splat-mosaic.md`);
   - `data/3dgs/lod/` is `build-lod.sh`'s, derived from `tiles/`
@@ -148,10 +158,13 @@ right way to start over.
   file its module reads, is skipped (exit 5); one failing validation (exit 4); both
   are served unaligned, not refused. Its specs are `specs/splat-align.md`
   and `specs/scanners.md`.
-- **The splat processor's traps live in `process-splat.sh` and
+- **The splat processor's traps live in `process-splat.sh`,
+  `process-splat-config.mjs` and
   `splat-density-cut.mjs`, with comments and tests**: `-V` compares `scale_*` in metres though the file
   stores log scale; a negative number passed to `node` without `--` is read as
-  a node option; and splat-transform's `--stats`, `.csv` output and library
+  a node option; a config number must reach the script as a plain decimal,
+  never `1e-7`, and is checked as that decimal, so one too small to write
+  is refused as `0`; and splat-transform's `--stats`, `.csv` output and library
   report x and y negated relative to the coordinates `-V`/`-S` filter on (the
   density count does not care, but anything that turns a reported position
   into a filter argument must negate it). Its `.ply` output keeps x and y as
