@@ -61,13 +61,13 @@ This spec makes network exposure an **opt-in deploy setting** and makes
    `Access-Control-Allow-Headers: Range, If-None-Match, If-Modified-Since` and
    `Access-Control-Max-Age: 86400`. These three are sent on every response
    from the two locations, not only on the preflight: a browser ignores them
-   elsewhere, and one header set per location keeps `files.conf` plain. A
+   elsewhere, and one header set per location keeps the config plain. A
    `Range` request with more than one range or an unusual form is not
    CORS-safelisted, so browsers preflight it.
 8. **CORS is on regardless of `PUBLISH_ADDR`.** It is harmless on
    `127.0.0.1`, and one config is simpler to test than two. The app's
    same-origin proxy ignores the headers.
-9. **Everything else in `files.conf` is unchanged**: aliases, `sendfile`,
+9. **Everything else about `files` is unchanged**: aliases, `sendfile`,
    byte ranges, ETags, `Cache-Control: no-cache`, no gzip, no listing, `404`
    outside the two locations. `add_header` in a location replaces inherited
    ones, so the CORS headers sit in each location beside `Cache-Control`.
@@ -98,15 +98,18 @@ Note the prefixes differ from the app's proxy: no `/tiles` and no `/files`.
 
 - The app. Its `/tiles` and `/files` proxies keep working on `127.0.0.1`
   targets; `TILES_PROXY_TARGET` and `FILES_PROXY_TARGET` are untouched.
-- No authentication, TLS or rate limiting. Exposure is meant for a trusted
-  LAN. An HTTPS frontend still cannot call these `http://` origins (mixed
-  content); it needs its own proxy or TLS in front, which is out of scope.
+- No authentication or rate limiting. Exposure is meant for a trusted
+  LAN. An HTTPS frontend cannot call these `http://` origins (mixed
+  content). `files` can now also serve HTTPS, with HTTP/2, when the operator
+  supplies a certificate (`specs/files-http2.md`, 2026-11-06). Martin still
+  can't, so an HTTPS frontend needs its own proxy for Martin.
 - No `.env` is required.
 
 ## Tests
 
 - **`test/files.sh` (new).** Starts the pinned `nginx:1.28.0-alpine` with the
-  real `files.conf` over a scratch directory holding a small fixture `.rad`
+  real config (`files.conf`; since `specs/files-http2.md`, also
+  `files-locations.conf` and the HTTPS listener's files) over a scratch directory holding a small fixture `.rad`
   and `.radc`, on a random port, and checks with `curl`:
   1. `GET` with an `Origin` → `200`, `Cache-Control: no-cache`, an `ETag`.
   2. `GET` with `Range: bytes=0-15` → `206`, `Content-Range`.

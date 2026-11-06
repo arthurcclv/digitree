@@ -66,7 +66,7 @@ export const BUILDINGS: BuildingSource = {
  * static `files` service. Both are reached through same-origin proxies
  * (`/tiles` → TILES_PROXY_TARGET, `/files` → FILES_PROXY_TARGET; see
  * `src/lib/tiles/specs/proxy.md`). The table, the source id and the layer name
- * are set in `infra/martin.yaml`, the file paths in `infra/files.conf`. See
+ * are set in `infra/martin.yaml`, the file paths in `infra/files-locations.conf`. See
  * `src/layers/splat/specs/spec.md`.
  */
 export const SPLATS: SplatSource = {

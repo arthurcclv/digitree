@@ -63,7 +63,7 @@ A frontend then uses, with no `/tiles` or `/files` prefix:
 | a tile's LoD header | `http://<host>:3080/3dgs-lod/<stem>-lod.rad` |
 | its chunks | `http://<host>:3080/3dgs-lod/<stem>-lod-<n>.radc` |
 
-Martin allows any origin by default, and `files.conf` sends
+Martin allows any origin by default, and `files-locations.conf` sends
 `Access-Control-Allow-Origin: *` and answers the `Range` preflight. Check from
 another machine:
 
@@ -75,8 +75,38 @@ curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS -H 'Origin: http://x' \
   -H 'Access-Control-Request-Headers: range' http://<host>:3080/3dgs-lod/<tile>-lod.rad   # 204
 ```
 
-An HTTPS frontend cannot call these `http://` URLs (mixed content); it still
-needs its own proxy, as the app does.
+An HTTPS frontend cannot call these `http://` URLs (mixed content). For
+`files`, HTTPS is available (below). Martin still needs a proxy, as the app
+uses.
+
+### HTTPS and HTTP/2 on `files`
+
+Over HTTP/1.1 a browser opens at most six connections to `files`, so a view's
+many `.radc` chunks queue. HTTPS turns on HTTP/2, which multiplexes them on
+one connection (`specs/files-http2.md`). Browsers speak HTTP/2 over TLS
+only, so it needs a certificate, which you supply. Put `cert.pem` (leaf plus
+any intermediates) and `key.pem` (unencrypted) in `tls/`, or point
+`FILES_TLS_DIR` at another directory, then run `./load.sh`. The certificate
+must name the host clients use, and their browsers must trust its CA. With
+[mkcert](https://github.com/FiloSottile/mkcert):
+
+```bash
+mkcert -cert-file tls/cert.pem -key-file tls/key.pem 192.168.81.32 localhost 127.0.0.1
+PUBLISH_ADDR=0.0.0.0 MARTIN_PORT=3001 ./load.sh
+```
+
+Each client machine then needs mkcert's root CA (`mkcert -CAROOT`) installed.
+`files` serves HTTPS on `FILES_TLS_PORT` (default `3443`) beside plain HTTP on
+`3080`; the app's `/files` proxy keeps using `3080`. Both or neither file:
+with only one, `load.sh` and the container refuse to start. After replacing
+the pair, `docker compose restart files`. Check:
+
+```bash
+curl -sI --http2 https://<host>:3443/3dgs-lod/<tile>-lod.rad   # HTTP/2 200
+```
+
+A frontend then uses `https://<host>:3443/3dgs-lod/<stem>-lod.rad` and its
+`-lod-<n>.radc` chunks, with the same CORS headers as on `3080`.
 
 `docker compose down` stops it. `docker compose down -v` also drops the database
 volume — the right way to start over.
@@ -102,10 +132,19 @@ scans or tiles it generates in a scratch directory, and runs on its own too:
 `node` and `splat-transform`). `run.sh` also loads a `georef.csv` the real
 mosaic wrote through the real `04_splats.sql`.
 
-`./test/files.sh` (Docker) starts the pinned nginx with the real `files.conf`
-over stand-in files and checks the CORS headers, ranges, the preflight, `304`
-and `404`. `./test/compose.sh` checks the addresses Compose publishes on, with
-and without `PUBLISH_ADDR`, without starting anything. `run.sh` runs both.
+`./test/files.sh` (Docker, openssl) starts the pinned nginx with the real
+`files.conf`, `files-locations.conf`, `files-tls.conf` and `files-tls.sh` over
+stand-in files and a throwaway certificate. It checks the CORS headers,
+ranges, the preflight, `304` and `404` on both listeners, that HTTPS
+negotiates HTTP/2 and plain HTTP stays HTTP/1.1, and that no certificate
+means plain HTTP only, half of one stops the container, and so does a pair
+nginx rejects (a key from another pair, or files that aren't PEM).
+`./test/compose.sh` checks the addresses Compose publishes on, with
+and without `PUBLISH_ADDR`, without starting anything. `./test/load.sh` runs
+the real `load.sh` with a stub `docker` that starts nothing: half a pair fails
+before anything starts, a full pair prints the HTTPS address and the
+`curl --http2` check, and a missing `FILES_TLS_DIR` is created. `run.sh` runs
+all three.
 
 `./test/martin.sh` runs on its own, after `./load.sh`: it starts a throwaway
 Martin from the image `docker-compose.yml` pins, with the real `martin.yaml`,

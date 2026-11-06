@@ -66,14 +66,26 @@ services:
   # remote host uses for Martin.
   files:
     image: nginx:1.28.0-alpine
-    # PUBLISH_ADDR as for Martin. files.conf sends CORS headers, so a
-    # browser on another origin can read the files when it is set.
+    # PUBLISH_ADDR as for Martin. files-locations.conf sends CORS headers,
+    # so a browser on another origin can read the files when it is set.
+    # Two listeners serve the same locations: plain HTTP/1.1 on 80, and HTTPS
+    # with HTTP/2 on 443 when the operator's cert.pem and key.pem are in
+    # FILES_TLS_DIR (specs/files-http2.md). FILES_TLS_PORT is published
+    # either way; with no certificate nothing listens behind it.
     ports:
       - "${PUBLISH_ADDR:-127.0.0.1}:${FILES_PORT:-3080}:80"
+      - "${PUBLISH_ADDR:-127.0.0.1}:${FILES_TLS_PORT:-3443}:443"
     volumes:
       - ./data/3dgs/tiles:/srv/3dgs:ro
       - ./data/3dgs/lod:/srv/3dgs-lod:ro
       - ./files.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./files-locations.conf:/etc/nginx/files-locations.conf:ro
+      # Outside conf.d: files-tls.sh enables it only when the pair is there.
+      - ./files-tls.conf:/etc/nginx/files-tls.conf:ro
+      - ./files-tls.sh:/docker-entrypoint.d/40-files-tls.sh:ro
+      # A directory, not two file mounts: Docker turns a missing file source
+      # into an empty directory, which would hide a typo.
+      - ${FILES_TLS_DIR:-./tls}:/etc/nginx/tls:ro
 
 volumes:
   pgdata:

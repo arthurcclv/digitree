@@ -17,8 +17,12 @@ add more without a decision entry. `MARTIN_PORT` moves Martin's host port off
 a taken `:3000` (DECISIONS 2026-10-12), and `FILES_PORT` is its twin for the
 `files` service (default `:3080`). `PUBLISH_ADDR` (default `127.0.0.1`) opts
 Martin and `files` in to serving other machines, for a frontend that talks
-to them directly; `files.conf` sends CORS headers for that
-(`specs/network-access.md`, DECISIONS 2026-11-06). `db` is never published
+to them directly; `files-locations.conf` sends CORS headers for that
+(`specs/network-access.md`, DECISIONS 2026-11-06). `files` also serves HTTPS
+with HTTP/2 on `FILES_TLS_PORT` (default `:3443`), beside its plain HTTP,
+when the operator puts `cert.pem` and `key.pem` in `FILES_TLS_DIR` (default
+`tls/`); with neither it serves plain HTTP only, and with one it refuses to
+start (`specs/files-http2.md`). `db` is never published
 beyond `127.0.0.1`, whatever `PUBLISH_ADDR` says.
 
 `infra/` has no `DECISIONS.md` of its own. Its decisions — the drop-in schema,
@@ -30,9 +34,15 @@ change here that needs one appends it there.
 docker-compose.yml   postgis/postgis + ghcr.io/maplibre/martin (pinned, 1.16.1)
                      + nginx (files)
 martin.yaml          which tables are published, and under what names
-files.conf           the files service: data/3dgs/tiles/ read-only at /3dgs/,
-                     data/3dgs/lod/ at /3dgs-lod/, with CORS headers for
-                     any origin
+files.conf           the files service's plain-HTTP listener (HTTP/1.1, :80)
+files-tls.conf       its HTTPS listener (HTTP/2, :443), enabled by
+                     files-tls.sh at container start only when tls/ holds
+                     both cert.pem and key.pem; refuses to start on one
+files-locations.conf what both listeners serve: data/3dgs/tiles/ read-only
+                     at /3dgs/, data/3dgs/lod/ at /3dgs-lod/, with CORS
+                     headers for any origin
+tls/                 the operator's cert.pem + key.pem (gitignored; only
+                     its README is in the repo)
 sql/01_schema.sql    the trees and splats tables and their indexes
 sql/02_load.sql      staging COPY -> normalise -> clean -> insert
 sql/03_checks.sql    assertions over the loaded table; fails the load
@@ -78,18 +88,23 @@ scripts/             the splat tools, each an explicit step load.sh never runs:
                      <tile>-lod-<n>.radc, the chunked tree the app draws
 specs/               specs for the scripts (process-splat.md, splat-align.md,
                      scanners.md,
-                     splat-mosaic.md, voxel-quality.md, build-lod.md), and
-                     network-access.md for who can reach Martin and files
+                     splat-mosaic.md, voxel-quality.md, build-lod.md),
+                     network-access.md for who can reach Martin and files,
+                     and files-http2.md for files' HTTPS listener
 test/                fixture CSVs and run.sh, the loader's test suite, which
                      then runs each tool's: process-splat.sh; splat-align.sh
                      (+ splat-align-scene.mjs, its scan generator);
                      voxel-quality.sh (+ voxel-quality-cases.mjs);
                      splat-mosaic.sh (+ splat-mosaic-scene.mjs, its PLY
                      writer and reader); build-lod.sh; then the serving
-                     config's: files.sh (files.conf's CORS, on the pinned
-                     nginx) and compose.sh (the addresses Compose
-                     publishes on); compose-config.mjs reads one field of
+                     config's: files.sh (files' CORS on both listeners,
+                     HTTP/2 over HTTPS, the certificate's three cases and
+                     a pair nginx rejects, on the pinned nginx) and
+                     compose.sh (the addresses Compose publishes on);
+                     compose-config.mjs reads one field of
                      `docker compose config` for those two and martin.sh.
+                     Then load.sh: the real load.sh with a stub docker,
+                     for its certificate check and summary.
                      martin.sh, apart: the pinned Martin
                      serves martin.yaml and allows other origins, against
                      the loaded dev database
@@ -243,8 +258,8 @@ The splat captures are a second published interface, read by
 | --- | --- | --- |
 | source id `splats` | `postgres.tables.splats` key | the tile path `/splats/{z}/{x}/{y}` and the app's `SPLATS.tiles` |
 | MVT layer `splats` | the same key | the app's `SPLATS.sourceLayer` |
-| `/3dgs/<file>` | `files.conf` | the app's `SPLATS.files` (`/files/3dgs/`, through its `/files` proxy); a tile's `.ply`, which the app never fetches |
-| `/3dgs-lod/<stem>-lod.rad`, `<stem>-lod-<n>.radc` | `files.conf` | the app's `SPLATS.lodFiles` and `lodUrlOf`: what the layer draws, the header (by byte range) naming its chunk files beside it |
+| `/3dgs/<file>` | `files-locations.conf` | the app's `SPLATS.files` (`/files/3dgs/`, through its `/files` proxy); a tile's `.ply`, which the app never fetches |
+| `/3dgs-lod/<stem>-lod.rad`, `<stem>-lod-<n>.radc` | `files-locations.conf` | the app's `SPLATS.lodFiles` and `lodUrlOf`: what the layer draws, the header (by byte range) naming its chunk files beside it |
 
 Its properties — `splat_id`, `file`, `bytes`, `ground_z`, `heading_deg`,
 `scale`, `lng`, `lat` — are read by name, as the tree properties are. The LoD file's name is

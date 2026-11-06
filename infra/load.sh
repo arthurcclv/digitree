@@ -14,6 +14,21 @@ for f in TaipeiTree.csv TaipeiParkTree.csv; do
   fi
 done
 
+# HTTPS with HTTP/2 is on when the operator's cert.pem and key.pem are both
+# in FILES_TLS_DIR (specs/files-http2.md). Half a pair would stop the
+# container; say so here, before anything starts, naming the missing file.
+# The directory is made here so Docker does not create it as root.
+tls_dir=${FILES_TLS_DIR:-./tls}
+tls=off
+if [ -f "$tls_dir/cert.pem" ] && [ -f "$tls_dir/key.pem" ]; then
+  tls=on
+elif [ -f "$tls_dir/cert.pem" ] || [ -f "$tls_dir/key.pem" ]; then
+  [ -f "$tls_dir/cert.pem" ] && missing=key.pem || missing=cert.pem
+  echo "error: $tls_dir/$missing is missing. HTTPS on files needs both cert.pem and key.pem, or neither." >&2
+  exit 1
+fi
+mkdir -p "$tls_dir"
+
 echo "==> starting postgres"
 docker compose up -d db
 
@@ -68,7 +83,7 @@ docker compose restart martin
 # container can keep serving a bind-mounted tiles/ or lod/ from before
 # splat-mosaic.mjs or build-lod.sh renamed new files in, so a fresh
 # ground_z would place a stale tree (25 m under the map, 2026-10-30).
-echo "==> starting the files service (splat captures)"
+echo "==> starting the files service (splat captures; HTTPS ${tls})"
 docker compose up -d files
 docker compose restart files
 
@@ -77,6 +92,11 @@ docker compose restart files
 publish=${PUBLISH_ADDR:-127.0.0.1}
 echo
 echo "done. martin on ${publish}:${MARTIN_PORT:-3000}, files on ${publish}:${FILES_PORT:-3080}, db on 127.0.0.1:5432."
+if [ "$tls" = on ]; then
+  echo "files also serves HTTPS with HTTP/2 on ${publish}:${FILES_TLS_PORT:-3443} (certificate from $tls_dir)."
+else
+  echo "files serves plain HTTP only: no certificate in $tls_dir (specs/files-http2.md)."
+fi
 if [ "$publish" != "127.0.0.1" ]; then
   echo "Martin and files are reachable from other machines. Set PUBLISH_ADDR=${publish}"
   echo "for every later docker compose command too, or they move back to 127.0.0.1."
@@ -92,6 +112,9 @@ echo "  curl -s ${host}:${MARTIN_PORT:-3000}/catalog | jq"
 echo "  curl -s ${host}:${MARTIN_PORT:-3000}/trees | jq"
 echo "  curl -sI ${host}:${FILES_PORT:-3080}/3dgs/<tile>.ply"
 echo "  curl -sI ${host}:${FILES_PORT:-3080}/3dgs-lod/<tile>-lod.rad"
+if [ "$tls" = on ]; then
+  echo "  curl -sI --http2 https://${host}:${FILES_TLS_PORT:-3443}/3dgs-lod/<tile>-lod.rad   # HTTP/2 200"
+fi
 if [ "${MARTIN_PORT:-3000}" != "3000" ] || [ "$host" != localhost ]; then
   echo "and start the app with TILES_PROXY_TARGET=http://${host}:${MARTIN_PORT:-3000}"
 fi

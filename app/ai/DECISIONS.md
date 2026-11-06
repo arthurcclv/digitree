@@ -6,6 +6,39 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — `files` serves HTTP/2 over operator-supplied TLS, beside plain HTTP
+
+**Decision.** infra's `files` service gains a second listener: HTTPS with
+HTTP/2 on 443, published on `FILES_TLS_PORT` (default 3443) at
+`PUBLISH_ADDR`. It is on when the operator puts `cert.pem` and `key.pem` in
+`FILES_TLS_DIR` (default `infra/tls/`). With neither, `files` serves plain
+HTTP only, as before; with one, it refuses to start. Both listeners include
+one `files-locations.conf`, so they serve the same paths, byte ranges,
+ETags and CORS headers. The plain listener on 3080 is unchanged: no redirect
+and no `h2c`. `infra/specs/files-http2.md`.
+
+**Why.** A view's `.radc` chunks are many fetches to one origin, and HTTP/1.1
+caps a browser at six connections per origin. HTTP/2 multiplexes them.
+Browsers speak HTTP/2 only over TLS. This also lets an HTTPS frontend call
+`files` directly (no mixed content).
+
+**Rules out.** A self-signed certificate made by `load.sh` (every browser
+must click through it, and a cross-origin `fetch` fails until it does).
+`h2c` (no browser uses it). HTTPS only (it would move the app's proxy and the
+existing clients). HTTP/3 for now: on a wired LAN it gains little over
+HTTP/2 and can be slower for large files (no `sendfile`, userspace QUIC). It
+also needs UDP publishing and an nginx built with QUIC.
+
+**Note.** The app is unchanged: its `/files` proxy still talks HTTP/1.1 to
+`:3080`, and the browser still reaches `/files` over the app's own origin.
+So the "revisit if `/files` is served over HTTP/2" condition in *splat
+captures plan on `moveend`* (below) is **not yet met** for the app. It is met
+only for a frontend that fetches from `https://<host>:3443` directly.
+
+**Revisit if** clients sit on lossy links (Wi-Fi across sites, WAN), where
+HTTP/3 would pay. Also if Martin needs HTTPS too, or the app moves to
+fetching `files` directly.
+
 ## 2026-11-06 — splat captures plan on `moveend`, load nearest the current view, three at a time
 
 **Decision.** The splat layer plans its tiles on `moveend`, through a new

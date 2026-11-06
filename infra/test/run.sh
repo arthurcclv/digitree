@@ -385,11 +385,13 @@ printf '\n%s passed, %s failed\n' "$pass" "$fail"
 # Each has its own suite, with its own count, and runs on its own as
 # ./test/<tool>.sh: they need splat-transform, node or Docker rather than the
 # database. files and compose test the stack's serving config, not a tool:
-# files.conf's CORS against the pinned nginx, and the addresses Compose
-# publishes on (specs/network-access.md).
+# files' CORS and its two listeners, HTTP/1.1 and HTTPS with HTTP/2, against
+# the pinned nginx, and the addresses Compose publishes on
+# (specs/network-access.md, specs/files-http2.md). load tests load.sh's own
+# certificate check and summary, with a stub docker.
 suites_ok=1
 for suite in process-splat splat-align voxel-quality splat-mosaic build-lod \
-             files compose; do
+             files compose load; do
   printf '\n== %s ==\n' "$suite"
   ./test/$suite.sh || suites_ok=0
 done

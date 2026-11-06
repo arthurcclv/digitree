@@ -511,13 +511,15 @@ and nothing more.
 
 Martin serves tiles only. A new Compose service, `files` (`nginx`, pinned
 image), serves `./data/3dgs/tiles` read-only at `/3dgs/`, and
-`./data/3dgs/lod` at `/3dgs-lod/`, on `127.0.0.1:${FILES_PORT:-3080}`. Its config file is `infra/files.conf`:
+`./data/3dgs/lod` at `/3dgs-lod/`, on `127.0.0.1:${FILES_PORT:-3080}`. Its paths are in `infra/files-locations.conf`:
 `sendfile`, byte ranges, `Cache-Control: no-cache` with ETags (a replaced file
 is refetched, an unchanged one is not), no directory listing, and no gzip.
 The layer fetches only from `/3dgs-lod/`.
 It also sends CORS headers for any origin, and `PUBLISH_ADDR` can publish it
 beyond `127.0.0.1`, for frontends other than this app that read it directly
-(`infra/specs/network-access.md`). The app is unaffected: it still goes
+(`infra/specs/network-access.md`). With an operator-supplied certificate it also
+serves them over HTTPS with HTTP/2 on `FILES_TLS_PORT` (default 3443), for those
+same direct readers (`infra/specs/files-http2.md`). The app is unaffected: it still goes
 through its same-origin proxy.
 
 The app reaches it through a second same-origin proxy, exactly like `/tiles`

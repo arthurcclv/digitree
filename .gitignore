@@ -10,3 +10,6 @@ infra/data/*.csv
 infra/data/custom/
 # Gaussian splat captures (large binaries) and their control points: loaded by infra/load.sh
 infra/data/3dgs/
+# The files service's TLS certificate and key, supplied per host (infra/specs/files-http2.md)
+infra/tls/*
+!infra/tls/README.md
