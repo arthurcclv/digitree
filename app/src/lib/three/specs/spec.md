@@ -28,7 +28,8 @@ classes wrote the rules out for itself:
 - a model matrix from a Mercator origin and a metre scale, with `y` flipped;
 - premultiplied colour, because MapLibre blends with
   `ONE, ONE_MINUS_SRC_ALPHA`;
-- `idle` bursts coalesced into one "the view settled" callback.
+- `idle` bursts coalesced into one "the view settled" callback, and
+  `moveend` passed on as "the camera stopped" (`viewMoved`).
 
 They had already drifted apart. Tree and sunlight reset state only **before**
 `render`; temperature and AO reset before and after. The sunlight spec says
@@ -57,6 +58,7 @@ abstract class ThreeLayer implements CustomLayerInterface {
   protected contextChanged?(renderer): void; // a new renderer on a new context
   protected attached?(): void;               // after every onAdd
   protected viewSettled?(): void;            // idle, coalesced
+  protected viewMoved?(): void;              // moveend
 
   // Helpers:
   protected pass(fn: (renderer) => void): void;  // resetState before and after
@@ -80,14 +82,21 @@ only publishes its DAG node and draws nothing, so it does not use `pass`.
   `autoClear = false`), and calls `contextChanged(renderer)`. There the layer
   drops GPU resources tied to the old context and probes capabilities: AO and
   sunlight drop their render targets and read `EXT_color_buffer_float`. If
-  the layer implements `viewSettled`, it subscribes to `idle`. Last, it calls
+  the layer implements `viewSettled`, it subscribes to `idle`; if it
+  implements `viewMoved`, to `moveend`. Last, it calls
   `attached()`: tree refreshes, and sunlight and AO replan.
-- **`onRemove()`.** Unsubscribes from `idle` and drops `map`. It keeps the
+- **`onRemove()`.** Unsubscribes from `idle` and `moveend`, and drops `map`. It keeps the
   renderer, because a style change re-adds the layer against the same
   context.
 - **`viewSettled()`.** A burst of `idle` events inside one task calls it
   **once**, on a microtask, as the three layers each did by hand. A layer
   that does not implement it is never subscribed to `idle` (temperature).
+- **`viewMoved()`.** Called on every `moveend`: the camera has stopped, but
+  the map's sources may still be loading. It is for work that should start
+  as soon as the view is known and needs nothing else to have loaded (the
+  splat layer's plan). It is not coalesced: each gesture ends with one
+  `moveend`, and a layer's plan is cheap to repeat. Only the splat layer
+  implements it; a layer that does not is never subscribed to `moveend`.
 - **`dispose()`.** Disposes the renderer and forgets `gl`. It is for map
   teardown only, and is reached through the layer's mount.
 
@@ -149,9 +158,10 @@ overrides, so no WebGL is needed.
 1. Two `onAdd` calls with the same `gl` make one renderer and call
    `contextChanged` once. A different `gl` disposes the old renderer, makes a
    new one, and calls `contextChanged` again.
-2. `onRemove` keeps the renderer and unsubscribes from `idle`.
+2. `onRemove` keeps the renderer and unsubscribes from `idle` and `moveend`.
 3. Several `idle` events in one task call `viewSettled` once. A layer without
-   `viewSettled` never subscribes to `idle`.
+   `viewSettled` never subscribes to `idle`. A `moveend` calls `viewMoved`
+   once, and a layer without `viewMoved` never subscribes to `moveend`.
 4. `pass` calls `resetState` before and after `fn`, and does nothing without a
    renderer.
 5. `projection` reads `mainMatrix`. Given arguments whose `mainMatrix` and

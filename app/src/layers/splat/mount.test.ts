@@ -11,6 +11,8 @@ import {
   SPLAT_FETCH_HALF_M,
   SPLAT_KEEP_M,
   SPLAT_LAYER_ID,
+  SPLAT_LOAD_CONCURRENCY,
+  SPLAT_LOD_FETCHERS,
   SPLAT_MAX_CAPTURES,
   SPLAT_NATIVE_LAYER_ID,
   SPLAT_REBASE_M,
@@ -81,7 +83,8 @@ function fakeSpark(failing: string[] = []) {
   const urls: string[] = [];
   const meshOptions: Record<string, unknown>[] = [];
   const rendererOptions: Record<string, unknown>[] = [];
-  const resolvers: (() => void)[] = [];
+  const resolvers: { url: string; resolve: () => void }[] = [];
+  const meshes: { url: string; dispose: () => void }[] = [];
   class SplatMesh extends THREE.Object3D {
     opacity = 1;
     initialized: Promise<SplatMesh>;
@@ -92,10 +95,14 @@ function fakeSpark(failing: string[] = []) {
       super();
       const { url } = options;
       urls.push(url);
+      meshes.push({ url, dispose: this.dispose });
       meshOptions.push(options);
       this.worldModifier = options.worldModifier;
       this.initialized = new Promise((resolve, reject) =>
-        resolvers.push(() => (failing.some((f) => url.endsWith(f)) ? reject(new Error(`HTTP 404 ${url}`)) : resolve(this))),
+        resolvers.push({
+          url,
+          resolve: () => (failing.some((f) => url.endsWith(f)) ? reject(new Error(`HTTP 404 ${url}`)) : resolve(this)),
+        }),
       );
     }
   }
@@ -118,9 +125,17 @@ function fakeSpark(failing: string[] = []) {
     urls,
     meshOptions,
     rendererOptions,
+    /** Every mesh made, with its URL, in the order made. */
+    meshes,
     /** Finish the oldest pending load. */
     finishNext: async () => {
-      resolvers.shift()?.();
+      resolvers.shift()?.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    /** Finish the pending load whose URL ends with `suffix`, whatever its turn. */
+    finish: async (suffix: string) => {
+      const at = resolvers.findIndex((r) => r.url.endsWith(suffix));
+      resolvers.splice(at, 1)[0].resolve();
       await new Promise((r) => setTimeout(r, 0));
     },
   };
@@ -313,13 +328,15 @@ describe("ThreeSplatLayer", () => {
     layer.dispose();
   });
 
-  test("loads captures one at a time, nearest first, keeps going past a failure, and reports it", async () => {
+  test("loads SPLAT_LOAD_CONCURRENCY captures at once, nearest first, keeps going past a failure, and reports it", async () => {
+    expect(SPLAT_LOAD_CONCURRENCY).toBe(3);
     const near = splat("near", 121.5391, 25.0386);
-    const far = splat("far", 121.5399, 25.0389);
     const broken = splat("broken", 121.5395, 25.0387);
+    const mid = splat("mid", 121.5397, 25.0388);
+    const far = splat("far", 121.5399, 25.0389);
     const spark = fakeSpark(["broken-lod.rad"]);
     // The same capture in two tiles, as a point in a tile's buffer arrives.
-    const { d } = deps({ "14/13723/7014": [far, near, broken], "14/13724/7014": [near] }, spark);
+    const { d, importSpark } = deps({ "14/13723/7014": [far, mid, near, broken], "14/13724/7014": [near] }, spark);
     const statuses: SplatStatus[] = [];
     const layer = new TestSplatLayer(SOURCE, d);
     layer.onStatus = (s) => statuses.push(s);
@@ -328,20 +345,134 @@ describe("ThreeSplatLayer", () => {
     await settle();
     await settle();
 
-    expect(spark.urls).toEqual(["/files/3dgs-lod/near-lod.rad"]);
+    // Three in flight, nearest first; the fourth waits, and Spark is imported once.
+    const url = (id: string) => `/files/3dgs-lod/${id}-lod.rad`;
+    expect(spark.urls).toEqual([url("near"), url("broken"), url("mid")]);
+    expect(importSpark).toHaveBeenCalledOnce();
+    expect(statuses.at(-1)).toMatchObject({ state: "loading", loading: ["near", "broken", "mid"] });
+
+    // The failure frees a slot, and the fourth starts.
+    await spark.finish("broken-lod.rad");
+    expect(spark.urls).toEqual([url("near"), url("broken"), url("mid"), url("far")]);
     await spark.finishNext();
-    expect(spark.urls).toEqual(["/files/3dgs-lod/near-lod.rad", "/files/3dgs-lod/broken-lod.rad"]);
     await spark.finishNext();
     await spark.finishNext();
-    expect(spark.urls).toEqual([
-      "/files/3dgs-lod/near-lod.rad",
-      "/files/3dgs-lod/broken-lod.rad",
-      "/files/3dgs-lod/far-lod.rad",
-    ]);
 
     const last = statuses.at(-1)!;
-    expect(last).toMatchObject({ state: "ready", known: 3, loaded: 2, loading: null });
+    expect(last).toMatchObject({ state: "ready", known: 4, loaded: 3, loading: [] });
     expect(last.errors.map((e) => e.id)).toEqual(["broken"]);
+    layer.dispose();
+  });
+
+  test("a load that finishes out of order is drawn when it finishes", async () => {
+    const spark = fakeSpark();
+    const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386), splat("b", 121.5395, 25.0387)] }, spark);
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onAdd(attached().map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    await spark.finish("b-lod.rad");
+    expect([...loadedOf(layer).keys()]).toEqual(["b"]);
+    const scene = (layer as unknown as { scene: THREE.Scene }).scene;
+    expect(scene.children).toContain(loadedOf(layer).get("b")!.mesh);
+    await spark.finish("a-lod.rad");
+    expect([...loadedOf(layer).keys()].sort()).toEqual(["a", "b"]);
+    layer.dispose();
+  });
+
+  // *Which captures load*: planned on `moveend`, and ordered by the current view.
+  test("a moveend alone plans the new view, and the capture nearest it loads before those queued for the old one", async () => {
+    // A row of captures 5 m apart, eastwards, all in one tile.
+    const row = Array.from({ length: 10 }, (_, i) => splat(`c${i}`, 121.5385 + i * 0.00005, 25.0386));
+    const spark = fakeSpark();
+    const { d } = deps({ "14/13723/7014": row }, spark);
+    const view = { centre: { lng: row[0].lngLat[0], lat: 25.0386 } };
+    const { f, map } = attached(17.5, view.centre);
+    (map as unknown as { getCenter: () => typeof view.centre }).getCenter = () => view.centre;
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onAdd(map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    expect(spark.urls).toEqual(["c0", "c1", "c2"].map((id) => `/files/3dgs-lod/${id}-lod.rad`));
+
+    view.centre = { lng: row[9].lngLat[0], lat: 25.0386 };
+    for (const fn of f.listeners.get("moveend") ?? []) (fn as () => void)();
+    await spark.finishNext();
+    expect(spark.urls.at(-1)).toBe("/files/3dgs-lod/c9-lod.rad");
+    await spark.finishNext();
+    expect(spark.urls.at(-1)).toBe("/files/3dgs-lod/c8-lod.rad");
+    layer.dispose();
+  });
+
+  // *Changes in revision 15*: so the map still goes idle.
+  test("a moveend with nothing new to load requests no frame", async () => {
+    const spark = fakeSpark();
+    const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] }, spark);
+    const { f, map } = attached();
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onAdd(map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    await spark.finishNext();
+    const repaint = vi.fn();
+    (map as unknown as { triggerRepaint: () => void }).triggerRepaint = repaint;
+    for (const fn of f.listeners.get("moveend") ?? []) (fn as () => void)();
+    await settle();
+    expect(repaint).not.toHaveBeenCalled();
+    expect(spark.urls).toHaveLength(1);
+    layer.dispose();
+  });
+
+  test("a moveend while hidden or below the min zoom fetches and imports nothing", async () => {
+    for (const { zoom, visible } of [
+      { zoom: 16, visible: false },
+      { zoom: 14, visible: true },
+    ]) {
+      const { d, fetched, importSpark } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] });
+      const { f, map } = attached(zoom);
+      const layer = new TestSplatLayer(SOURCE, d);
+      layer.onAdd(map, {} as WebGL2RenderingContext);
+      layer.setVisibility(visible);
+      for (const fn of f.listeners.get("moveend") ?? []) (fn as () => void)();
+      await settle();
+      expect(fetched).toEqual([]);
+      expect(importSpark).not.toHaveBeenCalled();
+      layer.dispose();
+    }
+  });
+
+  test("a failed Spark import is retried by a later load", async () => {
+    const spark = fakeSpark();
+    const a = splat("a", 121.5391, 25.0386);
+    const b = splat("b", 121.5395, 25.0387);
+    const { d, importSpark } = deps({ "14/13723/7014": [a], "14/13724/7014": [b] }, spark);
+    importSpark.mockRejectedValueOnce(new Error("chunk failed"));
+    // The second tile answers only when released, after `a` has failed.
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const fetchFn = d.fetchFn!;
+    d.fetchFn = (async (url: string, init?: RequestInit) => {
+      if (url.includes("/14/13724/7014")) await held;
+      return fetchFn(url, init);
+    }) as typeof fetch;
+    const statuses: SplatStatus[] = [];
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onStatus = (s) => statuses.push(s);
+    layer.onAdd(attached().map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    expect(statuses.at(-1)!.errors.map((e) => e.id)).toEqual(["a"]);
+
+    release();
+    await settle();
+    await settle();
+    await spark.finishNext();
+    expect(importSpark).toHaveBeenCalledTimes(2);
+    expect([...loadedOf(layer).keys()]).toEqual(["b"]);
     layer.dispose();
   });
 
@@ -392,7 +523,7 @@ describe("ThreeSplatLayer", () => {
   });
 
   // *Level of detail* in the spec.
-  test("draws each capture's paged LoD tree, with Spark's pool and cleanup timeout", async () => {
+  test("draws each capture's paged LoD tree, with SPLAT_LOD_FETCHERS and Spark's pool and cleanup timeout", async () => {
     const spark = fakeSpark();
     const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] }, spark);
     const layer = new TestSplatLayer(SOURCE, d);
@@ -403,11 +534,30 @@ describe("ThreeSplatLayer", () => {
     await spark.finishNext();
     expect(spark.meshOptions).toEqual([{ url: "/files/3dgs-lod/a-lod.rad", paged: true, worldModifier: expect.anything() }]);
     expect(spark.rendererOptions).toHaveLength(1);
-    expect(spark.rendererOptions[0]).toMatchObject({ enableLod: true });
+    expect(spark.rendererOptions[0]).toMatchObject({ enableLod: true, numLodFetchers: SPLAT_LOD_FETCHERS });
     // Spark's defaults: the platform's page pool, and the 3 s after which an
     // unloaded or hidden capture's pages go back to it.
     expect(spark.rendererOptions[0]).not.toHaveProperty("maxPagedSplats");
     expect(spark.rendererOptions[0]).not.toHaveProperty("lodCleanupTimeoutMs");
+    layer.dispose();
+  });
+
+  // *Changes in revision 15*: every renderer the layer makes, including one
+  // rebuilt on a context change.
+  test("a renderer rebuilt on a new context also gets SPLAT_LOD_FETCHERS", async () => {
+    const spark = fakeSpark();
+    const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] }, spark);
+    const { map } = attached();
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onAdd(map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    await spark.finishNext();
+    layer.onRemove();
+    layer.onAdd(map, {} as WebGL2RenderingContext);
+    expect(spark.rendererOptions).toHaveLength(2);
+    expect(spark.rendererOptions[1]).toMatchObject({ enableLod: true, numLodFetchers: SPLAT_LOD_FETCHERS });
     layer.dispose();
   });
 
@@ -449,6 +599,29 @@ describe("ThreeSplatLayer", () => {
     layer.dispose();
     expect(mesh.dispose).toHaveBeenCalled();
     expect(renderer.dispose).toHaveBeenCalled();
+  });
+
+  test("reports no status after dispose, even from a load that fails later, and disposes a mesh that finishes later", async () => {
+    const spark = fakeSpark(["b-lod.rad"]);
+    const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386), splat("b", 121.5395, 25.0387)] }, spark);
+    const statuses: SplatStatus[] = [];
+    const layer = new TestSplatLayer(SOURCE, d);
+    layer.onStatus = (s) => statuses.push(s);
+    layer.onAdd(attached().map, {} as WebGL2RenderingContext);
+    layer.setVisibility(true);
+    await settle();
+    await settle();
+    expect(spark.urls).toHaveLength(2);
+    const scene = (layer as unknown as { scene: THREE.Scene }).scene;
+    const sceneAdd = vi.spyOn(scene, "add");
+    layer.dispose();
+    const before = statuses.length;
+
+    await spark.finish("b-lod.rad");
+    await spark.finish("a-lod.rad");
+    expect(statuses).toHaveLength(before);
+    expect(sceneAdd).not.toHaveBeenCalled();
+    expect(spark.meshes.find((m) => m.url.endsWith("a-lod.rad"))!.dispose).toHaveBeenCalled();
   });
 
   test("dispose aborts a tile fetch still in flight", async () => {
@@ -670,6 +843,28 @@ describe("ThreeSplatLayer unloading", () => {
     await settle();
     return { layer, spark, view, statuses };
   }
+
+  test("a capture still loading when a settled view puts it past SPLAT_KEEP_M is disposed when it finishes, never added", async () => {
+    const start = { lng: 121.539, lat: 25.0386 };
+    const a = splat("a", 121.5391, 25.0386);
+    const { layer, spark, view, statuses } = await shownAt({ "14/13723/7014": [a] }, start);
+    expect(spark.urls).toEqual(["/files/3dgs-lod/a-lod.rad"]);
+
+    view.centre = east(start, SPLAT_KEEP_M + 100);
+    internals(layer).viewSettled();
+    expect(statuses.at(-1)).toMatchObject({ known: 0, loaded: 0, loading: [] });
+
+    const added: THREE.Object3D[] = [];
+    const scene = internals(layer).scene;
+    const add = scene.add.bind(scene);
+    scene.add = (...o: THREE.Object3D[]) => (added.push(...o), add(...o));
+    await spark.finishNext();
+    expect(loadedOf(layer).has("a")).toBe(false);
+    expect(added).toEqual([]);
+    expect(spark.meshes[0].dispose).toHaveBeenCalled();
+    expect(statuses.at(-1)).toMatchObject({ known: 0, loaded: 0, loading: [], errors: [] });
+    layer.dispose();
+  });
 
   test("a capture past SPLAT_KEEP_M is unloaded on a settled view, and loads again when its tile returns", async () => {
     const start = { lng: 121.539, lat: 25.0386 };

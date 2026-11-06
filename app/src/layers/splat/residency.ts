@@ -1,5 +1,5 @@
 import type { LocalFrame } from "../../lib/tiles";
-import { SPLAT_KEEP_M, SPLAT_MAX_CAPTURES } from "./constants";
+import { SPLAT_KEEP_M, SPLAT_LOAD_CONCURRENCY, SPLAT_MAX_CAPTURES } from "./constants";
 import { mercatorDistance, type Splat } from "./schema";
 import type { SplatStatus } from "./state";
 
@@ -14,7 +14,7 @@ export interface Held<T> {
 
 /** The next load: a capture, and the loaded one it displaces, if any. */
 export interface Next<T> {
-  load: Splat;
+  splat: Splat;
   evicted: Held<T> | null;
 }
 
@@ -30,12 +30,20 @@ export class Residency<T> {
   private readonly known = new Map<string, Splat>();
   private readonly loaded = new Map<string, Held<T>>();
   private readonly errors: SplatStatus["errors"] = [];
+  /** Waiting, in the order found; `next` picks from it by distance. */
   private queue: Splat[] = [];
-  private loading: string | null = null;
+  /** Loading now, in the order started. */
+  private readonly loading = new Set<string>();
+  /**
+   * Still in flight, but forgotten by `settle`: each holds a concurrency slot
+   * until it finishes, and its result is then discarded. A count per id, since
+   * a capture found again may load again before the old request finishes.
+   */
+  private readonly dropped = new Map<string, number>();
 
   /**
    * Queue every capture not seen yet, in the order given (nearest first, from
-   * `splatsIn`). Whether any was new.
+   * `splatsIn`), which breaks ties in `next`. Whether any was new.
    */
   offer(splats: Splat[]): boolean {
     const fresh = splats.filter((s) => !this.known.has(s.id));
@@ -45,41 +53,57 @@ export class Residency<T> {
   }
 
   /**
-   * The next capture to load, one at a time. Past `SPLAT_MAX_CAPTURES` it
-   * loads only if nearer than the farthest loaded, which it evicts (already
-   * forgotten here; the caller disposes it). `null` while one is loading,
-   * when none waits, or when the one due is not nearer: it waits in the queue.
+   * The next capture to load, and the loaded one it evicts (already forgotten
+   * here; the caller disposes it). `null` means wait: the one due stays queued.
+   * See *Which captures load*, Order, Concurrency and Count.
    */
   next(view: View): Next<T> | null {
-    if (this.loading !== null) return null;
-    const splat = this.queue[0];
-    if (!splat) return null;
+    if (this.loading.size + this.droppedCount() >= SPLAT_LOAD_CONCURRENCY) return null;
+    let nearestIndex = -1;
+    let nearest = Infinity;
+    // Strict `<`: on a tie the earlier found wins.
+    this.queue.forEach((s, i) => {
+      const dist = distanceM(s, view);
+      if (dist < nearest) [nearestIndex, nearest] = [i, dist];
+    });
+    if (nearestIndex < 0) return null;
+    const splat = this.queue[nearestIndex];
     let evicted: Held<T> | null = null;
-    if (this.loaded.size >= SPLAT_MAX_CAPTURES) {
+    if (this.loaded.size + this.loading.size >= SPLAT_MAX_CAPTURES) {
       let farthest: { held: Held<T>; dist: number } | null = null;
       for (const held of this.loaded.values()) {
         const dist = distanceM(held.splat, view);
         if (!farthest || dist > farthest.dist) farthest = { held, dist };
       }
-      if (!farthest || farthest.dist <= distanceM(splat, view)) return null;
+      if (!farthest || farthest.dist <= nearest) return null;
       evicted = farthest.held;
       this.forget(evicted.splat.id);
     }
-    this.queue.shift();
-    this.loading = splat.id;
-    return { load: splat, evicted };
+    this.queue.splice(nearestIndex, 1);
+    this.loading.add(splat.id);
+    return { splat, evicted };
   }
 
-  /** The capture `next` gave has loaded. */
-  done(splat: Splat, value: T): void {
-    this.loaded.set(splat.id, { splat, value });
-    this.loading = null;
+  /**
+   * A capture `next` gave has loaded. Whether it is still wanted: `false` when
+   * `settle` or `clear` forgot it meanwhile, and the caller disposes `value`.
+   */
+  done(splat: Splat, value: T): boolean {
+    if (this.loading.delete(splat.id)) {
+      this.loaded.set(splat.id, { splat, value });
+      return true;
+    }
+    this.undrop(splat.id);
+    return false;
   }
 
-  /** The capture `next` gave failed to load. It stays known, so it is not retried. */
+  /**
+   * A capture `next` gave failed to load. It stays known, so it is not
+   * retried; one forgotten meanwhile records no error.
+   */
   failed(splat: Splat, message: string): void {
-    this.errors.push({ id: splat.id, message });
-    this.loading = null;
+    if (this.loading.delete(splat.id)) this.errors.push({ id: splat.id, message });
+    else this.undrop(splat.id);
   }
 
   /**
@@ -90,12 +114,18 @@ export class Residency<T> {
   settle(view: View): { unloaded: Held<T>[]; changed: boolean } {
     const unloaded = [...this.loaded.values()].filter((h) => distanceM(h.splat, view) > SPLAT_KEEP_M);
     for (const h of unloaded) this.forget(h.splat.id);
+    const farLoading = [...this.loading].filter((id) => distanceM(this.known.get(id)!, view) > SPLAT_KEEP_M);
+    for (const id of farLoading) {
+      this.loading.delete(id);
+      this.known.delete(id);
+      this.dropped.set(id, (this.dropped.get(id) ?? 0) + 1);
+    }
     const far = this.queue.filter((s) => distanceM(s, view) > SPLAT_KEEP_M);
     if (far.length) {
       this.queue = this.queue.filter((s) => !far.includes(s));
       for (const s of far) this.known.delete(s.id);
     }
-    return { unloaded, changed: unloaded.length > 0 || far.length > 0 };
+    return { unloaded, changed: unloaded.length > 0 || farLoading.length > 0 || far.length > 0 };
   }
 
   /** Every loaded capture. */
@@ -109,12 +139,25 @@ export class Residency<T> {
     this.loaded.clear();
     this.known.clear();
     this.queue = [];
-    this.loading = null;
+    this.loading.clear();
+    this.dropped.clear();
     return held;
   }
 
   counts(): Pick<SplatStatus, "known" | "loaded" | "loading" | "errors"> {
-    return { known: this.known.size, loaded: this.loaded.size, loading: this.loading, errors: [...this.errors] };
+    return { known: this.known.size, loaded: this.loaded.size, loading: [...this.loading], errors: [...this.errors] };
+  }
+
+  private droppedCount(): number {
+    let n = 0;
+    for (const c of this.dropped.values()) n += c;
+    return n;
+  }
+
+  private undrop(id: string): void {
+    const c = this.dropped.get(id) ?? 0;
+    if (c > 1) this.dropped.set(id, c - 1);
+    else this.dropped.delete(id);
   }
 
   private forget(id: string): void {

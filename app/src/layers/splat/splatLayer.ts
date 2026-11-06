@@ -14,6 +14,7 @@ import { placeCapture, rebased, type Anchor, type Placed } from "./frame";
 import {
   SPLAT_BLUR_AMOUNT,
   SPLAT_FETCH_HALF_M,
+  SPLAT_LOD_FETCHERS,
   SPLAT_MIN_ZOOM,
   SPLAT_NATIVE_LAYER_ID,
 } from "./constants";
@@ -25,7 +26,7 @@ import {
   type SplatSource,
 } from "./schema";
 import { splatStatus, type SplatStatus } from "./state";
-import { Residency } from "./residency";
+import { Residency, type Next } from "./residency";
 import { makeStretch, type Stretch } from "./stretch";
 
 type Spark = typeof import("@sparkjsdev/spark");
@@ -73,6 +74,8 @@ export class ThreeSplatLayer extends ThreeLayer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.Camera();
   private spark: Spark | null = null;
+  /** The import in flight or done; cleared if it fails, so a later load tries again. */
+  private sparkLoading: Promise<Spark> | null = null;
   private sparkRenderer: SparkRenderer | null = null;
 
   private visible = false;
@@ -148,6 +151,11 @@ export class ThreeSplatLayer extends ThreeLayer {
   }
 
   protected attached(): void {
+    this.plan();
+  }
+
+  /** The camera stopped: look up its view now, not after every source's tiles (`idle`). */
+  protected viewMoved(): void {
     this.plan();
   }
 
@@ -233,7 +241,7 @@ export class ThreeSplatLayer extends ThreeLayer {
   private collect(): void {
     const perTile = this.store.covered().map((t) => this.store.featuresOf("splats", t));
     if (this.residency.offer(splatsIn(perTile, this.view.origin))) this.report();
-    void this.pump();
+    this.pump();
   }
 
   /**
@@ -259,14 +267,23 @@ export class ThreeSplatLayer extends ThreeLayer {
     this.repaint();
   }
 
-  /** Load what `Residency.next` says, one capture at a time, until it says wait. */
-  private async pump(): Promise<void> {
+  /**
+   * Start every load `Residency.next` gives, up to `SPLAT_LOAD_CONCURRENCY`
+   * at once, until it says wait. Each finished load pumps again.
+   */
+  private pump(): void {
     if (this.disposed || !this.drawing()) return;
-    const next = this.residency.next(this.view);
-    if (!next) return;
-    const { load: splat, evicted } = next;
-    if (evicted) this.unload(evicted.value);
-    this.report();
+    let started = false;
+    for (let next = this.residency.next(this.view); next; next = this.residency.next(this.view)) {
+      if (next.evicted) this.unload(next.evicted.value);
+      started = true;
+      void this.load(next);
+    }
+    if (started) this.report();
+  }
+
+  /** One capture, from its `.rad` header to the scene; then the next. */
+  private async load({ splat }: Next<Drawn>): Promise<void> {
     try {
       const spark = await this.ensureSpark();
       // The paged LoD tree built in infra: Spark fetches its chunks as the view
@@ -278,33 +295,38 @@ export class ThreeSplatLayer extends ThreeLayer {
         worldModifier: stretch.modifier,
       });
       await mesh.initialized;
-      if (this.disposed) {
-        mesh.dispose();
-        return;
-      }
-      mesh.matrixAutoUpdate = false;
-      mesh.opacity = this.opacity;
+      // Disposed, or forgotten by a settle past `SPLAT_KEEP_M` (`clear` on
+      // dispose forgets it too): the mesh is not wanted.
       const drawn: Drawn = { mesh, stretch };
-      // Placed from the anchor now, which may have moved during the load.
-      this.apply(drawn, this.place(splat, this.anchor!));
-      this.scene.add(mesh);
-      this.residency.done(splat, drawn);
+      if (this.disposed || !this.residency.done(splat, drawn)) {
+        mesh.dispose();
+      } else {
+        mesh.matrixAutoUpdate = false;
+        mesh.opacity = this.opacity;
+        // Placed from the anchor now, which may have moved during the load.
+        this.apply(drawn, this.place(splat, this.anchor!));
+        this.scene.add(mesh);
+      }
     } catch (e) {
       this.residency.failed(splat, e instanceof Error ? e.message : String(e));
     }
+    if (this.disposed) return;
     this.report();
     this.repaint();
-    void this.pump();
+    this.pump();
   }
 
-  private async ensureSpark(): Promise<Spark> {
-    if (!this.spark) {
-      this.spark = await this.deps.importSpark();
+  /** Spark, imported once however many loads ask for it at once. */
+  private ensureSpark(): Promise<Spark> {
+    this.sparkLoading ??= this.deps.importSpark().then((spark) => {
+      this.spark = spark;
       if (this.renderer && !this.sparkRenderer) this.makeSparkRenderer(this.renderer);
       // The platform budget is known from here on.
       this.report();
-    }
-    return this.spark;
+      return spark;
+    });
+    this.sparkLoading.catch(() => (this.sparkLoading = null));
+    return this.sparkLoading;
   }
 
   private makeSparkRenderer(renderer: THREE.WebGLRenderer): void {
@@ -321,6 +343,8 @@ export class ThreeSplatLayer extends ThreeLayer {
       enableLod: true,
       lodSplatCount: this.lodSplatCount ?? undefined,
       lodSplatScale: this.lodSplatScale,
+      // Chunk files fetched at once, across every capture. See *Level of detail*.
+      numLodFetchers: SPLAT_LOD_FETCHERS,
     });
     this.scene.add(this.sparkRenderer);
   }
@@ -333,6 +357,7 @@ export class ThreeSplatLayer extends ThreeLayer {
   }
 
   private report(): void {
+    if (this.disposed) return;
     this.onStatus?.(
       splatStatus({
         ...this.residency.counts(),

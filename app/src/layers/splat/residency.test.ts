@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { frameAt, metreInMercator } from "../../lib/tiles";
-import { SPLAT_KEEP_M, SPLAT_MAX_CAPTURES } from "./constants";
+import { SPLAT_KEEP_M, SPLAT_LOAD_CONCURRENCY, SPLAT_MAX_CAPTURES } from "./constants";
 import { Residency, type View } from "./residency";
 import type { Splat } from "./schema";
 
@@ -27,37 +27,74 @@ const viewAt = (m: number): View => frameAt(LNG + m * DEG_PER_M, LAT);
 function drain(r: Residency<string>, view: View): string[] {
   const ids: string[] = [];
   for (let n = r.next(view); n; n = r.next(view)) {
-    r.done(n.load, `mesh:${n.load.id}`);
-    ids.push(n.load.id);
+    r.done(n.splat, `mesh:${n.splat.id}`);
+    ids.push(n.splat.id);
   }
   return ids;
 }
 
 describe("Residency", () => {
-  test("queues each capture once, in the order offered, and says whether any was new", () => {
+  test("queues each capture once, and says whether any was new", () => {
     const r = new Residency<string>();
     expect(r.offer([at("a", 0), at("b", 5)])).toBe(true);
     expect(r.offer([at("b", 5), at("a", 0)])).toBe(false);
-    expect(r.counts()).toMatchObject({ known: 2, loaded: 0, loading: null });
+    expect(r.counts()).toMatchObject({ known: 2, loaded: 0, loading: [] });
     expect(drain(r, viewAt(0))).toEqual(["a", "b"]);
   });
 
-  test("loads one at a time", () => {
+  test("gives the queued capture nearest the view it is given, whenever it was offered", () => {
     const r = new Residency<string>();
-    r.offer([at("a", 0), at("b", 5)]);
-    const first = r.next(viewAt(0))!;
-    expect(first.load.id).toBe("a");
-    expect(r.counts().loading).toBe("a");
+    // Offered for a view at 0: nearest first, as `splatsIn` orders them.
+    r.offer([at("a", 0), at("b", 50), at("c", 100)]);
+    // The view moved east, and its own capture is found after them.
+    r.offer([at("d", 1000)]);
+    expect(drain(r, viewAt(1000))).toEqual(["d", "c", "b", "a"]);
+  });
+
+  test("equal distances keep the order offered", () => {
+    const r = new Residency<string>();
+    r.offer([at("x", 10), at("near", 5), at("y", 10), at("z", 10)]);
+    expect(drain(r, viewAt(0))).toEqual(["near", "x", "y", "z"]);
+  });
+
+  test("loads up to SPLAT_LOAD_CONCURRENCY at once, and they may finish in any order", () => {
+    expect(SPLAT_LOAD_CONCURRENCY).toBe(3);
+    const r = new Residency<string>();
+    r.offer([at("a", 0), at("b", 5), at("c", 10), at("d", 15)]);
+    const started = [r.next(viewAt(0))!, r.next(viewAt(0))!, r.next(viewAt(0))!].map((n) => n.splat);
+    expect(started.map((s) => s.id)).toEqual(["a", "b", "c"]);
+    expect(r.counts().loading).toEqual(["a", "b", "c"]);
     expect(r.next(viewAt(0))).toBeNull();
-    r.done(first.load, "mesh");
-    expect(r.next(viewAt(0))!.load.id).toBe("b");
+    r.done(started[1], "mesh:b");
+    expect(r.counts().loading).toEqual(["a", "c"]);
+    expect(r.next(viewAt(0))!.splat.id).toBe("d");
+    expect(r.counts().loading).toEqual(["a", "c", "d"]);
+    r.failed(started[2], "404");
+    expect(r.counts().loading).toEqual(["a", "d"]);
+  });
+
+  test("a capture still loading counts toward SPLAT_MAX_CAPTURES and is never evicted", () => {
+    const r = new Residency<string>();
+    const row = Array.from({ length: SPLAT_MAX_CAPTURES }, (_, i) => at(`c${String(i).padStart(3, "0")}`, i * 5));
+    r.offer(row);
+    // All but the farthest loaded; the farthest is loading.
+    for (let i = 0; i < SPLAT_MAX_CAPTURES - 1; i++) r.done(r.next(viewAt(0))!.splat, "mesh");
+    const loading = r.next(viewAt(0))!;
+    expect(loading.splat.id).toBe(row.at(-1)!.id);
+    // From beyond the east end a newcomer is nearest of all, and the cap is
+    // full: it evicts the farthest *loaded* (c000), not the one loading.
+    r.offer([at("new", SPLAT_MAX_CAPTURES * 5 + 100)]);
+    const next = r.next(viewAt(SPLAT_MAX_CAPTURES * 5 + 100))!;
+    expect(next.splat.id).toBe("new");
+    expect(next.evicted!.splat.id).toBe("c000");
+    expect(r.counts().loading).toEqual([row.at(-1)!.id, "new"]);
   });
 
   test("keeps a failed capture known, so it is not retried, and counts it", () => {
     const r = new Residency<string>();
     r.offer([at("a", 0)]);
-    r.failed(r.next(viewAt(0))!.load, "404");
-    expect(r.counts()).toEqual({ known: 1, loaded: 0, loading: null, errors: [{ id: "a", message: "404" }] });
+    r.failed(r.next(viewAt(0))!.splat, "404");
+    expect(r.counts()).toEqual({ known: 1, loaded: 0, loading: [], errors: [{ id: "a", message: "404" }] });
     expect(r.offer([at("a", 0)])).toBe(false);
     expect(r.next(viewAt(0))).toBeNull();
   });
@@ -71,9 +108,9 @@ describe("Residency", () => {
     expect(r.next(viewAt(0))).toBeNull();
     // From the east end it is the nearest, and the first is the farthest.
     const next = r.next(viewAt(SPLAT_MAX_CAPTURES * 5))!;
-    expect(next.load.id).toBe(row.at(-1)!.id);
+    expect(next.splat.id).toBe(row.at(-1)!.id);
     expect(next.evicted).toEqual({ splat: row[0], value: "mesh:c000" });
-    r.done(next.load, "mesh");
+    r.done(next.splat, "mesh");
     expect(r.held().map((h) => h.splat.id).sort()).toEqual(row.slice(1).map((s) => s.id));
     // The evicted one is forgotten, so its tile finds it again.
     expect(r.offer([row[0]])).toBe(true);
@@ -86,8 +123,8 @@ describe("Residency", () => {
     const loaded: string[] = [];
     for (let n = r.next(viewAt(3200)); n; n = r.next(viewAt(3200))) {
       expect(n.evicted).toBeNull();
-      r.done(n.load, "mesh");
-      loaded.push(n.load.id);
+      r.done(n.splat, "mesh");
+      loaded.push(n.splat.id);
     }
     expect(loaded.sort()).toEqual(tiles.map((t) => t.id));
   });
@@ -112,13 +149,54 @@ describe("Residency", () => {
     expect(r.counts().known).toBe(0);
   });
 
+  test("settle forgets a loading capture past SPLAT_KEEP_M; its done says unwanted, and it holds its slot until then", () => {
+    const r = new Residency<string>();
+    const far = at("far", 0);
+    r.offer([far, at("b", 5), at("c", 10), at("d", 15)]);
+    const started = [r.next(viewAt(0))!, r.next(viewAt(0))!, r.next(viewAt(0))!].map((n) => n.splat.id);
+    expect(started).toEqual(["far", "b", "c"]);
+
+    // A view past SPLAT_KEEP_M from all of them: each loading one is forgotten.
+    const away = viewAt(SPLAT_KEEP_M + 100);
+    expect(r.settle(away).changed).toBe(true);
+    expect(r.counts()).toMatchObject({ known: 0, loaded: 0, loading: [] });
+    // Their requests are still in flight, so no slot is free.
+    r.offer([at("e", SPLAT_KEEP_M + 100)]);
+    expect(r.next(away)).toBeNull();
+
+    // Finishing frees the slot, and the result is not wanted.
+    expect(r.done(far, "mesh:far")).toBe(false);
+    expect(r.counts().loaded).toBe(0);
+    expect(r.next(away)!.splat.id).toBe("e");
+
+    // A late failure records no error.
+    r.failed(at("b", 5), "404");
+    expect(r.counts().errors).toEqual([]);
+  });
+
+  test("a capture found again while its dropped load is in flight keeps exactly one result", () => {
+    const r = new Residency<string>();
+    const a = at("a", 0);
+    r.offer([a]);
+    r.next(viewAt(0));
+    r.settle(viewAt(SPLAT_KEEP_M + 100));
+    r.offer([a]);
+    expect(r.next(viewAt(0))!.splat.id).toBe("a");
+    // Whichever finishes first is kept; the other is not.
+    expect([r.done(a, "first"), r.done(a, "second")]).toEqual([true, false]);
+    expect(r.counts()).toMatchObject({ known: 1, loaded: 1, loading: [] });
+    // Both slots are free again.
+    r.offer([at("b", 1), at("c", 2), at("d", 3)]);
+    expect([r.next(viewAt(0)), r.next(viewAt(0)), r.next(viewAt(0))].every(Boolean)).toBe(true);
+  });
+
   test("clear returns what was loaded and forgets everything", () => {
     const r = new Residency<string>();
     r.offer([at("a", 0), at("b", 5), at("c", 10)]);
-    r.done(r.next(viewAt(0))!.load, "mesh:a");
+    r.done(r.next(viewAt(0))!.splat, "mesh:a");
     r.next(viewAt(0));
     expect(r.clear()).toEqual([{ splat: at("a", 0), value: "mesh:a" }]);
-    expect(r.counts()).toMatchObject({ known: 0, loaded: 0, loading: null });
+    expect(r.counts()).toMatchObject({ known: 0, loaded: 0, loading: [] });
     expect(r.next(viewAt(0))).toBeNull();
   });
 });

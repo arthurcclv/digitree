@@ -117,7 +117,9 @@ mounting it in `useMapEngine` (after anything it derives from), calling its
 Its class extends `ThreeLayer` (`src/lib/three/specs/spec.md`). It never makes
 its own renderer, and it wraps its drawing in `pass`. It declares a
 `prerender` only if it has offscreen work, and it implements `viewSettled`
-only if it replans when the view moves.
+only if it replans when the view moves. It implements `viewMoved` (every
+`moveend`, before the map's sources have loaded) only for work that must not
+wait for them, as the splat layer's plan.
 
 If the layer reads a dataset, it takes a descriptor and never names an
 endpoint (`src/lib/tiles/specs/spec.md`). The descriptor type and the schema

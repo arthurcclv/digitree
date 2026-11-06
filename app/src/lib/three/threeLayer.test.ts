@@ -3,22 +3,30 @@ import * as THREE from "three";
 import type { CustomRenderMethodInput, Map as MapLibreMap } from "maplibre-gl";
 import { mercatorFrame, PREMULTIPLIED_OVER, projection, ThreeLayer } from "./index";
 
-/** The part of a map the base touches: `idle` handlers and the canvas. */
+/** The part of a map the base touches: `idle` and `moveend` handlers and the canvas. */
 function fakeMap() {
   const idle = new Set<() => void>();
+  const moveend = new Set<() => void>();
+  const of = (event: string) => (event === "idle" ? idle : event === "moveend" ? moveend : null);
   const map = {
     on: (event: string, fn: () => void) => {
-      if (event === "idle") idle.add(fn);
+      of(event)?.add(fn);
       return map;
     },
     off: (event: string, fn: () => void) => {
-      if (event === "idle") idle.delete(fn);
+      of(event)?.delete(fn);
       return map;
     },
     getCanvas: () => ({}) as HTMLCanvasElement,
     triggerRepaint: () => {},
   };
-  return { map: map as unknown as MapLibreMap, idle, fireIdle: () => [...idle].forEach((fn) => fn()) };
+  return {
+    map: map as unknown as MapLibreMap,
+    idle,
+    moveend,
+    fireIdle: () => [...idle].forEach((fn) => fn()),
+    fireMoveEnd: () => [...moveend].forEach((fn) => fn()),
+  };
 }
 
 /** A renderer with nothing behind it: no WebGL in the tests. */
@@ -39,6 +47,7 @@ class Probe extends ThreeLayer {
   contexts = 0;
   attaches = 0;
   settles = 0;
+  moves = 0;
   protected createRenderer(): THREE.WebGLRenderer {
     const r = fakeRenderer(this.log);
     this.made.push(r);
@@ -52,6 +61,9 @@ class Probe extends ThreeLayer {
   }
   protected viewSettled(): void {
     this.settles++;
+  }
+  protected viewMoved(): void {
+    this.moves++;
   }
   render(): void {}
   /** `pass`, from outside. */
@@ -89,13 +101,15 @@ describe("ThreeLayer lifecycle", () => {
     expect(layer.contexts).toBe(2);
   });
 
-  test("onRemove keeps the renderer and stops listening for idle", () => {
-    const { map, idle } = fakeMap();
+  test("onRemove keeps the renderer and stops listening for idle and moveend", () => {
+    const { map, idle, moveend } = fakeMap();
     const layer = new Probe();
     layer.onAdd(map, gl());
     expect(idle.size).toBe(1);
+    expect(moveend.size).toBe(1);
     layer.onRemove();
     expect(idle.size).toBe(0);
+    expect(moveend.size).toBe(0);
     expect(layer.made[0].dispose).not.toHaveBeenCalled();
   });
 
@@ -113,10 +127,22 @@ describe("ThreeLayer lifecycle", () => {
     expect(layer.settles).toBe(2);
   });
 
-  test("a layer without viewSettled never listens for idle", () => {
-    const { map, idle } = fakeMap();
+  test("each moveend calls viewMoved once, at once", () => {
+    const { map, fireMoveEnd } = fakeMap();
+    const layer = new Probe();
+    layer.onAdd(map, gl());
+    fireMoveEnd();
+    expect(layer.moves).toBe(1);
+    fireMoveEnd();
+    expect(layer.moves).toBe(2);
+    expect(layer.settles).toBe(0);
+  });
+
+  test("a layer without viewSettled or viewMoved never listens for idle or moveend", () => {
+    const { map, idle, moveend } = fakeMap();
     new Quiet().onAdd(map, gl());
     expect(idle.size).toBe(0);
+    expect(moveend.size).toBe(0);
   });
 
   test("dispose frees the renderer", () => {

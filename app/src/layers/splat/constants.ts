@@ -38,6 +38,20 @@ export const SPLAT_KEEP_M = 10_000;
 export const SPLAT_MAX_CAPTURES = 256;
 
 /**
+ * At most this many captures load at once (`SplatMesh` through its `.rad`
+ * header). Header requests share the origin's 6 HTTP/1.1 connections with
+ * Spark's chunk fetchers. See *Which captures load*.
+ */
+export const SPLAT_LOAD_CONCURRENCY = 3;
+
+/**
+ * Spark's `numLodFetchers`: chunk files fetched at once, across every capture
+ * (Spark's default is 3). 4 leaves 2 of the origin's 6 HTTP/1.1 connections
+ * for tiles and headers. See *Level of detail*.
+ */
+export const SPLAT_LOD_FETCHERS = 4;
+
+/**
  * Spark's covariance blur for captures trained with anti-aliasing, as every
  * current one is (the scans' `antialiased` flag). See *Renderer*.
  */

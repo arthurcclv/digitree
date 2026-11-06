@@ -1,8 +1,13 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 14 (Spark moves from
+> **Status: approved 2026-10-20, implemented. Revision 15 (captures in view
+> load sooner after a move: the layer plans on `moveend`, the queue is
+> ordered by the current view, up to `SPLAT_LOAD_CONCURRENCY` (3) load at
+> once, and Spark gets `SPLAT_LOD_FETCHERS` (4) chunk fetchers) — approved
+> 2026-11-06, implemented;** see *Changes in revision 15*.
+> Revision 14 (Spark moves from
 > 2.3.1 to 2.4.0, pinned exactly; the layer's behaviour does not change) —
-> approved 2026-10-30, implemented;** see *Changes in revision 14*.
+> approved 2026-10-30, implemented; see *Changes in revision 14*.
 > Revision 13 (a "Snap tiles to
 > ground" checkbox, `snapToGround`: checked, each tile on its own ground as
 > in revision 12; unchecked, every tile lowered by one shared height,
@@ -116,6 +121,17 @@ Spark draws the captures through its **paged LoD**:
   desktop, at 16 B per splat without SH), and never grows. Pages are reused
   least recently used first, lazily: a page out of view stays resident until
   its slot is needed.
+- **`numLodFetchers` is `SPLAT_LOD_FETCHERS` (4)**, passed to every
+  `SparkRenderer` the layer makes (Spark's default is 3). It is how many
+  chunk files Spark fetches at once, across every capture. Spark reads it
+  only when it makes its pager, the first time a paged mesh is drawn, so it
+  is a constant and not a setting. Why 4 and not more: with the dev server
+  the `/files` and `/tiles` proxies share one origin over HTTP/1.1, which
+  browsers cap at 6 connections. 4 fetchers leave 2 for the other layers'
+  tiles and capture headers. A higher value only helps where `/files` is
+  served over HTTP/2 or from its own origin (`PUBLISH_ADDR`). Chunks already
+  in flight for an earlier view still finish before newer ones start
+  (Spark has no cancellation), so more fetchers also shorten that wait.
 - **`lodCleanupTimeoutMs` is Spark's default, 3 s** (not passed). A capture
   unrendered that long, whether hidden, below `minZoom` or unloaded, has its
   worker-side tree dropped and its pages returned to the pool. Rendering it
@@ -161,7 +177,8 @@ splat.
 
 **Spark is imported dynamically** the first time a capture is due to load. It
 is ~2.6 MB minified, and a session that never zooms in on a capture never
-downloads it.
+downloads it. It is imported once, however many loads ask for it at once. A
+failed import is not kept, so a later load tries again.
 
 ## The camera — `decomposeCamera` (in `src/lib/three`)
 
@@ -566,26 +583,52 @@ disposes what `next` evicts and `settle` unloads. `SplatStatus`'s counts come
 from it.
 
 - The layer keeps its own `TileStore` with `splatTiles(SPLATS)`, on the shared
-  z14 grid. On `viewSettled`, and also when it is attached, shown, or its
-  `minZoom` changes (so a capture appears without waiting for the next pan),
-  and only while the layer is visible and the map zoom is at least `minZoom`,
-  it asks the store for the z14 tiles covering the view.
-- A capture whose anchor is in those tiles starts loading, one at a time,
-  nearest the view's centre first (`splatsIn`). The tiles are those meeting the
-  view's ground footprint, clipped to `SPLAT_FETCH_HALF_M` (2 km) around the
-  centre, plus one ring (`planTiles` in `lib/tiles`, shared with AO).
+  z14 grid. **It plans on `viewMoved`** (the map's `moveend`, through
+  `ThreeLayer`), on `viewSettled`, and also when it is attached, shown, or its
+  `minZoom` changes (so a capture appears without waiting for the next pan).
+  Only while the layer is visible and the map zoom is at least `minZoom`, it
+  takes the view's centre as the view and asks the store for the z14 tiles
+  covering the view. Planning on `moveend` starts the lookup as soon as the
+  camera stops, not after `idle`, which also waits for every other source's
+  tiles. Planning again on `viewSettled` costs nothing when the view has not
+  changed (the store fetches no tile twice). Rebasing and unloading stay on
+  `viewSettled` alone (*The frame*, *Distance*).
+- A capture whose anchor is in those tiles is queued once, when it is first
+  seen. The tiles are those meeting the view's ground footprint, clipped to
+  `SPLAT_FETCH_HALF_M` (2 km) around the centre, plus one ring (`planTiles`
+  in `lib/tiles`, shared with AO).
+- **Order.** Each time `next` is asked, it chooses the queued capture
+  **nearest the view at the latest plan** (`moveend`, `idle`, shown,
+  attached, or `minZoom` changed), whenever it was found. A load that finishes
+  mid-gesture ranks by that view, not the moving camera. Earlier, the
+  queue kept the order captures were found in, so after a move the captures
+  under the camera waited behind those queued for the earlier view. Ties keep
+  the order they were found in.
+- **Concurrency.** Up to **`SPLAT_LOAD_CONCURRENCY` (3)** captures load at
+  once. A load is `SplatMesh` construction through `mesh.initialized`, which
+  waits only for the `.rad` header (*Level of detail*). Each finished or
+  failed load starts the next. Earlier, one loaded at a time, and the 64
+  tiles of the mosaic took 64 header round trips in a row. 3, not more:
+  header requests share the origin's 6 HTTP/1.1 connections with Spark's
+  `SPLAT_LOD_FETCHERS` chunk fetchers. Loads finish in any order, and each is
+  added to the scene when it finishes.
 - **Distance.** On `viewSettled`, while the layer is drawing, a loaded
   capture whose anchor is more than **`SPLAT_KEEP_M` (10 km)** from the view's
   centre is unloaded, and a queued one that far is dropped from the queue.
+  A capture still loading that far is forgotten as well. When its load
+  finishes, its mesh is disposed, not added to the scene, and the next load
+  starts. It holds its `SPLAT_LOAD_CONCURRENCY` slot until then, since its
+  request is still in flight, but it is no longer in `loading` and does not
+  count toward `SPLAT_MAX_CAPTURES`.
   10 km exceeds the farthest a capture can load from (the 2 km clip, a
   partial z14 tile and one ring: about 6.4 km per axis, 9.1 km on the
   diagonal; a test checks this at several latitudes). So a capture just
   loaded is never unloaded on the next settle, and one at the edge does not
   reload repeatedly.
-- **Count.** At most **`SPLAT_MAX_CAPTURES` (256)** are loaded at once. When
-  one more is due, the farthest loaded capture is unloaded if it is farther
-  than the one due; otherwise the one due waits in the queue until the next
-  plan. A capture is a 100 m tile, and the delivered scans cover at most 64
+- **Count.** At most **`SPLAT_MAX_CAPTURES` (256)** are loaded or loading at
+  once. When one more is due, the farthest loaded capture is unloaded if it is
+  farther than the one due; otherwise the one due waits in the queue until the
+  next plan. A capture still loading is never evicted. A capture is a 100 m tile, and the delivered scans cover at most 64
   (their header extents span about 740 m × 700 m), so every tile loads; with
   the earlier 16, only the nearest 16 drew and the mosaic had holes. Each
   paged mesh needs at least its root page: 64 of the desktop pool's 256, and
@@ -630,15 +673,18 @@ adapter in tests. A host never passes it.
   if the style dropped it, then returns the one record.
 - `dispose` clears the bridge and disposes the class: the `SplatMesh`es, the
   `SparkRenderer`, the store (`TileStore.dispose`, which aborts its in-flight
-  tile fetches and drops its queue), then `super.dispose()`.
+  tile fetches and drops its queue), then `super.dispose()`. After `dispose`,
+  the layer reports no status. A load that finishes or fails afterwards is
+  dropped silently; a mesh it made is disposed.
 - **No DAG node.** Nothing depends on the splats.
 - `SplatStatus`: `{ state: "idle" | "loading" | "ready" | "error"; known:
-  number; loaded: number; loading: string | null; errors: { id: string;
+  number; loaded: number; loading: string[]; errors: { id: string;
   message: string }[]; platformBudget: number | null }`. `known` counts
   captures found in fetched tiles and not unloaded since; `loaded` counts the
-  captures held now. `platformBudget` is Spark's
+  captures held now; `loading` is the ids loading now, in the order they
+  started (revision 15; it was one id or `null`). `platformBudget` is Spark's
   `defaultSplatTarget()` once Spark has loaded, `null` before.
-  `idle`: none known. `loading`: one is loading. `ready`: none loading, and
+  `idle`: none known. `loading`: at least one is loading. `ready`: none loading, and
   at least one not failed. `error`: every known capture failed. One failure
   goes into `errors` and does not stop the others.
 
@@ -718,8 +764,8 @@ headsets. `null` keeps that default, so the same setting suits every device.
   known, and it reads `auto × 1.00`.
 
 Off by default, so nothing is fetched until it is asked for. The panel shows
-the state (`zoom in to z15`, `none in view`, `loading <id> (n/m)`, `n/m
-loaded · k failed`). The map's credit line shows `SPLATS.attribution` while a
+the state (`zoom in to z15`, `none in view`, `loading <id> (n/m)` with one
+loading or `loading k (n/m)` with several, `n/m loaded · k failed`). The map's credit line shows `SPLATS.attribution` while a
 capture is drawn, as it does the tree models' credit.
 
 ## Invariants
@@ -780,21 +826,44 @@ capture is drawn, as it does the tree models' credit.
   metres from anchors at different latitudes, and has det > 0 at any
   heading; `rebased` stays within `SPLAT_REBASE_M` and moves past it.
 - `splat/residency.test.ts`, on plain captures and views: each capture is
-  queued once, in the order offered; one load at a time; a failed capture
+  queued once; `next` gives the queued capture nearest the view it is given,
+  so a capture offered after a move, nearer the new view, loads before one
+  offered earlier for the old view, and equal distances keep the offered
+  order; up to `SPLAT_LOAD_CONCURRENCY` load at once and the next waits until
+  one is `done` or `failed`, which may come in any order; `loading` lists the
+  ids in the order they started; a capture still loading counts toward
+  `SPLAT_MAX_CAPTURES` and is never evicted; `settle` forgets a loading
+  capture past `SPLAT_KEEP_M`, whose `done` then says it is not wanted, which
+  holds its concurrency slot until then and is not counted or listed in
+  `loading`, and whose late failure records no error; a failed capture
   stays known and counted, and is not retried; past `SPLAT_MAX_CAPTURES` a
   nearer capture evicts the farthest and a farther one waits, and the
   evicted one is found again; a whole mosaic of 64 tiles, 100 m apart, loads
   with none evicted; `settle` forgets loaded and queued captures past
   `SPLAT_KEEP_M` and keeps the rest; `clear` returns what was loaded.
+- `splat/index.test.ts`: `splatStatus` is `loading` while `loading` is
+  non-empty, whatever else holds.
 - `splat/records.test.ts`: the record's shape.
+- `ui/splatStateText.test.ts`: the panel's State line, `loading <id>` with one
+  loading and `loading k` with several.
 - `splat/mount.test.ts` on the fake map, with Spark and the store stubbed:
   bridge registration and clearing, `update` pushes only changes,
   `ensureAdded` after a style drop, dispose order, dispose aborting a tile
   fetch still in flight, "exposes exactly its
   members", nothing fetched or imported while hidden or below `minZoom`,
-  one-at-a-time loading, each mesh paged from its `.rad` with Spark's pool and
-  cleanup timeout left at their defaults, and status for one failure among
-  several. The shared ground: `update` calls `setSnapToGround` only when
+  `SPLAT_LOAD_CONCURRENCY` loads in flight at once (with the fake Spark's
+  `initialized` held open), and a load that finishes out of order is added to
+  the scene when it finishes; a `moveend` alone (no `idle`) plans the new view
+  and starts loading the capture nearest it before captures queued for the
+  old view; a `moveend` with nothing new requests no frame, and one while
+  hidden or below `minZoom` fetches and imports nothing; each mesh paged from
+  its `.rad`, the `SparkRenderer` made with `numLodFetchers:
+  SPLAT_LOD_FETCHERS`, also when rebuilt on a new context, and Spark's pool
+  and cleanup timeout left at their defaults; and status for one failure
+  among several; a capture still loading when a settled view puts it past
+  `SPLAT_KEEP_M` is disposed when it finishes and never added; no status after
+  `dispose`, even from a load that fails later; Spark imported once, and again
+  after a failed import. The shared ground: `update` calls `setSnapToGround` only when
   `snapToGround` changed, and the initial value, `true` or `false`, reaches
   the layer; the layer re-places every loaded capture, and one loaded
   later, by z alone. Unloading: a capture past `SPLAT_KEEP_M` on a settled view is
@@ -836,7 +905,12 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
 - `src/lib/tiles/specs/spec.md` and `specs/proxy.md`: `SplatSource`, `SPLATS`,
   the `/files` proxy.
 - `ai/DECISIONS.md`: Spark in a `ThreeLayer` over `maplibre-gl-splat`;
-  splat metadata in PostGIS and files from a static service.
+  splat metadata in PostGIS and files from a static service. Revision 15
+  adds an entry: captures plan on `moveend` and load nearest-first and
+  several at a time (`SPLAT_LOAD_CONCURRENCY`), with Spark at
+  `SPLAT_LOD_FETCHERS` chunk fetchers, superseding one-at-a-time loading in
+  found order.
+- `app/CLAUDE.md`: `lib/three`'s line names the `viewMoved` hook (revision 15).
 - `ai/STACK.md`, `ai/ARCHITECTURE.md`, `ai/WORKFLOWS.md`: Spark, the `files`
   service, adding a capture (cleaning a scan, re-running the mosaic and
   building the tiles' LoD trees).
@@ -858,6 +932,50 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
    that port in its URLs.
 4. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 15
+
+Captures in view loaded late after a move, for four reasons, each fixed here.
+
+- **The layer plans on `moveend`**, through a new `ThreeLayer` hook,
+  `viewMoved` (`src/lib/three/specs/spec.md`). Before, it planned only on
+  `viewSettled`, the map's `idle`, which also waits for every basemap,
+  building and tree tile, so nothing new was looked up until all of them had
+  arrived. Rebasing and unloading stay on `viewSettled`.
+- **`Residency.next` chooses the queued capture nearest the current view.**
+  Before, the queue kept the order captures were found in, so after a move
+  the captures under the camera waited behind those queued for the earlier
+  view.
+- **Up to `SPLAT_LOAD_CONCURRENCY` (3) captures load at once**, where one did.
+  `Residency` holds the loading ids as a set. `SplatStatus.loading` becomes
+  `string[]`, and the panel reads `loading k (n/m)` when several load.
+  `SPLAT_MAX_CAPTURES` counts the loading with the loaded.
+- **`SparkRenderer` gets `numLodFetchers: SPLAT_LOD_FETCHERS` (4)**, where it
+  used Spark's 3. It applies to every renderer the layer makes, including one
+  rebuilt on a context change.
+- New constants in `constants.ts`: `SPLAT_LOAD_CONCURRENCY = 3`,
+  `SPLAT_LOD_FETCHERS = 4`.
+- **A capture still loading past `SPLAT_KEEP_M` on a settled view is
+  dropped**: its mesh is disposed when its load finishes, not added. With one
+  load at a time this rarely mattered; with three, up to three captures from
+  before a long move would otherwise appear and stay until the next settle.
+- **No status after `dispose`**, even from a load that fails later.
+- Order is by the view at the latest plan, which the wording now says, and
+  Spark is imported once and retried after a failed import, which the spec
+  now says (*Level of detail*).
+- Not changed: the tiles planned (`planTiles`, the 2 km clip, one ring),
+  `SPLAT_KEEP_M`, `SPLAT_MAX_CAPTURES`, the page pool, the budget, and
+  invariant 3. A `moveend` with nothing new to load requests no frame, so the
+  map still goes idle.
+- Not done: planning during a move (`move`, throttled). The camera's path
+  is not where it stops, so that would queue captures the view only passes
+  over. Cancelling Spark's in-flight chunk fetches is also not done, since
+  Spark has no API for it.
+- In the browser, before and after, on the same pan (the mosaic in view,
+  then about 1 km away): the time from `moveend` to the first new capture's
+  header request, and to the view drawn at full detail, with the Network
+  panel showing the header requests overlapping and up to 4 chunk files in
+  flight. Recorded here when measured.
 
 ## Changes in revision 14
 

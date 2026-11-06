@@ -45,7 +45,6 @@ import {
   SPLAT_FALLBACK_BUDGET,
   SPLAT_KEEP_M,
   type SplatSettings,
-  type SplatStatus,
 } from "./layers/splat";
 import { sceneExportReady, sceneParticipants, type SceneParticipant } from "./lib/sceneExport";
 import { useMapEngine } from "./lib/useMapEngine";
@@ -53,6 +52,7 @@ import { SPLATS, TREES, TREES_SURVEYED } from "./sources";
 import { fromLocal, localDate, localMinutes, noonToday, offsetLabel } from "./lib/place";
 import { PLACE } from "./place";
 import { cameraReadout } from "./ui/cameraReadout";
+import { splatStateText } from "./ui/splatStateText";
 import { Compass } from "./ui/Compass";
 import { TreeCard } from "./ui/TreeCard";
 import { LayerMenu } from "./ui/LayerMenu";
@@ -112,14 +112,6 @@ const USD_SIDE_KM = { min: 0.5, max: 10, step: 0.5, initial: 2 } as const;
 
 /** `scene-20260621T0400Z.zip`: the USD export, named for its sun time like the GeoTIFFs. */
 const sceneExportName = (sunTime: number): string => `scene-${utcStamp(sunTime)}.zip`;
-
-/** The splat layer's state in the panel's words. */
-const splatStateText = (s: SplatStatus | null, minZoom: number, zoom: number): string => {
-  if (zoom < minZoom) return `zoom in to z${minZoom}`;
-  if (!s || s.state === "idle") return "none in view";
-  if (s.state === "loading") return `loading ${s.loading} (${s.loaded}/${s.known})`;
-  return `${s.loaded}/${s.known} loaded` + (s.errors.length ? ` · ${s.errors.length} failed` : "");
-};
 
 /** A splat count as the panel shows it: `2.5 M`, `750 k`. */
 const splatCountText = (n: number): string =>

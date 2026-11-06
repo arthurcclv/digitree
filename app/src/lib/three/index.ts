@@ -7,7 +7,7 @@ import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap 
 
 /**
  * A MapLibre custom layer drawn with three.js. The base owns the renderer's
- * lifecycle and the `idle` subscription; a subclass writes its own `render`
+ * lifecycle and the `idle` and `moveend` subscriptions; a subclass writes its own `render`
  * (and `prerender`, only if it has offscreen work: MapLibre gives any layer
  * with one an offscreen pass) and wraps its three.js drawing in `pass`.
  */
@@ -30,6 +30,8 @@ export abstract class ThreeLayer implements CustomLayerInterface {
   protected attached?(): void;
   /** The view settled: a burst of `idle`, once. Implementing it subscribes to `idle`. */
   protected viewSettled?(): void;
+  /** The camera stopped (`moveend`); sources may still be loading. Implementing it subscribes to `moveend`. */
+  protected viewMoved?(): void;
 
   onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
     this.map = map;
@@ -42,12 +44,14 @@ export abstract class ThreeLayer implements CustomLayerInterface {
       this.contextChanged?.(this.renderer);
     }
     if (this.viewSettled) map.on("idle", this.onIdle);
+    if (this.viewMoved) map.on("moveend", this.onMoveEnd);
     this.attached?.();
   }
 
   onRemove(): void {
     // The renderer outlives a style change; only the map reference is dropped.
     this.map?.off("idle", this.onIdle);
+    this.map?.off("moveend", this.onMoveEnd);
     this.map = null;
   }
 
@@ -84,6 +88,8 @@ export abstract class ThreeLayer implements CustomLayerInterface {
   protected repaint(): void {
     this.map?.triggerRepaint();
   }
+
+  private readonly onMoveEnd = (): void => this.viewMoved?.();
 
   /** Coalesce the bursts of `idle` a single gesture can produce. */
   private readonly onIdle = (): void => {

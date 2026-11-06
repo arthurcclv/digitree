@@ -6,6 +6,36 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-06 — splat captures plan on `moveend`, load nearest the current view, three at a time
+
+**Decision.** The splat layer plans its tiles on `moveend`, through a new
+optional `ThreeLayer` hook, `viewMoved`, as well as on the coalesced `idle`.
+`Residency.next` picks the queued capture nearest the *current* view, not
+the next in the order found. Up to `SPLAT_LOAD_CONCURRENCY` (3) captures
+load at once, and `SplatStatus.loading` becomes a list of ids. Spark's
+renderer gets `numLodFetchers: SPLAT_LOD_FETCHERS` (4), up from Spark's 3.
+A capture still loading when a settled view puts it past `SPLAT_KEEP_M` is
+discarded when it finishes, not added, and nothing reports status after
+`dispose`: with three loads in flight, both cases are no longer rare.
+`src/layers/splat/specs/spec.md` revision 15. Supersedes "captures load one
+at a time, nearest first" (*Gaussian splats with Spark*, below).
+
+**Why.** After a move, the captures in view loaded late. `idle` waits for
+every source's tiles, so nothing was looked up until the basemap had
+finished. The queue kept the order found, so the captures under the camera
+waited behind those queued for the old view. One load at a time made the
+64-tile mosaic 64 header round trips in a row. And three fetchers streamed
+chunk files slowly, with the old view's still in flight.
+
+**Rules out.** Planning during a move (the camera's path is not where it
+stops); cancelling Spark's in-flight chunk fetches (Spark has no API for
+it); more than 4 fetchers or 3 loads while `/files` and `/tiles` share one
+HTTP/1.1 origin, which browsers cap at 6 connections.
+
+**Revisit if** `/files` is served over HTTP/2 or from its own origin (then
+both numbers can rise), or the browser measurement in revision 15 shows
+the headers or chunks still queueing.
+
 ## 2026-11-06 — a splat scan keeps only its largest connected body, first
 
 **Decision.** `process-splat.sh` gains footprint pruning as its first cut,
@@ -1242,7 +1272,8 @@ them is no longer ruled out.*
   `FILES_PROXY_TARGET`. Martin serves tiles only.
 - **Captures load lazily and stay loaded.** Nothing is fetched while the layer
   is hidden or below z15. Spark is its own chunk, and captures load one at a time,
-  nearest first.
+  nearest first. *(Loading order and concurrency superseded 2026-11-06:
+  nearest the current view, three at a time.)*
 
 **Rules out.** A second renderer or a repaint loop on the map's context;
 typing an origin and heading by hand; serving the captures from `public/`;

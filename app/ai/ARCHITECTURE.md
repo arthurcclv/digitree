@@ -380,7 +380,9 @@ space, so the camera is `decomposeCamera(projection(args, frame))`. It
 repaints only on Spark's `onDirty`, so the map still goes idle. It fetches its
 own z14 tiles of the `splats` table and draws each capture's paged LoD tree
 (a chunked `.rad`, built in infra) from infra's `files` service, streamed
-chunk file by chunk file into Spark's fixed page pool; captures past 10 km, or beyond 16, are
+chunk file by chunk file into Spark's fixed page pool, by 4 fetchers at once. It plans on
+`moveend` (`viewMoved`) as well as on `viewSettled`, and loads up to 3 captures at once, nearest
+the current view first. Captures past 10 km, or beyond 256, are
 unloaded. Those rules are `Residency` (`residency.ts`), a pure module the
 layer asks what to load and unload. A capture is fitted in true (WGS 84) metres and drawn with the map's
 metres per true metre on each axis (`trueMetreAxes`): Spark keeps only one
@@ -399,7 +401,7 @@ and applies the result. It is stacked last. Full contract:
 | `src/App.tsx` | all control state, the chrome, the status bar, telemetry |
 | `src/lib/useMapEngine.ts` | the host: map lifecycle, the mounts and their order, layer sync, the one DAG, camera, the probe clicks, the tree pick and its card's popup (`treeCardElement`, `closeTreeCard`), and export hand-offs, `exportScene` (the USD export: frame, packages, root, zip); exports `Camera`; starts at `PLACE.home`; keeps `flyTo` / `setPitch` with no caller yet |
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
-| `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`), `projection`, `mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`; its own spec |
+| `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`, `moveend` as `viewMoved`), `projection`, `mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
 | `src/lib/tiles/` | the self-fetching layers' (sunlight, AO, splat) shared tile grid, `LocalFrame` and `planTiles`, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; the *Data sources* spec |
 | `src/lib/usd/` | the USD export's shared writer: `.usda` text, stored zip and `.usdz`, the `ExportFrame`, ground and raster packages, the root layer and the outer zip; knows no layer; its own spec |
@@ -412,6 +414,7 @@ and applies the result. It is stacked last. Full contract:
 | `src/place.ts` | the app's `PLACE`: Taipei, UTC+8, the Da'an home view, the panel's daylight range. With `src/sources.ts`, the only place the city is named |
 | `src/ui/Panel.tsx` | `Panel` / `Slider` / `CheckboxRow` / `Segmented` / `Badge` / `Spinner` / `StatLine` primitives — presentational only |
 | `src/ui/cameraReadout.ts` | the status bar's coordinate and zoom formatting; pure, tested |
+| `src/ui/splatStateText.ts` | the splat panel's State line (`loading <id>` / `loading k`, `n/m loaded · k failed`); pure, tested |
 | `src/ui/Compass.tsx` | bearing rose, inline SVG, click resets north |
 | `src/ui/TreeCard.tsx` | the picked tree's card, rendered by `App` into the host's popup; knows no tree, only a title, a kind and rows |
 | `src/ui/LayerMenu.tsx` | the viewport's layer-visibility popover; owns only its own open/closed state |

@@ -122,6 +122,7 @@ src/
                       own specs/spec.md
     three/            ThreeLayer — the base of every three.js custom layer:
                       renderer lifecycle, resetState around each pass,
+                      the settled (idle) and moved (moveend) hooks,
                       mainMatrix projection, decomposeCamera (view +
                       projection, for Spark); its own specs/spec.md
     dag/              the derived-layer DAG: one layer's output feeding
@@ -150,6 +151,7 @@ src/
     Compass.tsx     bearing rose
     TreeCard.tsx    the picked tree's card, portalled into the host's popup
     cameraReadout.ts  the status bar's lat/lon/zoom formatting (pure, tested)
+    splatStateText.ts the splat panel's State line (pure, tested)
   App.tsx           the interface: control state, panel, status bar, telemetry
   sources.ts        the app's datasets (TREES, BUILDINGS, SPLATS) — the only place
                     an endpoint lives; layers take them as descriptors
