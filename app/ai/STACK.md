@@ -91,21 +91,21 @@ projection-matrix entry in `DECISIONS.md` before upgrading.
 | --- | --- | --- |
 | OpenFreeMap — `https://tiles.openfreemap.org/planet` | OSM vector tiles, OpenMapTiles schema, both basemap and `building` source layer | no |
 | OpenFreeMap styles — `/styles/{dark,fiord,liberty,positron}` | the four basemaps | no |
-| Martin — `/tiles/trees/{z}/{x}/{y}`, proxied to `TILES_PROXY_TARGET` (default `http://localhost:3000`) | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
-| Martin — `/tiles/splats/{z}/{x}/{y}`, same proxy | the splat captures' placements: the 100 m tiles of `infra/`'s mosaic, each placed from its georeference | no |
-| infra `files` (nginx) — `/files/3dgs-lod/<tile>-lod.rad`, proxied to `FILES_PROXY_TARGET` (default `http://localhost:3080`) | the tiles' paged LoD trees: a `.rad` header (read by byte range) and its `<tile>-lod-<n>.radc` chunk files; the tiles' `.ply` themselves are at `/files/3dgs/`, and never fetched | no |
+| Martin — `<VITE_TILES_URL>/trees/{z}/{x}/{y}` (default `http://localhost:3000`), fetched directly | Taipei's tree inventory as MVT, from the PostGIS stack in `infra/` | no |
+| Martin — `<VITE_TILES_URL>/splats/{z}/{x}/{y}` | the splat captures' placements: the 100 m tiles of `infra/`'s mosaic, each placed from its georeference | no |
+| infra `files` (nginx) — `<VITE_FILES_URL>/3dgs-lod/<tile>-lod.rad` (default `http://localhost:3080`), fetched directly | the tiles' paged LoD trees: a `.rad` header (read by byte range) and its `<tile>-lod-<n>.radc` chunk files; the tiles' `.ply` themselves are at `/3dgs/`, and never fetched | no |
 
 Every endpoint above except the basemap styles is configured in one file,
 `src/sources.ts`. The layers take descriptors and name none of them.
 
 Martin is **local and optional**: it is not a deployed service but a container
 started with `infra/load.sh`, and the app runs without it — the tree layers
-simply render nothing. It is reached through a Vite proxy, on the dev and the
-preview server alike, so tile requests stay same-origin; see
-`src/layers/tree/specs/spec.md` for why the layer uses `source.tiles` rather
-than Martin's own TileJSON. Where the proxy forwards is the one deploy-time
-setting, `TILES_PROXY_TARGET`, read from the environment or `app/.env*` and
-never shipped to the bundle (`src/lib/tiles/specs/proxy.md`).
+simply render nothing. The browser fetches it directly, cross-origin (Martin
+allows any origin); see `src/layers/tree/specs/spec.md` for why the layer uses
+`source.tiles` rather than Martin's own TileJSON. Where it is, is the
+build-time setting `VITE_TILES_URL`, read from the environment or `app/.env*`
+and baked into the bundle, so changing it means rebuilding
+(`src/lib/tiles/specs/origins.md`).
 
 **No web fonts.** The interface uses the system stack (`-apple-system`,
 `BlinkMacSystemFont`, Segoe UI, Roboto, with PingFang TC / Microsoft JhengHei
@@ -113,7 +113,9 @@ named explicitly for zh-TW), so tiles are the only third-party request the app
 makes.
 
 The `files` service is local and optional in the same way, and has its own
-setting, `FILES_PROXY_TARGET` (`src/lib/tiles/specs/proxy.md`).
+setting, `VITE_FILES_URL` (`src/lib/tiles/specs/origins.md`); it sends CORS
+headers for any origin. Both servers must be reachable from the browser, not
+only from the app's host.
 
 No API keys, no registration, and no `.env` is required. **Three** attributions are always or
 conditionally required, plus the splat captures' credit while one is drawn
@@ -137,9 +139,10 @@ and `resolve.dedupe: ["maplibre-gl", "react", "react-dom"]` — paired with
 the map renders as a black rectangle with no console error. Full reasoning in
 `DECISIONS.md`.
 
-It also builds the `/tiles` proxy from `src/lib/tiles/proxy.ts`, on `server`
-and `preview` both, which is why the config is the function form
-(`loadEnv` needs the `mode`).
+It also checks `VITE_TILES_URL` and `VITE_FILES_URL` with `originOf` from
+`src/lib/tiles/origin.ts`, so a malformed value stops `vite` before anything
+is served or built. That is why the config is the function form (`loadEnv`
+needs the `mode`). There is no proxy.
 
 `tsconfig.json`: ES2022 target, `bundler` module resolution, `strict`,
 `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`,

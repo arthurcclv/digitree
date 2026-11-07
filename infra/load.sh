@@ -102,7 +102,8 @@ if [ "$publish" != "127.0.0.1" ]; then
   echo "for every later docker compose command too, or they move back to 127.0.0.1."
 fi
 # Published on one address only, nothing answers on localhost: the checks
-# and the app's proxy targets must name that address.
+# and the app's build-time origins must name that address. The app's browser
+# fetches both servers directly (app/src/lib/tiles/specs/origins.md).
 case "$publish" in
   127.0.0.1 | 0.0.0.0) host=localhost ;;
   *) host=$publish ;;
@@ -116,10 +117,10 @@ if [ "$tls" = on ]; then
   echo "  curl -sI --http2 https://${host}:${FILES_TLS_PORT:-3443}/3dgs-lod/<tile>-lod.rad   # HTTP/2 200"
 fi
 if [ "${MARTIN_PORT:-3000}" != "3000" ] || [ "$host" != localhost ]; then
-  echo "and start the app with TILES_PROXY_TARGET=http://${host}:${MARTIN_PORT:-3000}"
+  echo "and build the app with VITE_TILES_URL=http://${host}:${MARTIN_PORT:-3000}"
 fi
 if [ "${FILES_PORT:-3080}" != "3080" ] || [ "$host" != localhost ]; then
-  echo "and start the app with FILES_PROXY_TARGET=http://${host}:${FILES_PORT:-3080}"
+  echo "and build the app with VITE_FILES_URL=http://${host}:${FILES_PORT:-3080}"
 fi
 
 if [ "$splats_ok" = 0 ]; then

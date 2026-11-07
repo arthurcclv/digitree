@@ -21,16 +21,17 @@ curl -sI localhost:3080/3dgs-lod/32651-352600-2770000-lod.rad   # a tile's LoD t
 
 Martin is published on `127.0.0.1:3000`. If that port is taken on the host,
 set `MARTIN_PORT` for both `./load.sh` and any later `docker compose` command,
-and point the app's proxy at it:
+and build the app against it (its browser fetches Martin directly;
+`app/src/lib/tiles/specs/origins.md`):
 
 ```bash
 MARTIN_PORT=3001 ./load.sh
-# in app/: TILES_PROXY_TARGET=http://localhost:3001 npm run preview
+# in app/: VITE_TILES_URL=http://localhost:3001 npm run build
 ```
 
 The `files` service is published on `127.0.0.1:3080` the same way, and
 `FILES_PORT` moves it: `FILES_PORT=3081 ./load.sh`, then
-`FILES_PROXY_TARGET=http://localhost:3081` for the app.
+`VITE_FILES_URL=http://localhost:3081` for the app.
 
 Check what answers on the port first. Another web server on `:3000` makes the
 app fail with `Unimplemented type: 4`, because it gets back an HTML page where
@@ -50,12 +51,13 @@ PUBLISH_ADDR=0.0.0.0 MARTIN_PORT=3001 ./load.sh
 Set the same variables for every later `docker compose` command, or Compose
 moves the services back to `127.0.0.1`. `PUBLISH_ADDR` may also be one
 interface's address, such as `192.168.81.32`; then nothing answers on
-`localhost`, and the app on the same host needs
-`TILES_PROXY_TARGET=http://192.168.81.32:3001` and
-`FILES_PROXY_TARGET=http://192.168.81.32:3080`. Docker publishes past `ufw`,
+`localhost`. Either way, this app's browser fetches both servers itself, so an
+app used from other machines must be built with the host's address:
+`VITE_TILES_URL=http://192.168.81.32:3001` and
+`VITE_FILES_URL=http://192.168.81.32:3080`. Docker publishes past `ufw`,
 so restricting who may connect is a host firewall rule (`DOCKER-USER`).
 
-A frontend then uses, with no `/tiles` or `/files` prefix:
+A frontend, this app included, then uses:
 
 | what | URL |
 | --- | --- |
@@ -76,8 +78,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS -H 'Origin: http://x' \
 ```
 
 An HTTPS frontend cannot call these `http://` URLs (mixed content). For
-`files`, HTTPS is available (below). Martin still needs a proxy, as the app
-uses.
+`files`, HTTPS is available (below). Martin has no TLS, so an HTTPS frontend
+needs a proxy of its own in front of it.
 
 ### HTTPS and HTTP/2 on `files`
 
@@ -97,7 +99,8 @@ PUBLISH_ADDR=0.0.0.0 MARTIN_PORT=3001 ./load.sh
 
 Each client machine then needs mkcert's root CA (`mkcert -CAROOT`) installed.
 `files` serves HTTPS on `FILES_TLS_PORT` (default `3443`) beside plain HTTP on
-`3080`; the app's `/files` proxy keeps using `3080`. Both or neither file:
+`3080`; the app uses `3080` unless built with
+`VITE_FILES_URL=https://<host>:3443`. Both or neither file:
 with only one, `load.sh` and the container refuse to start. After replacing
 the pair, `docker compose restart files`. Check:
 

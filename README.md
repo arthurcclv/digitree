@@ -20,8 +20,9 @@ cd infra
 ./load.sh        # postgis + martin, loads 162,930 trees, serves tiles on :3000
 ```
 
-If `:3000` is taken, run `MARTIN_PORT=3001 ./load.sh` and start the app with
-`TILES_PROXY_TARGET=http://localhost:3001`.
+If `:3000` is taken, run `MARTIN_PORT=3001 ./load.sh` and build the app with
+`VITE_TILES_URL=http://localhost:3001` (the browser fetches Martin directly;
+[`app/src/lib/tiles/specs/origins.md`](app/src/lib/tiles/specs/origins.md)).
 
 Your own tree data goes in `infra/data/custom/` as
 `TreeID,TreeType,Diameter,TreeHeight,LAT,LON` (WGS84) — every CSV there is

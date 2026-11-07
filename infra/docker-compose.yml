@@ -47,7 +47,7 @@ services:
         condition: service_healthy
     # MARTIN_PORT moves the host side only, for a machine whose :3000 is
     # taken; Martin itself always listens on 3000 (martin.yaml). The app's
-    # proxy must follow it: TILES_PROXY_TARGET, see app/src/lib/tiles/specs/proxy.md.
+    # build-time VITE_TILES_URL must follow it (app/src/lib/tiles/specs/origins.md).
     # PUBLISH_ADDR is the host address it is published on: 127.0.0.1 unless a
     # deploy opts in to serving other machines (specs/network-access.md).
     ports:
@@ -59,9 +59,10 @@ services:
   # The Gaussian splat capture files, which Martin cannot serve: Martin serves
   # tiles from the database, and a capture is a binary of hundreds of MB on
   # disk. A plain static server, read-only, over the mosaic's tiles (tiles/)
-  # and their LoD trees (lod/, which the app draws). The app reaches it
-  # through its /files proxy (FILES_PROXY_TARGET, app/src/lib/tiles/specs/proxy.md),
-  # so the browser asks for /files/3dgs/<file>. FILES_PORT moves the host side
+  # and their LoD trees (lod/, which the app draws). The app's browser fetches
+  # it directly, cross-origin, at VITE_FILES_URL (app/src/lib/tiles/specs/origins.md),
+  # asking for /3dgs-lod/<file> (and naming /3dgs/ in SPLATS.files).
+  # FILES_PORT moves the host side
   # only, as MARTIN_PORT does for Martin; 3080 avoids 3000 and the 3001 a
   # remote host uses for Martin.
   files:

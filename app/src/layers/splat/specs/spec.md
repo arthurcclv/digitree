@@ -50,7 +50,8 @@ Modules: `src/layers/splat/` — `index.ts` (`SplatSettings`, the entry),
 (`ThreeSplatLayer`), `stretch.ts` (`makeStretch`), `constants.ts` (ids and
 constants), and `*.test.ts` beside them. Shared additions: `decomposeCamera`
 in `src/lib/three`, `trueMetreAxes` in `src/lib/tiles/grid.ts`, and a second
-proxy entry in `src/lib/tiles/proxy.ts`. Infra: a `splats` table, its loader, a Martin
+proxy entry in `src/lib/tiles/proxy.ts` (since removed: the app fetches
+`files` directly, `src/lib/tiles/specs/origins.md`). Infra: a `splats` table, its loader, a Martin
 source, a static file service, the mosaic (`infra/specs/splat-mosaic.md`), and
 `build-lod.sh` (`infra/specs/build-lod.md`).
 
@@ -108,7 +109,7 @@ Spark draws the captures through its **paged LoD**:
   `.rad` is a small header, and each 64 K-splat chunk is its own file,
   `<stem>-lod-<n>.radc`, beside it, named in the header. `mesh.initialized`
   waits only for the header. Spark fetches each chunk file whole, as the view
-  needs it, through the `/files` proxy. Each chunk carries its own ETag, so
+  needs it, directly from `files`. Each chunk carries its own ETag, so
   it can be revalidated on its own. Whether Spark's refetches hit the
   browser's cache was not measured.
 - `SparkRenderer` is made with `enableLod: true`. Each frame it draws a
@@ -125,11 +126,12 @@ Spark draws the captures through its **paged LoD**:
   `SparkRenderer` the layer makes (Spark's default is 3). It is how many
   chunk files Spark fetches at once, across every capture. Spark reads it
   only when it makes its pager, the first time a paged mesh is drawn, so it
-  is a constant and not a setting. Why 4 and not more: with the dev server
-  the `/files` and `/tiles` proxies share one origin over HTTP/1.1, which
-  browsers cap at 6 connections. 4 fetchers leave 2 for the other layers'
-  tiles and capture headers. A higher value only helps where `/files` is
-  served over HTTP/2 or from its own origin (`PUBLISH_ADDR`). Chunks already
+  is a constant and not a setting. Why 4 and not more: it was set while
+  `/files` and `/tiles` shared one proxied origin over HTTP/1.1, which
+  browsers cap at 6 connections, leaving 2 for the other layers' tiles and
+  capture headers. Since 2026-11-07 `files` is its own origin (and may be
+  HTTP/2 at `VITE_FILES_URL`), so a higher value may now help; raising it is
+  a separate, measured change (`src/lib/tiles/specs/origins.md`, rule 10). Chunks already
   in flight for an earlier view still finish before newer ones start
   (Spark has no cancellation), so more fetchers also shorten that wait.
 - **`lodCleanupTimeoutMs` is Spark's default, 3 s** (not passed). A capture
@@ -519,16 +521,16 @@ It also sends CORS headers for any origin, and `PUBLISH_ADDR` can publish it
 beyond `127.0.0.1`, for frontends other than this app that read it directly
 (`infra/specs/network-access.md`). With an operator-supplied certificate it also
 serves them over HTTPS with HTTP/2 on `FILES_TLS_PORT` (default 3443), for those
-same direct readers (`infra/specs/files-http2.md`). The app is unaffected: it still goes
-through its same-origin proxy.
+same direct readers (`infra/specs/files-http2.md`). Since 2026-11-07 the app is one of those direct readers too.
 
-The app reaches it through a second same-origin proxy, exactly like `/tiles`
-(`src/lib/tiles/specs/proxy.md` gains the entry): `/files/*` →
-`FILES_PROXY_TARGET`, default `http://localhost:3080`, prefix stripped, the same
-validation rules and failure messages. It passes `Range` through and the
-`206` back: Spark reads a `.rad` header by range. The browser asks for
-`/files/3dgs-lod/32651-352600-2770000-lod.rad`, then its chunks,
-`/files/3dgs-lod/32651-352600-2770000-lod-<n>.radc`.
+The browser fetches it directly, cross-origin, at the build-time origin
+`VITE_FILES_URL`, default `http://localhost:3080`, with the same validation
+rules and failure messages as `VITE_TILES_URL` (`src/lib/tiles/specs/origins.md`;
+until 2026-11-07 this was a same-origin `/files` proxy). `files` answers the
+`Range` request and its preflight with CORS headers and the `206`: Spark reads
+a `.rad` header by range. The browser asks for
+`http://localhost:3080/3dgs-lod/32651-352600-2770000-lod.rad`, then its chunks,
+`…/3dgs-lod/32651-352600-2770000-lod-<n>.radc`.
 
 ## `SplatSource` — the descriptor
 
@@ -538,10 +540,10 @@ Rule 4: the layer holds no endpoint. `src/sources.ts` gains `SPLATS`, and
 ```ts
 // layers/splat — georeferenced Gaussian splat captures
 interface SplatSource {
-  tiles: string;          // "/tiles/splats/{z}/{x}/{y}"
+  tiles: string;          // "<VITE_TILES_URL>/splats/{z}/{x}/{y}"
   sourceLayer: string;    // "splats"
-  files: string;          // "/files/3dgs/" — a capture's file is files + its `file`
-  lodFiles: string;       // "/files/3dgs-lod/" — what the layer draws; see lodUrlOf
+  files: string;          // "<VITE_FILES_URL>/3dgs/" — a capture's file is files + its `file`
+  lodFiles: string;       // "<VITE_FILES_URL>/3dgs-lod/" — what the layer draws; see lodUrlOf
   attribution: string;    // in the map's credit line while a capture is drawn
   name: string;
   sharedGroundZ: number;  // 25.85 — the local z drawn at the map's ground for
@@ -802,9 +804,10 @@ capture is drawn, as it does the tree models' credit.
   values computed outside the app (to 1e-9), and the equator's closed forms
   (`R/a`, `R·a/b²`). For every latitude, east < 1 and east < north. North is
   not always over 1: M passes R near 48°.
-- `lib/tiles/proxy.test.ts`: `FILES_PROXY_TARGET` gets the same five
-  assertions as `TILES_PROXY_TARGET`; through a real Vite server, a `Range`
-  request reaches the target unchanged and its `206` comes back.
+- `lib/tiles/origin.test.ts` and `sources.test.ts`: `VITE_FILES_URL`'s
+  default, a valid value and the rejected ones, and the `SPLATS` URLs built
+  from it (`src/lib/tiles/specs/origins.md`). The `Range` round trip is
+  `infra/test/files.sh`'s.
 - `splat/schema.test.ts`: `splatOf` on valid and on each kind of invalid
   feature, including a missing, non-finite or out-of-range `lng` or `lat`.
   Given a geometry 0.3 m from its `lng`/`lat`, `splatOf` takes the properties
@@ -882,7 +885,7 @@ capture is drawn, as it does the tree models' credit.
   MapLibre puts the capture's lng/lat plus `east·`/`north·` true metres. The
   fake Spark's `dyno` evaluates the block on the CPU for this.
 - Structure guards: the host allowlist gains `mountSplat` and `SplatSettings`
-  only; `SPLATS` is the only place `/files/` appears outside `lib/tiles`.
+  only; `SPLATS` is the only place `/3dgs/` or `/3dgs-lod/` appears.
 - infra: `test/run.sh`, the cases under *The `splats` table and its
   loader*; `test/splat-mosaic.sh` and `test/voxel-quality.sh`
   (`infra/specs/splat-mosaic.md`, `infra/specs/voxel-quality.md`);
@@ -905,7 +908,7 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
 - `src/lib/three/specs/spec.md`: `decomposeCamera`; the class list.
 - `src/lib/mount/specs/spec.md`: the factory row; the host's mount order.
 - `src/lib/tiles/specs/spec.md` and `specs/proxy.md`: `SplatSource`, `SPLATS`,
-  the `/files` proxy.
+  the `/files` proxy (since removed with `proxy.md`; `specs/origins.md`).
 - `ai/DECISIONS.md`: Spark in a `ThreeLayer` over `maplibre-gl-splat`;
   splat metadata in PostGIS and files from a static service. Revision 15
   adds an entry: captures plan on `moveend` and load nearest-first and

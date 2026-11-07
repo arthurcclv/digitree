@@ -403,7 +403,7 @@ and applies the result. It is stacked last. Full contract:
 | `src/lib/mount/` | `LayerMount`, `nativeLayer` (bridge + re-add), `changed`, and `fakeMap` for tests; its own spec |
 | `src/lib/three/` | `ThreeLayer` (the renderer lifecycle, `pass`, coalesced `idle`, `moveend` as `viewMoved`), `projection`, `mercatorFrame`, `decomposeCamera`, `PREMULTIPLIED_OVER`; its own spec |
 | `src/lib/dag/` | the derived-layer DAG (`createGraph`): nodes, publish/clear, demand; pure, with its own spec |
-| `src/lib/tiles/` | the self-fetching layers' (sunlight, AO, splat) shared tile grid, `LocalFrame` and `planTiles`, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; the *Data sources* spec |
+| `src/lib/tiles/` | the self-fetching layers' (sunlight, AO, splat) shared tile grid, `LocalFrame` and `planTiles`, the generic `TileStore`, `decodeMvt`, `settle` (wait for a store of the caller's own), building prisms and ground footprint; `originOf`, the check on Martin's and `files`' build-time origins (`specs/origins.md`); the *Data sources* spec |
 | `src/lib/usd/` | the USD export's shared writer: `.usda` text, stored zip and `.usdz`, the `ExportFrame`, ground and raster packages, the root layer and the outer zip; knows no layer; its own spec |
 | `src/lib/sceneExport.ts` | the host's scene-export rules, pure: `sceneParticipants` (who is written, in stack order) and `sceneExportReady`; shared by `useMapEngine` and `App.tsx` |
 | `src/lib/colour.ts` | `hexRgb`, `srgbToLinear`, `interpolateStops`: the one colour reading behind the direct-sun and PET ramps, the buildings' palette colour and `lib/usd`'s linear colours |

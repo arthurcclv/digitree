@@ -1,5 +1,12 @@
 import { OSM_ATTRIBUTION, OSM_TILEJSON } from "./layers/basemaps";
 import type { BuildingSource } from "./layers/buildings";
+import {
+  DEFAULT_FILES_URL,
+  DEFAULT_TILES_URL,
+  FILES_URL_ENV,
+  originOf,
+  TILES_URL_ENV,
+} from "./lib/tiles/origin";
 import type { SplatSource } from "./layers/splat";
 import type { TreeSource } from "./layers/tree";
 
@@ -11,17 +18,23 @@ import type { TreeSource } from "./layers/tree";
  */
 
 /**
+ * Where Martin and infra's `files` service are, as the browser reaches them:
+ * directly and cross-origin, from the build-time settings `VITE_TILES_URL`
+ * and `VITE_FILES_URL`. See `src/lib/tiles/specs/origins.md`.
+ */
+const TILES_URL = originOf(TILES_URL_ENV, import.meta.env.VITE_TILES_URL, DEFAULT_TILES_URL);
+const FILES_URL = originOf(FILES_URL_ENV, import.meta.env.VITE_FILES_URL, DEFAULT_FILES_URL);
+
+/**
  * Taipei's tree inventory, from the local PostGIS + Martin stack in `infra/`.
  * Every name here is published by Martin and set in `infra/martin.yaml`.
  * Renaming one there without changing it here makes the layer render nothing,
  * silently. See `infra/CLAUDE.md`.
  */
 export const TREES: TreeSource = {
-  // Relative on purpose. Martin's own TileJSON advertises an absolute
-  // `http://localhost:3000/...`, which would route every tile request past
-  // Vite's dev proxy straight at Martin's origin and reintroduce the CORS
-  // problem the proxy exists to avoid.
-  tiles: "/tiles/trees/{z}/{x}/{y}",
+  // Built here rather than read from Martin's TileJSON, whose tile URL
+  // follows the request's Host; see the tree spec, *Why `source.tiles`*.
+  tiles: `${TILES_URL}/trees/{z}/{x}/{y}`,
   sourceLayer: "trees",
   // Matches `minzoom` in infra/martin.yaml: below it one tile is most of Taipei.
   minzoom: 14,
@@ -63,17 +76,16 @@ export const BUILDINGS: BuildingSource = {
 /**
  * The Gaussian splat captures in infra: their placements from PostGIS through
  * Martin, their files and the paged LoD trees the layer draws from infra's
- * static `files` service. Both are reached through same-origin proxies
- * (`/tiles` → TILES_PROXY_TARGET, `/files` → FILES_PROXY_TARGET; see
- * `src/lib/tiles/specs/proxy.md`). The table, the source id and the layer name
+ * static `files` service. Both are fetched directly, cross-origin (see
+ * `src/lib/tiles/specs/origins.md`). The table, the source id and the layer name
  * are set in `infra/martin.yaml`, the file paths in `infra/files-locations.conf`. See
  * `src/layers/splat/specs/spec.md`.
  */
 export const SPLATS: SplatSource = {
-  tiles: "/tiles/splats/{z}/{x}/{y}",
+  tiles: `${TILES_URL}/splats/{z}/{x}/{y}`,
   sourceLayer: "splats",
-  files: "/files/3dgs/",
-  lodFiles: "/files/3dgs-lod/",
+  files: `${FILES_URL}/3dgs/`,
+  lodFiles: `${FILES_URL}/3dgs-lod/`,
   attribution: "3DGS captures",
   name: "Gaussian splat captures",
   // The median GROUNDZ of the delivered mosaic's tiles (25.07–26.26 m).

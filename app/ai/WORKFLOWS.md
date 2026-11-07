@@ -33,30 +33,39 @@ at compile time, and dev and production fail for *different* reasons (see
 
 ## Deploying
 
-The app is deployed as `dist/` behind `vite preview`, which carries the same
-`/tiles` proxy as the dev server. If Martin is not on the same host at `:3000`,
-point the proxy at it:
+The app is deployed as `dist/`, conventionally behind `vite preview`; any
+static server works, because there is no proxy. The browser fetches Martin and
+infra's `files` itself, cross-origin, at the build-time origins
+`VITE_TILES_URL` (default `http://localhost:3000`) and `VITE_FILES_URL`
+(default `http://localhost:3080`) (`src/lib/tiles/specs/origins.md`). They are
+baked in at build time, so they must be the addresses **the browser** reaches,
+and changing one means rebuilding. The defaults work only for a browser on the
+infra host; for any other, infra must be published with `PUBLISH_ADDR`
+(`infra/README.md`, *Serving other machines*) and the app built with its
+address:
 
 ```bash
-npm run build
-TILES_PROXY_TARGET=http://localhost:3001 npm run preview -- --host
-curl -sI http://<host>:4173/tiles/trees/15/27448/14028 | grep -i content-type
+VITE_TILES_URL=http://192.168.81.32:3001 VITE_FILES_URL=http://192.168.81.32:3080 npm run build
+npm run preview -- --host
+curl -sI -H 'Origin: http://<host>:4173' http://192.168.81.32:3001/trees/15/27448/14028 \
+  | grep -iE 'content-type|access-control-allow-origin'
 ```
 
-The last line must say `application/x-protobuf`. `text/html` means something
-other than Martin answered, and the map shows `Unimplemented type: 4` (an HTML
-`<` parsed as a protobuf header). A malformed `TILES_PROXY_TARGET` stops
-`vite` from starting at all. On the infra side, `MARTIN_PORT` moves Martin's
-host port (`infra/README.md`).
+The last line must show `application/x-protobuf` and an
+`access-control-allow-origin`. `text/html` means something other than Martin
+answered, and the map shows `Unimplemented type: 4` (an HTML `<` parsed as a
+protobuf header). A malformed origin stops `vite` from starting or building
+at all.
 
-The splat files take the same route through `/files`. If infra's `files`
-service is not on `:3080`, add `FILES_PROXY_TARGET=http://localhost:<FILES_PORT>`,
-and check `curl -sI http://<host>:4173/files/3dgs-lod/<scan>-lod.rad` answers
-`200` with `application/octet-stream` and the file's length, and so does a
-chunk, `…/files/3dgs-lod/<scan>-lod-0.radc`. Spark reads the header by byte
-range, so also check that
-`curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-15' http://<host>:4173/files/3dgs-lod/<scan>-lod.rad`
-answers `206`.
+For the splat files, check that
+`curl -sI -H 'Origin: http://<host>:4173' http://192.168.81.32:3080/3dgs-lod/<scan>-lod.rad`
+answers `200` with `access-control-allow-origin: *`, and so does a chunk,
+`…/3dgs-lod/<scan>-lod-0.radc`. Spark reads the header by byte range, so also
+check that
+`curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-15' http://192.168.81.32:3080/3dgs-lod/<scan>-lod.rad`
+answers `206`. With a certificate on `files`, `VITE_FILES_URL` may be
+`https://<host>:3443` for HTTP/2. An app served over HTTPS cannot reach
+Martin, which is plain HTTP only.
 
 ## The loop for a behaviour change
 
@@ -147,8 +156,13 @@ Whatever it is has to be re-established in `onStyleLoad`, not once at startup.
 the top; order within the `sync([...])` array is the only other lever, plus
 `anchorUnderLabels` afterwards.
 
-**Some tiles did not load: `Unimplemented type: 4`.** The proxy reached a
-server that is not Martin and got an HTML page back. See *Deploying*.
+**Some tiles did not load: `Unimplemented type: 4`.** `VITE_TILES_URL` names a
+server that is not Martin, which sent an HTML page back. See *Deploying*.
+
+**No trees or splats, and CORS or connection errors in the console.** The
+browser cannot reach `VITE_TILES_URL` or `VITE_FILES_URL`: infra is down,
+published on `127.0.0.1` only, or the app was built with `localhost` and is
+opened from another machine. See *Deploying*.
 
 In dev the map is exposed as `window.__map` for console poking. It is gated on
 `import.meta.env.DEV`; do not depend on it in app code.
@@ -302,8 +316,8 @@ a capture, turn on **Gaussian splats → Captures** and check:
 - **Idle.** With the camera still, the map stops drawing: sunlight and AO
   still recompute after a pan. A map that never goes idle means something
   besides `onDirty` is asking for repaints.
-- **Lazy.** With the layer off, the network panel shows no `/tiles/splats/`,
-  no `/files/` and no `spark.module` request.
+- **Lazy.** With the layer off, the network panel shows no `/splats/` tile,
+  no `/3dgs-lod/` and no `spark.module` request.
 - **LoD.** A capture draws coarse at once and sharpens within a few seconds
   as its pages arrive: the network panel shows its header read by range
   (`206`), then `.radc` chunks fetched one by one (`200`), never a tile's

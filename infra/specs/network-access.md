@@ -16,7 +16,8 @@ the LoD trees Spark streams. Today it cannot, for three reasons:
    preflight is not answered either.
 
 The only working route today is the app's own same-origin proxy on
-`:4173` (`app/src/lib/tiles/specs/proxy.md`), which a separate frontend has to
+`:4173` (then `app/src/lib/tiles/specs/proxy.md`, removed 2026-11-07 by
+`app/src/lib/tiles/specs/origins.md`), which a separate frontend has to
 replicate in its own server.
 
 This spec makes network exposure an **opt-in deploy setting** and makes
@@ -42,9 +43,11 @@ This spec makes network exposure an **opt-in deploy setting** and makes
    `http://192.168.81.32:3001` (Martin) and `http://192.168.81.32:3080`
    (`files`). A single interface's address (`192.168.81.32`) works too, to
    avoid publishing on every interface, but then nothing answers on
-   `localhost`: the app on the same host must point `TILES_PROXY_TARGET` and
-   `FILES_PROXY_TARGET` at that address. `load.sh` prints its checks and
-   those targets with the published address.
+   `localhost`: the app must be built with `VITE_TILES_URL` and
+   `VITE_FILES_URL` naming that address (`app/src/lib/tiles/specs/origins.md`;
+   until 2026-11-07 these were the proxy targets `TILES_PROXY_TARGET` and
+   `FILES_PROXY_TARGET`). `load.sh` prints its checks and those origins with
+   the published address.
 
 ### CORS on `files`
 
@@ -92,12 +95,15 @@ This spec makes network exposure an **opt-in deploy setting** and makes
 | a tile's LoD header | `http://<host>:<FILES_PORT>/3dgs-lod/<stem>-lod.rad` |
 | its chunks | `http://<host>:<FILES_PORT>/3dgs-lod/<stem>-lod-<n>.radc` |
 
-Note the prefixes differ from the app's proxy: no `/tiles` and no `/files`.
+There is no `/tiles` or `/files` prefix: those were the app's proxy routes,
+removed 2026-11-07. The app now uses these URLs too.
 
 ## What this does not change
 
 - The app. Its `/tiles` and `/files` proxies keep working on `127.0.0.1`
   targets; `TILES_PROXY_TARGET` and `FILES_PROXY_TARGET` are untouched.
+  (Superseded 2026-11-07: the app dropped both proxies and is now one of the
+  direct clients, `app/src/lib/tiles/specs/origins.md`.)
 - No authentication or rate limiting. Exposure is meant for a trusted
   LAN. An HTTPS frontend cannot call these `http://` origins (mixed
   content). `files` can now also serve HTTPS, with HTTP/2, when the operator
@@ -159,7 +165,7 @@ Note the prefixes differ from the app's proxy: no `/tiles` and no `/files`.
    and use it in the client's URL.
 2. **`0.0.0.0` or the LAN address?** `0.0.0.0` also publishes on Docker
    bridges and any other interface. The LAN address is tighter, but breaks if
-   the host's address changes, and moves the app's proxy targets off
+   the host's address changes, and moves the app's build-time origins off
    `localhost` (rule 5). Decided at deploy time, not here.
 3. **Docker and the host firewall.** Docker writes its own iptables rules, so
    a published port bypasses `ufw`. If the host should only serve part of the

@@ -20,9 +20,10 @@ Modules:
   footprint's bounding box, clipped to `halfM` metres around the frame's
   origin, plus one ring, and none for a footprint of fewer than three points.
   The AO and splat layers plan their tiles with it.
-- `src/lib/tiles/proxy.ts`: the `/tiles` proxy in front of Martin, for
-  `vite.config.ts` only. Its target is `TILES_PROXY_TARGET`. It has its own
-  spec, `specs/proxy.md`.
+- `src/lib/tiles/origin.ts`: `originOf`, the check on the build-time
+  origins of Martin and `files` (`VITE_TILES_URL`, `VITE_FILES_URL`), used by
+  `src/sources.ts` and `vite.config.ts`. The browser fetches both servers
+  directly; there is no proxy. Its own spec is `specs/origins.md`.
 - `src/layers/tree/schema.ts` and `src/layers/buildings/schema.ts`: each
   dataset's **schema**, meaning how a feature is read. Every consumer shares it.
 
@@ -193,10 +194,10 @@ store.dispose()                      // aborts in-flight fetches; the store is d
 
 | export | value |
 | --- | --- |
-| `TREES: TreeSource` | `tiles: "/tiles/trees/{z}/{x}/{y}"` (relative, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"`, `name: "Taipei Trees"`, `sourceKind: "postgis-martin"`, `fallbackHeightM: 9.1` (the inventory's measured median height) |
+| `TREES: TreeSource` | `tiles: "${VITE_TILES_URL}/trees/{z}/{x}/{y}"` (default origin `http://localhost:3000`; `tiles`, not the TileJSON, for the reason in the tree spec, *Why `source.tiles`*), `sourceLayer: "trees"`, zoom 14–20, the inventory bounds, `"臺北市政府 · Taipei City open data"`, `name: "Taipei Trees"`, `sourceKind: "postgis-martin"`, `fallbackHeightM: 9.1` (the inventory's measured median height) |
 | `TREES_SURVEYED` | `162_930`, the panel's "Surveyed trees", formerly `TREES_TOTAL` |
 | `BUILDINGS: BuildingSource` | `tileJson: OSM_TILEJSON`, `sourceLayer: "building"`, `attribution: OSM_ATTRIBUTION`, `name: "OSM Buildings"`, `sourceKind: "osm-openfreemap"` |
-| `SPLATS: SplatSource` | `tiles: "/tiles/splats/{z}/{x}/{y}"`, `sourceLayer: "splats"`, `files: "/files/3dgs/"`, `lodFiles: "/files/3dgs-lod/"` (both through the `/files` proxy, `specs/proxy.md`), `attribution: "3DGS captures"` (a placeholder until the captures' credit is known), `name: "Gaussian splat captures"`, `sharedGroundZ: 25.85` (the median of the delivered tiles' `GROUNDZ`) |
+| `SPLATS: SplatSource` | `tiles: "${VITE_TILES_URL}/splats/{z}/{x}/{y}"`, `sourceLayer: "splats"`, `files: "${VITE_FILES_URL}/3dgs/"`, `lodFiles: "${VITE_FILES_URL}/3dgs-lod/"` (default origin `http://localhost:3080`; fetched directly, `specs/origins.md`), `attribution: "3DGS captures"` (a placeholder until the captures' credit is known), `name: "Gaussian splat captures"`, `sharedGroundZ: 25.85` (the median of the delivered tiles' `GROUNDZ`) |
 
 - `BUILDINGS` is built from `basemaps`' `OSM_TILEJSON` and `OSM_ATTRIBUTION`,
   so the basemap and the buildings still share one OSM snapshot (DECISIONS
@@ -221,11 +222,11 @@ All asserted by vitest.
    this.
 2. No non-test file under `layers/tree`, `layers/buildings`, `layers/sunlight`,
    `layers/ambient-occlusion`, `layers/temperature` or `layers/splat` contains
-   a URL-shaped endpoint: a quoted string literal starting with `/tiles/` or
-   `/files/`, or containing `{z}` or `openfreemap.org`. `basemaps` owns the
-   style catalogue and is exempt. Outside `src/sources.ts` and
-   `lib/tiles/proxy.ts`, no non-test file under `src/layers`, `src/lib` or
-   `App.tsx` quotes a `/files/` path.
+   a URL-shaped endpoint: a quoted string literal containing `{z}`,
+   `openfreemap.org`, `/3dgs/` or `/3dgs-lod/`. `basemaps` owns the style
+   catalogue and is exempt. Outside `src/sources.ts`, no non-test file under
+   `src/layers`, `src/lib` or `App.tsx` names a `/3dgs/` or `/3dgs-lod/`
+   path in any string literal, template literals included.
 3. `treePointsLayer` and `buildingsLayer` take every source field from the
    descriptor they are given. A fixture descriptor with a foreign URL and
    bounds appears unchanged in the record.

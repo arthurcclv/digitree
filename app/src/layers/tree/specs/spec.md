@@ -55,7 +55,7 @@ Martin stack:
 
 | | |
 | --- | --- |
-| tile URL (`tiles`) | `/tiles/trees/{z}/{x}/{y}` (relative — see below) |
+| tile URL (`tiles`) | `${VITE_TILES_URL}/trees/{z}/{x}/{y}` (Martin, fetched directly — see below) |
 | MVT layer (`sourceLayer`) | `trees` |
 | zoom range (`minzoom`, `maxzoom`) | 14 – 20 |
 | `bounds` | `[121.4619, 24.9771, 121.6268, 25.1606]` |
@@ -111,16 +111,16 @@ GeoLibre accepts either a TileJSON `url` or an explicit `tiles` array
 (`syncVectorTileLayer`). This layer MUST use `tiles`, with `minzoom`, `maxzoom`
 and `bounds` stated alongside it.
 
-Martin's TileJSON advertises an **absolute** tile URL
-(`http://localhost:3000/trees/{z}/{x}/{y}`). Consuming it would send every tile
-request straight past Vite's dev proxy to Martin's origin, reintroducing the
-CORS problem the proxy exists to avoid. A relative `tiles` entry keeps every
-request same-origin, and costs only the three fields the TileJSON would have
-supplied.
+Martin builds its TileJSON's tile URL from the request's `Host`, so the URL
+it advertises depends on how it was reached, not on how the browser should
+reach it. A `tiles` entry built by the app does not, and costs only the three
+fields the TileJSON would have supplied.
 
-The proxy is `/tiles` → `TILES_PROXY_TARGET` (default `http://localhost:3000`),
-on both the dev and the preview server (`src/lib/tiles/specs/proxy.md`). It is
-the app's only knowledge that `infra/` exists.
+The browser fetches Martin directly, cross-origin (Martin allows any origin):
+`TREES.tiles` is `${VITE_TILES_URL}/trees/{z}/{x}/{y}`, the origin a
+build-time setting defaulting to `http://localhost:3000`
+(`src/lib/tiles/specs/origins.md`). It is the app's only knowledge that
+`infra/` exists.
 
 ### When the server is down
 

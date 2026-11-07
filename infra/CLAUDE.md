@@ -18,7 +18,12 @@ a taken `:3000` (DECISIONS 2026-10-12), and `FILES_PORT` is its twin for the
 `files` service (default `:3080`). `PUBLISH_ADDR` (default `127.0.0.1`) opts
 Martin and `files` in to serving other machines, for a frontend that talks
 to them directly; `files-locations.conf` sends CORS headers for that
-(`specs/network-access.md`, DECISIONS 2026-11-06). `files` also serves HTTPS
+(`specs/network-access.md`, DECISIONS 2026-11-06). The app is one of those
+frontends: it has no proxy, and its browser fetches both servers at the
+build-time origins `VITE_TILES_URL` and `VITE_FILES_URL`
+(`app/src/lib/tiles/specs/origins.md`, DECISIONS 2026-11-07). So a remote
+deploy needs `PUBLISH_ADDR` set, and the app built with that host's address;
+a moved port moves the matching origin. `files` also serves HTTPS
 with HTTP/2 on `FILES_TLS_PORT` (default `:3443`), beside its plain HTTP,
 when the operator puts `cert.pem` and `key.pem` in `FILES_TLS_DIR` (default
 `tls/`); with neither it serves plain HTTP only, and with one it refuses to
@@ -258,7 +263,7 @@ The splat captures are a second published interface, read by
 | --- | --- | --- |
 | source id `splats` | `postgres.tables.splats` key | the tile path `/splats/{z}/{x}/{y}` and the app's `SPLATS.tiles` |
 | MVT layer `splats` | the same key | the app's `SPLATS.sourceLayer` |
-| `/3dgs/<file>` | `files-locations.conf` | the app's `SPLATS.files` (`/files/3dgs/`, through its `/files` proxy); a tile's `.ply`, which the app never fetches |
+| `/3dgs/<file>` | `files-locations.conf` | the app's `SPLATS.files` (`<VITE_FILES_URL>/3dgs/`, fetched directly); a tile's `.ply`, which the app never fetches |
 | `/3dgs-lod/<stem>-lod.rad`, `<stem>-lod-<n>.radc` | `files-locations.conf` | the app's `SPLATS.lodFiles` and `lodUrlOf`: what the layer draws, the header (by byte range) naming its chunk files beside it |
 
 Its properties — `splat_id`, `file`, `bytes`, `ground_z`, `heading_deg`,

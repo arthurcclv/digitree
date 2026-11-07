@@ -6,6 +6,37 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-07 — the app fetches Martin and `files` directly; no proxy
+
+**Decision.** The `/tiles` and `/files` Vite proxies are removed, with
+`src/lib/tiles/proxy.ts` and `specs/proxy.md`. The browser fetches Martin and
+infra's `files` cross-origin, at the build-time origins `VITE_TILES_URL`
+(default `http://localhost:3000`) and `VITE_FILES_URL` (default
+`http://localhost:3080`). `src/sources.ts` builds every tile and file URL from
+them; `originOf` (`src/lib/tiles/origin.ts`) checks them by the proxy's old
+rules, in `sources.ts` and at `vite` startup. `src/lib/tiles/specs/origins.md`.
+Supersedes "the tile proxy's target is a setting, `TILES_PROXY_TARGET`"
+(2026-10-12) and the `/files` proxy in *Gaussian splats with Spark*.
+
+**Why.** Both servers send CORS headers since infra's network access
+(2026-11-06), so the proxies only cost: a Node hop on HTTP/1.1 in front of
+every tile and chunk, one origin's six connections shared by tiles and
+chunks, no way to use `files`' HTTP/2 listener, and a `dist/` that only
+`vite` could serve.
+
+**Rules out.** Runtime configuration (a `config.json` fetched at startup):
+one build now serves one set of server addresses. Relative tile URLs. An app
+served over HTTPS while Martin has no TLS (mixed content).
+
+**Note.** The splat concurrency numbers (*splat captures plan on `moveend`*)
+are unchanged. Their "revisit if `/files` is served from its own origin" is
+now met, but raising them is its own measured change.
+
+**Revisit if** one `dist/` must serve several hosts (move to runtime config),
+or the app must be served over HTTPS (Martin needs TLS or a proxy again).
+
+---
+
 ## 2026-11-06 — `files` serves HTTP/2 over operator-supplied TLS, beside plain HTTP
 
 **Decision.** infra's `files` service gains a second listener: HTTPS with
@@ -1269,6 +1300,10 @@ Spark's paged LoD files instead, which is out of scope today
 > captures are placed by their header, not from control points. Spark inside
 > a `ThreeLayer` stands.
 
+> **Superseded in part** by "the app fetches Martin and `files` directly; no
+> proxy" (2026-11-07): the `/files` proxy and `FILES_PROXY_TARGET` are gone;
+> the browser fetches `files` at `VITE_FILES_URL`.
+
 *Superseded in part by "Splat captures are drawn from paged LoD trees built
 in infra" (above), 2026-10-23: captures no longer stay loaded, and evicting
 them is no longer ruled out.*
@@ -1320,6 +1355,10 @@ or GPU memory becomes the limit.
 ---
 
 ## 2026-10-12 — The tile proxy's target is a setting, `TILES_PROXY_TARGET`
+
+> **Superseded** by "the app fetches Martin and `files` directly; no proxy"
+> (2026-11-07): the proxy and `TILES_PROXY_TARGET` are gone; the app is built
+> with `VITE_TILES_URL`. `MARTIN_PORT` on the infra side stands.
 
 **Decision.**
 - **The `/tiles` proxy forwards to `TILES_PROXY_TARGET`**, which defaults to

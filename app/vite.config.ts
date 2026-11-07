@@ -1,21 +1,22 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
-import { fileProxy, tileProxy } from "./src/lib/tiles/proxy";
+import {
+  DEFAULT_FILES_URL,
+  DEFAULT_TILES_URL,
+  FILES_URL_ENV,
+  originOf,
+  TILES_URL_ENV,
+} from "./src/lib/tiles/origin";
 
 export default defineConfig(({ mode }) => {
-  // The tree layer's tiles come from the Martin server in infra/. Proxying
-  // keeps every tile request same-origin, so the app needs no CORS setup and
-  // carries no absolute URL to a host that only exists in development —
-  // which is also why the layer uses `source.tiles` rather than Martin's own
-  // TileJSON, whose tile URL is absolute. Where Martin runs is
-  // TILES_PROXY_TARGET (default http://localhost:3000), read from the
-  // environment or app/.env*; see src/lib/tiles/specs/proxy.md. The preview
-  // server is how the app is deployed, so it gets the proxy explicitly.
-  // The splat captures come from infra's static file service the same way:
-  // `/files` → FILES_PROXY_TARGET (default http://localhost:3080).
-  // The "" prefix loads every variable, not only VITE_*: none reach the bundle.
-  const env = loadEnv(mode, process.cwd(), "");
-  const proxy = { "/tiles": tileProxy(env), "/files": fileProxy(env) };
+  // The browser fetches Martin and infra's `files` directly, cross-origin: no
+  // proxy (src/lib/tiles/specs/origins.md). Their origins are the build-time
+  // settings VITE_TILES_URL and VITE_FILES_URL, read by src/sources.ts. They
+  // are checked here too, so a malformed value stops `vite`, `vite build` and
+  // `vite preview` instead of shipping a bundle that fetches from nowhere.
+  const env = loadEnv(mode, process.cwd(), "VITE_");
+  originOf(TILES_URL_ENV, env[TILES_URL_ENV], DEFAULT_TILES_URL);
+  originOf(FILES_URL_ENV, env[FILES_URL_ENV], DEFAULT_FILES_URL);
 
   return {
     plugins: [react()],
@@ -30,7 +31,6 @@ export default defineConfig(({ mode }) => {
     // has to be an ES module rather than Vite's default IIFE.
     worker: { format: "es" },
     resolve: { dedupe: ["maplibre-gl", "react", "react-dom"] },
-    server: { port: 5173, proxy },
-    preview: { proxy },
+    server: { port: 5173 },
   };
 });

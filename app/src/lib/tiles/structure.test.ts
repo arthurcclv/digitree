@@ -36,18 +36,19 @@ describe("the data-source seam", () => {
     const offenders = layers
       .flatMap((l) => filesUnder(join(SRC, "layers", l)))
       .filter((path) => !isTest(path))
-      // A URL-shaped string literal: a same-origin tile path, a template, or the
-      // OSM host. Quoted only: backticks here are doc comments naming paths.
-      .filter((path) => /["'](\/tiles\/|\/files\/|[^"'\n]*\{z\}|[^"'\n]*openfreemap\.org)/.test(readFileSync(path, "utf8")));
+      // A URL-shaped string literal: a tile template, the OSM host, or a splat
+      // files path. Quoted only: backticks here are doc comments naming paths.
+      .filter((path) => /["'][^"'\n]*(\{z\}|openfreemap\.org|\/3dgs\/|\/3dgs-lod\/)/.test(readFileSync(path, "utf8")));
     expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
   });
 
-  // The splat files' path is a descriptor field, like the tile templates: only
-  // `src/sources.ts` names it, and the proxy that serves it.
-  test("only the sources and the proxy name the /files path", () => {
+  // The splat files' paths are descriptor fields, like the tile templates:
+  // only `src/sources.ts` names them. It builds them in template literals, so
+  // backticks count here.
+  test("only the sources name the splat files paths", () => {
     const offenders = [...filesUnder(join(SRC, "layers")), ...filesUnder(join(SRC, "lib")), join(SRC, "App.tsx")]
-      .filter((path) => !isTest(path) && !path.endsWith(join("lib", "tiles", "proxy.ts")))
-      .filter((path) => /["']\/files\//.test(readFileSync(path, "utf8")));
+      .filter((path) => !isTest(path))
+      .filter((path) => /["'`][^"'`\n]*\/3dgs(-lod)?\//.test(readFileSync(path, "utf8")));
     expect(offenders.map((p) => relative(SRC, p))).toEqual([]);
   });
 });

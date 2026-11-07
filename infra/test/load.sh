@@ -93,6 +93,19 @@ expect_has "starts files with HTTPS off" "$out" "starting the files service (spl
 expect_has "says plain HTTP only" "$out" "files serves plain HTTP only: no certificate in $scratch/empty"
 expect_lacks "prints no https:// line" "$out" "https://"
 
+case_ "moved ports: the app's build-time origins follow them"
+load "$scratch/empty" MARTIN_PORT=3001 FILES_PORT=3081
+expect "succeeds" "$rc" 0
+expect_has "names VITE_TILES_URL" "$out" "and build the app with VITE_TILES_URL=http://localhost:3001"
+expect_has "names VITE_FILES_URL" "$out" "and build the app with VITE_FILES_URL=http://localhost:3081"
+expect_lacks "names no proxy target" "$out" "PROXY_TARGET"
+
+case_ "one published address: the origins name it"
+load "$scratch/empty" PUBLISH_ADDR=192.168.81.32
+expect "succeeds" "$rc" 0
+expect_has "names VITE_TILES_URL there" "$out" "VITE_TILES_URL=http://192.168.81.32:3000"
+expect_has "names VITE_FILES_URL there" "$out" "VITE_FILES_URL=http://192.168.81.32:3080"
+
 case_ "a FILES_TLS_DIR that does not exist"
 rm -rf "$scratch/absent"
 load "$scratch/absent"

@@ -97,11 +97,13 @@ The certificate must name the host the client uses (an IP SAN for
 
 - **Martin.** It stays HTTP/1.1. Its tiles are small and few next to a view's
   chunks. HTTPS on Martin would be a separate change.
-- **The app.** `FILES_PROXY_TARGET` keeps its `http://localhost:3080`
-  default. Pointing it at the HTTPS port would also work (`proxy.ts` already
-  accepts `https:`), but the proxy would still speak HTTP/1.1 to it, and Node
-  would reject a certificate from a CA it doesn't trust. So the app isn't
-  moved.
+- **The app's default.** The app fetches `files` at `VITE_FILES_URL`, whose
+  default stays `http://localhost:3080`. Building it with
+  `VITE_FILES_URL=https://<host>:3443` uses this listener, given the
+  browser trusts the CA (`app/src/lib/tiles/specs/origins.md`). When this
+  spec was written the app still reached `files` through its `/files` proxy,
+  which would have spoken HTTP/1.1 to this listener and rejected the CA, so
+  it was left on `:3080`; that proxy was removed 2026-11-07.
 - **`h2c` and HTTP/3.** The first is unused by browsers; the second needs
   UDP publishing and an nginx built with QUIC. Neither is in scope.
 - **`db`**, which is never published beyond `127.0.0.1`.
