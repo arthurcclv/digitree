@@ -32,7 +32,7 @@ export const SPLAT_KEEP_M = 10_000;
  * At most this many captures are loaded at once; a nearer one unloads the
  * farthest. A capture is a 100 m tile of infra's mosaic, and the cap is set
  * well above the tiles the delivered scans make, so every tile loads. Each
- * needs at least its root page in Spark's pool (256 pages on desktop, 96 on
+ * needs at least its root page in Spark's pool (128 pages on desktop, 96 on
  * iOS). See *Which captures load*.
  */
 export const SPLAT_MAX_CAPTURES = 256;
@@ -56,6 +56,25 @@ export const SPLAT_LOD_FETCHERS = 4;
  * current one is (the scans' `antialiased` flag). See *Renderer*.
  */
 export const SPLAT_BLUR_AMOUNT = 0.3;
+
+/**
+ * Spark's page pool on desktop, in pages of 65,536 splats: half its default,
+ * because each splat takes 32 B with `pagedExtSplats` (float32 centres), so
+ * the pool holds the same 256 MB as before. Mobile keeps Spark's default. See
+ * *Level of detail*.
+ */
+export const SPLAT_DESKTOP_POOL_PAGES = 128;
+
+/** Splats in one of Spark's LoD pages; `maxPagedSplats` must be a multiple. */
+export const SPARK_PAGE_SPLATS = 65_536;
+
+/**
+ * Spark's own defaults for `SparkRenderer.sortRadial` and `coneFoveate`, which
+ * the layer starts from, so the image is unchanged until they are moved. See
+ * *Settings*.
+ */
+export const SPARK_SORT_RADIAL = true;
+export const SPARK_CONE_FOVEATE = 0.4;
 
 /**
  * The frame's anchor moves to the view centre, once the view settles, only past

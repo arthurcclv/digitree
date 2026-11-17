@@ -8,6 +8,8 @@ import { ThreeLayer } from "../../lib/three";
 import { lngLatToMercator, metreInMercator, planTiles, tileKey, trueMetreAxes, type TileId, type TileSource } from "../../lib/tiles";
 import fixtures from "../../lib/three/mainMatrix.fixtures.json";
 import {
+  SPARK_CONE_FOVEATE,
+  SPARK_SORT_RADIAL,
   SPLAT_FETCH_HALF_M,
   SPLAT_KEEP_M,
   SPLAT_LAYER_ID,
@@ -79,7 +81,7 @@ const modified = (mesh: THREE.Object3D, p: THREE.Vector3) =>
   (mesh as unknown as { worldModifier: FakeModifier }).worldModifier.apply({ gsplat: { center: p } }).gsplat.center;
 
 /** Spark, stubbed: meshes resolve or reject by URL, and nothing touches GL. */
-function fakeSpark(failing: string[] = []) {
+function fakeSpark({ failing = [], mobile = false }: { failing?: string[]; mobile?: boolean } = {}) {
   const urls: string[] = [];
   const meshOptions: Record<string, unknown>[] = [];
   const rendererOptions: Record<string, unknown>[] = [];
@@ -110,18 +112,25 @@ function fakeSpark(failing: string[] = []) {
     dispose = vi.fn();
     lodSplatCount: number | undefined;
     lodSplatScale: number;
-    constructor(options: { lodSplatCount?: number; lodSplatScale?: number }) {
+    sortRadial: boolean;
+    coneFoveate: number;
+    // Spark's own initial values for its re-sort and re-LoD triggers.
+    sortedCenter = new THREE.Vector3().setScalar(Number.NEGATIVE_INFINITY);
+    lodDirty = false;
+    constructor(options: { lodSplatCount?: number; lodSplatScale?: number; sortRadial?: boolean; coneFoveate?: number }) {
       super();
       rendererOptions.push(options);
       this.lodSplatCount = options.lodSplatCount;
       this.lodSplatScale = options.lodSplatScale ?? 1;
+      this.sortRadial = options.sortRadial ?? SPARK_SORT_RADIAL;
+      this.coneFoveate = options.coneFoveate ?? SPARK_CONE_FOVEATE;
     }
     defaultSplatTarget() {
       return 2_500_000;
     }
   }
   return {
-    module: { SplatMesh, SparkRenderer, dyno: fakeDyno } as unknown as typeof import("@sparkjsdev/spark"),
+    module: { SplatMesh, SparkRenderer, dyno: fakeDyno, isMobile: () => mobile } as unknown as typeof import("@sparkjsdev/spark"),
     urls,
     meshOptions,
     rendererOptions,
@@ -258,6 +267,28 @@ describe("mountSplat", () => {
     vi.restoreAllMocks();
   });
 
+  test("pushes sortRadial and coneFoveate only when each changed", () => {
+    const setSort = vi.spyOn(ThreeSplatLayer.prototype, "setSortRadial");
+    const setFoveate = vi.spyOn(ThreeSplatLayer.prototype, "setConeFoveate");
+    const f = fakeMap();
+    const m = mountSplat({ map: f.map, graph: createGraph() }, { splats: SOURCE }, DEFAULT_SPLAT_SETTINGS);
+    expect(setSort).toHaveBeenCalledExactlyOnceWith(true);
+    expect(setFoveate).toHaveBeenCalledExactlyOnceWith(0.4);
+    setSort.mockClear();
+    setFoveate.mockClear();
+    m.update({ ...DEFAULT_SPLAT_SETTINGS, opacity: 0.5, lodSplatScale: 2, snapToGround: false });
+    expect(setSort).not.toHaveBeenCalled();
+    expect(setFoveate).not.toHaveBeenCalled();
+    m.update({ ...DEFAULT_SPLAT_SETTINGS, sortRadial: false });
+    expect(setSort).toHaveBeenCalledExactlyOnceWith(false);
+    expect(setFoveate).not.toHaveBeenCalled();
+    m.update({ ...DEFAULT_SPLAT_SETTINGS, sortRadial: false, coneFoveate: 1 });
+    expect(setSort).toHaveBeenCalledOnce();
+    expect(setFoveate).toHaveBeenCalledExactlyOnceWith(1);
+    m.dispose();
+    vi.restoreAllMocks();
+  });
+
   // `false` is not the layer's own default, so only the push can set it.
   test("pushes an initial snapToGround of false", () => {
     const setSnap = vi.spyOn(ThreeSplatLayer.prototype, "setSnapToGround");
@@ -334,7 +365,7 @@ describe("ThreeSplatLayer", () => {
     const broken = splat("broken", 121.5395, 25.0387);
     const mid = splat("mid", 121.5397, 25.0388);
     const far = splat("far", 121.5399, 25.0389);
-    const spark = fakeSpark(["broken-lod.rad"]);
+    const spark = fakeSpark({ failing: ["broken-lod.rad"] });
     // The same capture in two tiles, as a point in a tile's buffer arrives.
     const { d, importSpark } = deps({ "14/13723/7014": [far, mid, near, broken], "14/13724/7014": [near] }, spark);
     const statuses: SplatStatus[] = [];
@@ -522,22 +553,33 @@ describe("ThreeSplatLayer", () => {
     layer.dispose();
   });
 
-  // *Level of detail* in the spec.
-  test("draws each capture's paged LoD tree, with SPLAT_LOD_FETCHERS and Spark's pool and cleanup timeout", async () => {
-    const spark = fakeSpark();
+  /**
+   * One capture, shown and loaded, so Spark's renderer and mesh are made.
+   * `before` runs on the layer before it is added, as a setting pushed early.
+   */
+  async function loadOne(spark: ReturnType<typeof fakeSpark>, before: (layer: TestSplatLayer) => void = () => {}) {
     const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] }, spark);
     const layer = new TestSplatLayer(SOURCE, d);
+    before(layer);
     layer.onAdd(attached().map, {} as WebGL2RenderingContext);
     layer.setVisibility(true);
     await settle();
     await settle();
     await spark.finishNext();
+    return layer;
+  }
+
+  // *Level of detail* in the spec.
+  test("draws each capture's paged LoD tree, into a float32 pool of 128 pages, with Spark's cleanup timeout", async () => {
+    const spark = fakeSpark();
+    const layer = await loadOne(spark);
     expect(spark.meshOptions).toEqual([{ url: "/files/3dgs-lod/a-lod.rad", paged: true, worldModifier: expect.anything() }]);
     expect(spark.rendererOptions).toHaveLength(1);
     expect(spark.rendererOptions[0]).toMatchObject({ enableLod: true, numLodFetchers: SPLAT_LOD_FETCHERS });
-    // Spark's defaults: the platform's page pool, and the 3 s after which an
-    // unloaded or hidden capture's pages go back to it.
-    expect(spark.rendererOptions[0]).not.toHaveProperty("maxPagedSplats");
+    // float32 centres, in half Spark's desktop pool: the same 256 MB at 32 B.
+    expect(spark.rendererOptions[0]).toMatchObject({ pagedExtSplats: true, maxPagedSplats: 128 * 65_536 });
+    // Spark's default: the 3 s after which an unloaded or hidden capture's
+    // pages go back to the pool.
     expect(spark.rendererOptions[0]).not.toHaveProperty("lodCleanupTimeoutMs");
     layer.dispose();
   });
@@ -558,6 +600,16 @@ describe("ThreeSplatLayer", () => {
     layer.onAdd(map, {} as WebGL2RenderingContext);
     expect(spark.rendererOptions).toHaveLength(2);
     expect(spark.rendererOptions[1]).toMatchObject({ enableLod: true, numLodFetchers: SPLAT_LOD_FETCHERS });
+    layer.dispose();
+  });
+
+  // *Level of detail*: halving iOS's 96 pages would leave fewer than the
+  // mosaic's 64 root pages, so mobile keeps Spark's pool.
+  test("keeps Spark's page pool on mobile, still with float32 centres", async () => {
+    const spark = fakeSpark({ mobile: true });
+    const layer = await loadOne(spark);
+    expect(spark.rendererOptions[0]).toMatchObject({ pagedExtSplats: true });
+    expect(spark.rendererOptions[0]).not.toHaveProperty("maxPagedSplats");
     layer.dispose();
   });
 
@@ -584,6 +636,76 @@ describe("ThreeSplatLayer", () => {
     layer.dispose();
   });
 
+  // *Settings*: Spark does not re-sort or redo the LoD for these alone with
+  // the camera still, so a change also resets `sortedCenter` or sets `lodDirty`.
+  test("hands sortRadial and coneFoveate to Spark's renderer, and makes a still view redo its sort or LoD", async () => {
+    const spark = fakeSpark();
+    const layer = await loadOne(spark, (l) => {
+      l.setSortRadial(false);
+      l.setConeFoveate(0.8);
+    });
+    expect(spark.rendererOptions[0]).toMatchObject({ sortRadial: false, coneFoveate: 0.8 });
+
+    const live = (layer as unknown as { sparkRenderer: InstanceType<typeof spark.module.SparkRenderer> }).sparkRenderer;
+    const repaint = vi.spyOn(layer as unknown as { repaint(): void }, "repaint");
+    // As after a sort: the view's centre is known.
+    live.sortedCenter.set(1, 2, 3);
+    layer.setSortRadial(true);
+    expect(live.sortRadial).toBe(true);
+    expect(live.sortedCenter.toArray()).toEqual([-Infinity, -Infinity, -Infinity]);
+    expect(live.lodDirty).toBe(false);
+    expect(repaint).toHaveBeenCalledOnce();
+
+    repaint.mockClear();
+    live.sortedCenter.set(1, 2, 3);
+    layer.setConeFoveate(1);
+    expect(live.coneFoveate).toBe(1);
+    expect(live.lodDirty).toBe(true);
+    expect(live.sortedCenter.toArray()).toEqual([1, 2, 3]);
+    expect(repaint).toHaveBeenCalledOnce();
+
+    // The same value again changes nothing.
+    repaint.mockClear();
+    live.lodDirty = false;
+    layer.setConeFoveate(1);
+    layer.setSortRadial(true);
+    expect(live.lodDirty).toBe(false);
+    expect(live.sortedCenter.toArray()).toEqual([1, 2, 3]);
+    expect(repaint).not.toHaveBeenCalled();
+    layer.dispose();
+  });
+
+  // *Settings*: left alone, the renderer is made with Spark's own values,
+  // which are DEFAULT_SPLAT_SETTINGS'.
+  test("makes Spark's renderer with Spark's own sortRadial and coneFoveate by default", async () => {
+    const spark = fakeSpark();
+    const layer = await loadOne(spark);
+    expect(spark.rendererOptions[0]).toMatchObject({ sortRadial: true, coneFoveate: 0.4 });
+    expect(DEFAULT_SPLAT_SETTINGS).toMatchObject({ sortRadial: true, coneFoveate: 0.4 });
+    layer.dispose();
+  });
+
+  // *Settings*: a new context remakes Spark's renderer with the settings as
+  // they are now, not as they were when Spark first loaded.
+  test("remakes Spark's renderer on a new context with the current budget, sort and foveation", async () => {
+    const spark = fakeSpark();
+    const layer = await loadOne(spark);
+    layer.setLod(1_000_000, 0.5);
+    layer.setSortRadial(false);
+    layer.setConeFoveate(1);
+    layer.onAdd(attached().map, {} as WebGL2RenderingContext);
+    expect(spark.rendererOptions).toHaveLength(2);
+    expect(spark.rendererOptions[1]).toMatchObject({
+      lodSplatCount: 1_000_000,
+      lodSplatScale: 0.5,
+      sortRadial: false,
+      coneFoveate: 1,
+      pagedExtSplats: true,
+      maxPagedSplats: 128 * 65_536,
+    });
+    layer.dispose();
+  });
+
   test("disposes its meshes and Spark's renderer", async () => {
     const spark = fakeSpark();
     const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386)] }, spark);
@@ -602,7 +724,7 @@ describe("ThreeSplatLayer", () => {
   });
 
   test("reports no status after dispose, even from a load that fails later, and disposes a mesh that finishes later", async () => {
-    const spark = fakeSpark(["b-lod.rad"]);
+    const spark = fakeSpark({ failing: ["b-lod.rad"] });
     const { d } = deps({ "14/13723/7014": [splat("a", 121.5391, 25.0386), splat("b", 121.5395, 25.0387)] }, spark);
     const statuses: SplatStatus[] = [];
     const layer = new TestSplatLayer(SOURCE, d);

@@ -42,6 +42,7 @@ import {
   DEFAULT_SPLAT_SETTINGS,
   SPLAT_BUDGET_RANGE,
   SPLAT_BUDGET_SCALE_RANGE,
+  SPLAT_CONE_FOVEATE_RANGE,
   SPLAT_FALLBACK_BUDGET,
   SPLAT_KEEP_M,
   type SplatSettings,
@@ -558,6 +559,23 @@ export default function App() {
               unit="×"
               title="Spark's lodSplatScale: multiplies the budget. Lower is faster and blurrier."
               onChange={(lodSplatScale) => patchSplat({ lodSplatScale })}
+            />
+            <CheckboxRow
+              label="Radial sort"
+              checked={splat.sortRadial}
+              onChange={(sortRadial) => patchSplat({ sortRadial })}
+              title="Spark's sortRadial. Checked: splats are sorted by distance from the camera, steadier while rotating. Unchecked: by depth along the view, as most captures are trained; can be more accurate from some viewpoints."
+            />
+            <Slider
+              label="Edge detail"
+              value={splat.coneFoveate}
+              min={SPLAT_CONE_FOVEATE_RANGE.min}
+              max={SPLAT_CONE_FOVEATE_RANGE.max}
+              step={SPLAT_CONE_FOVEATE_RANGE.step}
+              decimals={2}
+              unit="×"
+              title="Spark's coneFoveate: the detail kept at the edge of the view, relative to its centre. 1 keeps full detail to the edges; lower is faster."
+              onChange={(coneFoveate) => patchSplat({ coneFoveate })}
             />
             <StatLine k="Drawn per frame" v={splatBudgetText(splat, splatStatus?.platformBudget ?? null)} plain />
             {splat.visible ? (

@@ -12,7 +12,11 @@ import {
 } from "../../lib/tiles";
 import { placeCapture, rebased, type Anchor, type Placed } from "./frame";
 import {
+  SPARK_CONE_FOVEATE,
+  SPARK_PAGE_SPLATS,
+  SPARK_SORT_RADIAL,
   SPLAT_BLUR_AMOUNT,
+  SPLAT_DESKTOP_POOL_PAGES,
   SPLAT_FETCH_HALF_M,
   SPLAT_LOD_FETCHERS,
   SPLAT_MIN_ZOOM,
@@ -85,6 +89,9 @@ export class ThreeSplatLayer extends ThreeLayer {
   /** Spark's LoD budget: `null` is its platform default. See *Settings*. */
   private lodSplatCount: number | null = null;
   private lodSplatScale = 1;
+  /** Spark's `sortRadial` and `coneFoveate`, at its defaults. See *Settings*. */
+  private sortRadial = SPARK_SORT_RADIAL;
+  private coneFoveate = SPARK_CONE_FOVEATE;
 
   /** Which captures are loaded, queued and failed. See *Which captures load*. */
   private readonly residency = new Residency<Drawn>();
@@ -124,10 +131,43 @@ export class ThreeSplatLayer extends ThreeLayer {
   setLod(lodSplatCount: number | null, lodSplatScale: number): void {
     this.lodSplatCount = lodSplatCount;
     this.lodSplatScale = lodSplatScale;
-    if (this.sparkRenderer) {
-      this.sparkRenderer.lodSplatCount = lodSplatCount ?? undefined;
-      this.sparkRenderer.lodSplatScale = lodSplatScale;
-    }
+    this.toRenderer((r) => {
+      r.lodSplatCount = lodSplatCount ?? undefined;
+      r.lodSplatScale = lodSplatScale;
+    });
+  }
+
+  /**
+   * Spark re-sorts only when the view or its splats change, so with the camera
+   * still, resetting `sortedCenter` to its initial −∞ is what makes the next
+   * frame sort in the new order.
+   */
+  setSortRadial(sortRadial: boolean): void {
+    if (sortRadial === this.sortRadial) return;
+    this.sortRadial = sortRadial;
+    this.toRenderer((r) => {
+      r.sortRadial = sortRadial;
+      r.sortedCenter.setScalar(Number.NEGATIVE_INFINITY);
+    });
+  }
+
+  /** Spark redoes the LoD only when `lodDirty` is set or the view moves. */
+  setConeFoveate(coneFoveate: number): void {
+    if (coneFoveate === this.coneFoveate) return;
+    this.coneFoveate = coneFoveate;
+    this.toRenderer((r) => {
+      r.coneFoveate = coneFoveate;
+      r.lodDirty = true;
+    });
+  }
+
+  /**
+   * A setting reaches Spark's live renderer, if there is one, and a frame is
+   * requested to show it. Before Spark loads, the field alone carries it to
+   * `makeSparkRenderer`.
+   */
+  private toRenderer(apply: (renderer: SparkRenderer) => void): void {
+    if (this.sparkRenderer) apply(this.sparkRenderer);
     this.repaint();
   }
 
@@ -337,14 +377,20 @@ export class ThreeSplatLayer extends ThreeLayer {
       onDirty: () => this.repaint(),
       blurAmount: SPLAT_BLUR_AMOUNT,
       // Draw a per-view budget of splats from every capture's paged tree. The
-      // page pool (`maxPagedSplats`) and `lodCleanupTimeoutMs` stay Spark's
-      // defaults: the pool bounds what is held, and the timeout is what gives
-      // an unloaded or hidden capture's pages back.
+      // pool bounds what is held; `lodCleanupTimeoutMs` stays Spark's default,
+      // and is what gives an unloaded or hidden capture's pages back.
       enableLod: true,
       lodSplatCount: this.lodSplatCount ?? undefined,
       lodSplatScale: this.lodSplatScale,
       // Chunk files fetched at once, across every capture. See *Level of detail*.
       numLodFetchers: SPLAT_LOD_FETCHERS,
+      sortRadial: this.sortRadial,
+      coneFoveate: this.coneFoveate,
+      // float32 centres in the page pool: float16 striped up close.
+      pagedExtSplats: true,
+      // At 32 B a splat, half Spark's desktop pool holds what its default did.
+      // Mobile keeps Spark's: halved, iOS would have fewer pages than tiles.
+      ...(this.spark!.isMobile() ? {} : { maxPagedSplats: SPLAT_DESKTOP_POOL_PAGES * SPARK_PAGE_SPLATS }),
     });
     this.scene.add(this.sparkRenderer);
   }

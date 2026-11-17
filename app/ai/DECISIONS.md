@@ -6,6 +6,67 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-17 — Spark's sort order and edge foveation are viewer settings, applied with the camera still
+
+**Decision.**
+- **`SplatSettings` gains `sortRadial` and `coneFoveate`** (the panel's
+  "Radial sort" and "Edge detail"), each `SparkRenderer`'s field of the same
+  name, defaulting to Spark's own values (`SPARK_SORT_RADIAL`,
+  `SPARK_CONE_FOVEATE`: `true`, `0.4`), so the image is unchanged until they
+  are moved. Splat spec revision 17.
+- **A change shows without moving the camera.** Spark re-sorts only when the
+  view or its splats change, and redoes the LoD only when `lodDirty` is set.
+  So on a change the layer writes two more of Spark's public fields: it
+  resets `sortedCenter` to −∞ (Spark's initial value, so the next frame
+  re-sorts) for `sortRadial`, and sets `lodDirty = true` for `coneFoveate`,
+  then requests that frame.
+
+**Rules out.** Waiting for the next camera move to show the change (the
+panel would look broken); nudging the camera or re-creating the renderer to
+force the work; exposing `coneFov0`, `coneFov` or `behindFoveate` (they stay
+Spark's).
+
+**Costs.** The layer now relies on what `sortedCenter` and `lodDirty` mean
+inside Spark, not only on its constructor options. Both are public, and were
+checked in the 2.4.0 package (`spark.module.js`, the `viewChanged` test
+against `sortedCenter`), but they are Spark's internals by intent. This
+extends the 2026-10-30 entry's list of what the layer relies on.
+
+**Revisit when** Spark is bumped past 2.4.0: re-check that `sortedCenter` and
+`lodDirty` still exist and still trigger a re-sort and a re-LoD (the browser
+check in `WORKFLOWS.md`, *Checking the Gaussian splats*), or, if Spark gains
+a public way to request either, use that instead.
+
+---
+
+## 2026-11-17 — Spark's page pool holds float32 centres, in 128 pages on desktop
+
+**Decision.**
+- **`SparkRenderer` is made with `pagedExtSplats: true`**, so the page pool
+  holds `ExtSplats` (32 B, float32 centres) instead of `PackedSplats` (16 B,
+  float16). float16 rounds a tile's centres by 3–6 cm at its ±50 m extent
+  and its ellipsoidal heights, and up close that showed as striping.
+- **The desktop pool is 128 pages** (`SPLAT_DESKTOP_POOL_PAGES`), half
+  Spark's default, so it still holds 256 MB on the GPU and 256 MB on the
+  CPU. This supersedes the 2026-10-23 entry's "rules out a 128-page pool".
+- **Mobile keeps Spark's page counts** (96 iOS, 128 other), so its pool's
+  memory doubles. Halved, iOS would have 48 pages, fewer than the mosaic's
+  64 root pages.
+
+**Rules out.** Doubling desktop memory to keep 256 pages (+0.5 GB on each
+side); turning `pagedExtSplats` on per platform; `extSplats` on the meshes,
+which Spark ignores for a paged mesh.
+
+**Costs.** With the mosaic's 64 root pages, desktop has 64 pages for detail
+instead of 192: distant tiles may be coarser, and pages refetch more while
+moving (19 against 11 chunks a second with two captures). Not yet measured
+with the mosaic (splat spec, *Open items* 1).
+
+**Revisit when** the mosaic measurement shows desktop starving: go back to
+256 pages at 512 MB a side, or make tiles larger.
+
+---
+
 ## 2026-11-10 — infra publishes PostGIS on `${POSTGIS_PORT:-5432}`
 
 **Decision.**
@@ -1002,6 +1063,10 @@ paged meshes.
 ---
 
 ## 2026-10-23 — Splat captures are drawn from paged LoD trees built in infra, and unloaded by distance and count
+
+> **Superseded in part** by "Spark's page pool holds float32 centres, in 128
+> pages on desktop" (2026-11-17): the desktop pool is 128 pages, not Spark's
+> default 256, at float32 centres, so a 128-page pool is no longer ruled out.
 
 **Decision.**
 - **infra builds each capture's LoD tree offline** with Spark's own

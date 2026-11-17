@@ -324,9 +324,15 @@ a capture, turn on **Gaussian splats → Captures** and check:
   `.ply`. A tile that never draws but is in
   the `splats` table has no `.rad` (`infra/scripts/build-lod.sh`), which `./load.sh`
   should have refused.
+- **Quality settings.** With the camera still, uncheck **Radial sort** and
+  move **Edge detail** to 1: each changes the image within a frame or two
+  (the screen's edges sharpen at 1), and the map goes idle again afterwards.
+  If nothing changes until the camera moves, Spark no longer re-sorts on
+  `sortedCenter` or re-LoDs on `lodDirty` (`DECISIONS.md`, 2026-11-17).
 - **Bounded.** Panning over the mosaic for a minute or two, the tab's memory
   stays flat (before the mosaic, about 5 GB with both KZ0918 captures, against
-  1.85 GB with the splats off; Apple M4, 2026-10-23). Every tile loads (the
+  1.85 GB with the splats off; Apple M4, 2026-10-23, at 16 B per splat, before
+  splat spec revision 16's float32 pool; not yet re-measured). Every tile loads (the
   panel's loaded count reaches the tile count, at most 64), and a still view
   sharpens within a few seconds; if it stays coarse, the page pool is short
   (splat spec, *Open items*). Pan more than 10 km away and settle, and the

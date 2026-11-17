@@ -1,5 +1,5 @@
 // Only what the app reads. Tests import the folder's modules directly.
-import { SPLAT_MIN_ZOOM } from "./constants";
+import { SPARK_CONE_FOVEATE, SPARK_SORT_RADIAL, SPLAT_MIN_ZOOM } from "./constants";
 
 export { SPLAT_KEEP_M, SPLAT_LAYER_ID, SPLAT_MIN_ZOOM, SPLAT_NATIVE_LAYER_ID } from "./constants";
 export { splatRecord } from "./records";
@@ -30,6 +30,16 @@ export interface SplatSettings {
    * `sharedGroundZ` (`false`). See *Settings*.
    */
   snapToGround: boolean;
+  /**
+   * Spark's `sortRadial`: sort by distance from the camera (`true`) or by
+   * depth along the view (`false`). See *Settings*.
+   */
+  sortRadial: boolean;
+  /**
+   * Spark's `coneFoveate`: the LoD detail kept at the edge of the view,
+   * relative to its centre; 1 is full detail to the edges. See *Settings*.
+   */
+  coneFoveate: number;
 }
 
 export const DEFAULT_SPLAT_SETTINGS: SplatSettings = {
@@ -40,6 +50,8 @@ export const DEFAULT_SPLAT_SETTINGS: SplatSettings = {
   lodSplatCount: null,
   lodSplatScale: 1,
   snapToGround: true,
+  sortRadial: SPARK_SORT_RADIAL,
+  coneFoveate: SPARK_CONE_FOVEATE,
 };
 
 /**
@@ -52,3 +64,6 @@ export const SPLAT_FALLBACK_BUDGET = 2_500_000;
 /** The panel's ranges for the two LoD settings. */
 export const SPLAT_BUDGET_RANGE = { min: 250_000, max: 10_000_000, step: 250_000 } as const;
 export const SPLAT_BUDGET_SCALE_RANGE = { min: 0.1, max: 4, step: 0.05 } as const;
+
+/** The panel's range for `coneFoveate`, the slider "Edge detail". */
+export const SPLAT_CONE_FOVEATE_RANGE = { min: 0.1, max: 1, step: 0.05 } as const;

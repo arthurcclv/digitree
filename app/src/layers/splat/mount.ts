@@ -38,6 +38,8 @@ export function mountSplat(
       layer.setLod(next.lodSplatCount, next.lodSplatScale);
     }
     if (changed(settings, next, "snapToGround")) layer.setSnapToGround(next.snapToGround);
+    if (changed(settings, next, "sortRadial")) layer.setSortRadial(next.sortRadial);
+    if (changed(settings, next, "coneFoveate")) layer.setConeFoveate(next.coneFoveate);
     settings = next;
   };
   update(initial);

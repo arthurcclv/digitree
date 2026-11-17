@@ -380,9 +380,11 @@ space, so the camera is `decomposeCamera(projection(args, frame))`. It
 repaints only on Spark's `onDirty`, so the map still goes idle. It fetches its
 own z14 tiles of the `splats` table and draws each capture's paged LoD tree
 (a chunked `.rad`, built in infra) from infra's `files` service, streamed
-chunk file by chunk file into Spark's fixed page pool, by 4 fetchers at once. It plans on
-`moveend` (`viewMoved`) as well as on `viewSettled`, and loads up to 3 captures at once, nearest
-the current view first. Captures past 10 km, or beyond 256, are
+chunk file by chunk file into Spark's fixed page pool (float32 centres,
+`pagedExtSplats`; 128 pages on desktop, Spark's default on mobile), by 4
+fetchers at once. It plans on `moveend` (`viewMoved`) as well as on
+`viewSettled`, and loads up to 3 captures at once, nearest the current view
+first. Captures past 10 km, or beyond `SPLAT_MAX_CAPTURES` (256), are
 unloaded. Those rules are `Residency` (`residency.ts`), a pure module the
 layer asks what to load and unload. A capture is fitted in true (WGS 84) metres and drawn with the map's
 metres per true metre on each axis (`trueMetreAxes`): Spark keeps only one
@@ -390,7 +392,12 @@ scale of a mesh's matrix, so the per-axis part is a world modifier
 (`stretch.ts`). The whole transform is computed in one pure function,
 `placeCapture` (`frame.ts`); the layer only chooses the ground it lowers by
 (each capture's own, or `sharedGroundZ` when "Snap tiles to ground" is off)
-and applies the result. It is stacked last. Full contract:
+and applies the result. Spark's own settings reach it through the mount as
+setters (`setLod`, `setSortRadial`, `setConeFoveate`), which the layer keeps
+and applies to the live `SparkRenderer`, or to its constructor when Spark
+loads or the context changes. A change to the sort order or the foveation
+also resets Spark's `sortedCenter` or sets its `lodDirty`, because with the
+camera still Spark would not redo either on its own. It is stacked last. Full contract:
 `src/layers/splat/specs/spec.md`.
 
 ## Module inventory

@@ -1,10 +1,17 @@
 # Gaussian splat layer — spec
 
-> **Status: approved 2026-10-20, implemented. Revision 15 (captures in view
+> **Status: approved 2026-10-20, implemented. Revision 17 (two of Spark's
+> quality settings in the panel: `sortRadial`, checkbox "Radial sort", and
+> `coneFoveate`, slider "Edge detail") — approved 2026-11-17, implemented;**
+> see *Changes in revision 17*.
+> Revision 16 (the page pool holds float32 centres, `pagedExtSplats`, and is
+> 128 pages on desktop) — approved 2026-11-17, implemented; see *Changes in
+> revision 16*.
+> Revision 15 (captures in view
 > load sooner after a move: the layer plans on `moveend`, the queue is
 > ordered by the current view, up to `SPLAT_LOAD_CONCURRENCY` (3) load at
 > once, and Spark gets `SPLAT_LOD_FETCHERS` (4) chunk fetchers) — approved
-> 2026-11-06, implemented;** see *Changes in revision 15*.
+> 2026-11-06, implemented; see *Changes in revision 15*.
 > Revision 14 (Spark moves from
 > 2.3.1 to 2.4.0, pinned exactly; the layer's behaviour does not change) —
 > approved 2026-10-30, implemented; see *Changes in revision 14*.
@@ -116,12 +123,24 @@ Spark draws the captures through its **paged LoD**:
   budget of splats chosen from the trees of every loaded capture for the
   current view (Spark's platform default: 2.5 M on desktop, 1–1.5 M on mobile,
   `lodSplatScale` 1).
-- **The page pool is Spark's platform default** (`maxPagedSplats` is not
-  passed): 256 pages of 65,536 splats on desktop, 128 on other mobile, 96 on
-  iOS. It is allocated once, on the GPU and as a CPU copy (256 MB each on
-  desktop, at 16 B per splat without SH), and never grows. Pages are reused
-  least recently used first, lazily: a page out of view stays resident until
-  its slot is needed.
+- **`SparkRenderer` is made with `pagedExtSplats: true`.** The page pool
+  holds splats as `ExtSplats` (32 B, float32 centres) instead of
+  `PackedSplats` (16 B, float16 centres). float16 rounds a centre to 3 cm
+  between 32 and 64 m from the file's origin and 6 cm between 64 and 128 m,
+  and a tile reaches ±50 m across and its ellipsoidal height in z; up close
+  that showed as striping. It is a construction-time setting of the renderer,
+  so it covers every capture. (`extSplats` on a paged `SplatMesh` is ignored
+  by Spark, with a warning.)
+- **The page pool is 128 pages on desktop** (`maxPagedSplats`
+  `SPLAT_DESKTOP_POOL_PAGES` × `SPARK_PAGE_SPLATS`, 65,536, passed only when Spark's `isMobile()`
+  is false), half Spark's default, so at 32 B per splat it holds the same
+  256 MB on the GPU and 256 MB as a CPU copy as before. On mobile
+  `maxPagedSplats` is not passed and the pool is Spark's default, 128 pages
+  on other mobile and 96 on iOS: halving it would leave iOS fewer pages than
+  the mosaic's 64 root pages (*Which captures load*). There the pool's memory
+  doubles, to 256 MB and 192 MB. The pool is allocated once and never grows.
+  Pages are reused least recently used first, lazily: a page out of view
+  stays resident until its slot is needed.
 - **`numLodFetchers` is `SPLAT_LOD_FETCHERS` (4)**, passed to every
   `SparkRenderer` the layer makes (Spark's default is 3). It is how many
   chunk files Spark fetches at once, across every capture. Spark reads it
@@ -158,7 +177,7 @@ load-time tree this revision replaces (`lod: true`,
 | --- | --- | --- | --- | --- |
 | load-time tree | 25–35 s per capture | 37.6 | 6.8–6.9 GB | 1.5 GB |
 | **paged, 128 pages** | ~0 s | 39 | 2.0–2.1 GB, flat | 220–290 MB |
-| **paged, 256 pages** (chosen) | ~0 s | — | 2.4 GB, flat | 320–390 MB |
+| **paged, 256 pages** (chosen in rev 5; rev 15 uses 128 pages at 32 B, the same memory) | ~0 s | — | 2.4 GB, flat | 320–390 MB |
 
 In the app itself, with the map and every other layer, the tab holds
 4.9–5.1 GB, flat, with the splats on and 1.85 GB with them off. Measured
@@ -635,9 +654,9 @@ from it.
   next plan. A capture still loading is never evicted. A capture is a 100 m tile, and the delivered scans cover at most 64
   (their header extents span about 740 m × 700 m), so every tile loads; with
   the earlier 16, only the nearest 16 drew and the mosaic had holes. Each
-  paged mesh needs at least its root page: 64 of the desktop pool's 256, and
-  64 of iOS's 96, which leaves iOS 32 pages for detail, so distant tiles are
-  coarse there. That is to be measured (*Open items*).
+  paged mesh needs at least its root page: 64 of the desktop pool's 128,
+  which leaves 64 for detail, and 64 of iOS's 96, which leaves iOS 32, so
+  distant tiles are coarser there. That is to be measured (*Open items*).
 - **Unloading** removes the mesh from the scene, disposes it, and forgets the
   capture (`loaded` and `known`). If its tile is planned again, it is found
   again and reloaded, which costs a header fetch and the pages the view
@@ -646,8 +665,10 @@ from it.
 - Below `minZoom`, or when hidden, nothing new loads and nothing is unloaded
   by the layer. Spark frees an unrendered capture's pages and tree itself
   after 3 s, and fetches them again when it shows.
-- **Memory** is bounded by Spark's page pool (256 MB on the GPU and 256 MB on
-  the CPU, on desktop) and by `SPLAT_MAX_CAPTURES`. It does not depend on how
+- **Memory** is bounded by Spark's page pool and by `SPLAT_MAX_CAPTURES`.
+  The pool is 256 MB on the GPU and 256 MB on the CPU on desktop (128 pages
+  at 32 B per splat), 256 MB each on other mobile (128 pages) and 192 MB
+  each on iOS (96 pages) (*Level of detail*). It does not depend on how
   many captures infra holds or on how long the map has been panned. In the
   app, with both KZ0918 captures in view, the tab held 4.9–5.1 GB, flat over
   a 2-minute orbit, against 1.85 GB with the splats off. In the Spark-only
@@ -731,6 +752,8 @@ composite multiplies what was drawn before it, so it never darkens a splat.
 | `lodSplatCount` | `number \| null` | `null` | checkbox "Platform budget" (checked = `null`), and when unchecked a slider "Budget", 0.25–10 M splats in 0.25 M steps |
 | `lodSplatScale` | `number` in [0.1, 4] | `1` | slider "Budget scale", ×0.1–×4 in 0.05 steps |
 | `snapToGround` | `boolean` | `true` | checkbox "Snap tiles to ground", after "Opacity" |
+| `sortRadial` | `boolean` | `true` | checkbox "Radial sort", after "Budget scale" |
+| `coneFoveate` | `number` in [0.1, 1] | `0.4` | slider "Edge detail", ×0.10–×1.00 in 0.05 steps, after "Radial sort" |
 
 `snapToGround` chooses the height each capture is lowered by (*The ground*,
 *The shared ground*): checked, its own `groundZ`, so each tile's ground is on
@@ -766,6 +789,46 @@ headsets. `null` keeps that default, so the same setting suits every device.
 - The panel shows the effective budget, `StatLine` "Drawn per frame": e.g.
   `2.5 M × 1.00 = 2.5 M`. Before Spark has loaded, the platform default is not
   known, and it reads `auto × 1.00`.
+
+`sortRadial` and `coneFoveate` are also `SparkRenderer`'s own fields, and
+their defaults are Spark's (`SPARK_SORT_RADIAL`, `SPARK_CONE_FOVEATE`, which
+both `DEFAULT_SPLAT_SETTINGS` and the layer start from), so leaving them alone
+draws what revision 16 drew. The slider's range is
+`SPLAT_CONE_FOVEATE_RANGE`.
+
+- **`sortRadial`**: checked, Spark sorts splats by their distance from the
+  camera, which is steadier while the view rotates; unchecked, by depth along
+  the view direction, the order most captures are trained with, which can be
+  more accurate from some viewpoints.
+- **`coneFoveate`**: Spark's LoD keeps full detail within a 90° cone along the
+  view direction (`coneFov0`) and lowers it smoothly to `coneFoveate` at the
+  120° cone's edge (`coneFov`), and to `behindFoveate` (0.2) behind the
+  camera. Spark's 0.4 can make the screen's edges visibly coarser at the map's
+  field of view; 1 keeps full detail out to 120°. A higher value spends more
+  of the same budget at the edges, so the centre may be slightly coarser.
+  `coneFov0`, `coneFov` and `behindFoveate` stay Spark's.
+- Not GeoLibre concepts, so not on the paint bridge. The mount pushes each,
+  only when it changed, with `layer.setSortRadial(sortRadial)` and
+  `layer.setConeFoveate(coneFoveate)`.
+- The layer keeps both, sets them on the `SparkRenderer` if there is one, and
+  passes them to its constructor when Spark is first loaded or the context
+  changes, as it does the budget.
+- **Spark does not redo its work for these alone while the camera is still**
+  (checked in the 2.4.0 package): it re-sorts only when the view moves or
+  its splats change, and redoes the LoD only when `lodDirty` is set. So on a
+  change the layer also, through Spark's public fields:
+  `sortRadial` → resets `sortedCenter` to Spark's initial value (every
+  component −∞), so the next frame regenerates and re-sorts in the new order;
+  `coneFoveate` → sets `lodDirty = true`, so the next frame redoes the LoD.
+  In both cases the layer requests that frame, and then `onDirty` carries on
+  as usual. The map still reaches `idle` once both are done.
+- The checkbox's title: "Spark's sortRadial. Checked: splats are sorted by
+  distance from the camera, steadier while rotating. Unchecked: by depth
+  along the view, as most captures are trained; can be more accurate from
+  some viewpoints."
+- The slider's title: "Spark's coneFoveate: the detail kept at the edge of
+  the view, relative to its centre. 1 keeps full detail to the edges; lower
+  is faster."
 
 Off by default, so nothing is fetched until it is asked for. The panel shows
 the state (`zoom in to z15`, `none in view`, `loading <id> (n/m)` with one
@@ -863,15 +926,23 @@ capture is drawn, as it does the tree models' credit.
   old view; a `moveend` with nothing new requests no frame, and one while
   hidden or below `minZoom` fetches and imports nothing; each mesh paged from
   its `.rad`, the `SparkRenderer` made with `numLodFetchers:
-  SPLAT_LOD_FETCHERS`, also when rebuilt on a new context, and Spark's pool
-  and cleanup timeout left at their defaults; and status for one failure
+  SPLAT_LOD_FETCHERS`, also when rebuilt on a new context, `pagedExtSplats:
+  true`, a 128-page pool on desktop and Spark's default on mobile, and the
+  cleanup timeout left at its default; and status for one failure
   among several; a capture still loading when a settled view puts it past
   `SPLAT_KEEP_M` is disposed when it finishes and never added; no status after
   `dispose`, even from a load that fails later; Spark imported once, and again
   after a failed import. The shared ground: `update` calls `setSnapToGround` only when
   `snapToGround` changed, and the initial value, `true` or `false`, reaches
   the layer; the layer re-places every loaded capture, and one loaded
-  later, by z alone. Unloading: a capture past `SPLAT_KEEP_M` on a settled view is
+  later, by z alone. Quality: `update` calls `setSortRadial` and
+  `setConeFoveate` only when each changed; the initial values reach
+  `SparkRenderer`'s constructor (and Spark's defaults, `true` and `0.4`, are
+  `DEFAULT_SPLAT_SETTINGS`'); a change after Spark has loaded sets the
+  field, resets `sortedCenter` (for `sortRadial`) or sets `lodDirty` (for
+  `coneFoveate`), and requests one repaint; a value set before Spark loads
+  reaches the constructor; a new context remakes the renderer with the
+  budget, `sortRadial` and `coneFoveate` as they are then. Unloading: a capture past `SPLAT_KEEP_M` on a settled view is
   removed, disposed and forgotten, one within it stays, and it loads again
   when its tile returns; nothing is unloaded while hidden; past
   `SPLAT_MAX_CAPTURES` a nearer capture unloads the farthest and a farther
@@ -924,9 +995,11 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
 
 ## Open items
 
-1. **The page pool with the mosaic.** Every tile loaded holds a root page.
-   Measure as *Tests* says; if the pool starves (iOS first), the options are
-   a larger `maxPagedSplats` or larger tiles, each a spec change.
+1. **The page pool with the mosaic.** Every tile loaded holds a root page,
+   and since revision 16 the desktop pool is 128 pages, so 64 tiles hold half
+   of it. Measure as *Tests* says; if the pool starves (iOS first, then
+   desktop), the options are a larger `maxPagedSplats` (on desktop, back to
+   256 pages, at 512 MB each side) or larger tiles, each a spec change.
 2. **Seams between voxel winners** (`infra/specs/splat-mosaic.md`, *Open
    items*): neighbouring 1 m voxels won by different scans show those scans'
    misalignment as a step.
@@ -937,6 +1010,37 @@ repeated with every tile loaded, on desktop and on iOS, and recorded here.
    that port in its URLs.
 4. **`SPLATS.attribution`** is a placeholder (`3DGS captures`) until the
    captures' credit is known.
+
+## Changes in revision 17
+
+- **Two settings, `sortRadial` and `coneFoveate`**, each `SparkRenderer`'s
+  field of the same name, in the panel after "Budget scale": a checkbox
+  "Radial sort" and a slider "Edge detail" (*Settings*). Defaults are
+  Spark's (`true`, `0.4`), so nothing changes until they are moved.
+- **A change shows with the camera still**: the layer resets Spark's
+  `sortedCenter` or sets its `lodDirty`, so Spark re-sorts or redoes the LoD
+  on the next frame, which the layer requests.
+- The mount gains no member; `ThreeSplatLayer` gains `setSortRadial` and
+  `setConeFoveate`.
+- In the browser: with the camera still, toggling "Radial sort" and moving
+  "Edge detail" to 1 each change the image within a frame or two, and the map
+  goes idle afterwards.
+
+## Changes in revision 16
+
+- **`pagedExtSplats: true`** on `SparkRenderer`: the page pool holds float32
+  centres (32 B per splat) instead of float16 (16 B), which removes the
+  striping float16 rounding showed up close (*Level of detail*).
+- **The desktop pool is 128 pages** (`SPLAT_DESKTOP_POOL_PAGES`), down from
+  Spark's 256, so its memory stays 256 MB each on the GPU and the CPU. With
+  the mosaic's 64 root pages that leaves 64 pages for detail, not 192, so
+  distant tiles may be coarser and pages refetch more while moving (to be
+  measured, *Open items*).
+- **Mobile keeps Spark's page counts** (96 on iOS, 128 on other mobile), so
+  its pool's memory doubles. Halving them would leave iOS 48 pages, fewer
+  than the 64 root pages.
+- The measurements in *Level of detail* were taken at 16 B per splat, before
+  this revision.
 
 ## Changes in revision 15
 

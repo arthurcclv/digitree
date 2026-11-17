@@ -3,7 +3,7 @@ import { DEFAULT_SPLAT_SETTINGS, SPLAT_MIN_ZOOM } from "./index";
 import { splatStatus } from "./state";
 
 describe("DEFAULT_SPLAT_SETTINGS", () => {
-  test("hidden, opaque, from the layer's min zoom, at Spark's platform budget, each tile on its own ground", () => {
+  test("hidden, opaque, from the layer's min zoom, at Spark's platform budget, each tile on its own ground, Spark's sort and foveation", () => {
     expect(DEFAULT_SPLAT_SETTINGS).toEqual({
       visible: false,
       opacity: 1,
@@ -11,6 +11,8 @@ describe("DEFAULT_SPLAT_SETTINGS", () => {
       lodSplatCount: null,
       lodSplatScale: 1,
       snapToGround: true,
+      sortRadial: true,
+      coneFoveate: 0.4,
     });
   });
 });

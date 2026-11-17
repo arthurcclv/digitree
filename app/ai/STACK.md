@@ -26,7 +26,12 @@ app, their external-native path is the seam the tree depends on, and
 Spark is **pinned exactly** too. The splat layer reads its shader's
 assumptions (view space, focal length from `P[0][0]`/`P[1][1]`, a `w` row of
 `(0, 0, −1, 0)`) through `decomposeCamera`; a new Spark is re-checked in the
-browser against `src/layers/splat/specs/spec.md` before it lands.
+browser against `src/layers/splat/specs/spec.md` before it lands. Beyond
+its constructor options, the layer writes two of `SparkRenderer`'s public
+fields to make a still view redo its work, `sortedCenter` (reset to −∞, a
+re-sort) and `lodDirty` (a re-LoD), checked against 2.4.0's source; a new
+Spark re-checks that both still exist and still mean that (`DECISIONS.md`,
+2026-11-17).
 
 `maplibre-gl` is a major-version-sensitive dependency for a different reason:
 v6 changed the custom-layer render signature to `render(gl, options)`. See the

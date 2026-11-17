@@ -483,10 +483,12 @@ can serve a bind-mounted `tiles/` or `lod/` from before the mosaic or
   `groundZ × scale` metres below the map's ground.
 - **Risk, to measure before the app change is called done:** Spark's spec'd
   floor is one root page per loaded capture. With at most 64 tiles loaded,
-  at most 64 of the desktop pool's 256 pages are roots, leaving at least 192
-  for detail. On iOS, at most 64 of its 96 pages are roots, which leaves 32
-  or more for detail, so distant tiles will be coarse there. The splat spec's measurements
-  (first draw, fps orbiting, memory, how coarse a still view is) are repeated
+  at most 64 of the desktop pool's 128 pages are roots (128 since the splat
+  spec's revision 16, at float32 centres), leaving at least 64 for detail.
+  On iOS, at most 64 of its 96 pages are roots, which leaves 32 or more for
+  detail, so distant tiles will be coarse there. The splat spec's
+  measurements (first draw, fps orbiting, memory, how coarse a still view
+  is) are repeated
   with the mosaic and recorded. If the pool starves, the next step is an
   open item, not part of this revision (*Open items*).
 
