@@ -11,10 +11,13 @@ services:
       POSTGRES_USER: taipei
       POSTGRES_PASSWORD: taipei
       POSTGRES_DB: taipei
-    # Never PUBLISH_ADDR: the credentials are trivial, and only load.sh and
-    # the tests talk to it (specs/network-access.md).
+    # Never PUBLISH_ADDR: the credentials are trivial (specs/network-access.md).
+    # POSTGIS_PORT moves the host side only, for a machine whose :5432 is
+    # taken (a local Postgres). Nothing in the stack uses it: Martin connects
+    # at db:5432 on the compose network, and load.sh and test/run.sh go
+    # through `docker compose exec`. It is for psql or QGIS on the host.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGIS_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Server-side COPY reads these paths inside the container, which is far

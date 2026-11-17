@@ -15,7 +15,8 @@ service. It is a
 by default, and there is no deployment story beyond the settings below. Do not
 add more without a decision entry. `MARTIN_PORT` moves Martin's host port off
 a taken `:3000` (DECISIONS 2026-10-12), and `FILES_PORT` is its twin for the
-`files` service (default `:3080`). `PUBLISH_ADDR` (default `127.0.0.1`) opts
+`files` service (default `:3080`), and `POSTGIS_PORT` the same for the
+database (default `:5432`, DECISIONS 2026-11-10). `PUBLISH_ADDR` (default `127.0.0.1`) opts
 Martin and `files` in to serving other machines, for a frontend that talks
 to them directly; `files-locations.conf` sends CORS headers for that
 (`specs/network-access.md`, DECISIONS 2026-11-06). The app is one of those

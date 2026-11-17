@@ -54,6 +54,20 @@ load() {
 
 checks() { docker compose exec -T db psql -q -v ON_ERROR_STOP=1 -U taipei -d "$DB" -f /sql/03_checks.sql 2>&1; }
 
+# --- the compose file ------------------------------------------------------
+
+# POSTGIS_PORT moves the db's host port and nothing else (DECISIONS
+# 2026-11-10). `docker compose config` only resolves the file, so this needs no
+# running container. The sed cuts out the db's ports block, so Martin's and the
+# files service's cannot match by accident; an empty POSTGIS_PORT is the
+# default (`:-`), which keeps one in the caller's shell out of that case.
+case_ "POSTGIS_PORT moves the db's host port only"
+ports() { docker compose config db | sed -n '/^    ports:/,/^    [a-z]/p'; }
+expect_contains "default publishes 5432"            "$(POSTGIS_PORT= ports)" 'published: "5432"'
+expect_contains "POSTGIS_PORT=5433 publishes 5433"  "$(POSTGIS_PORT=5433 ports)" 'published: "5433"'
+expect_contains "  the container side stays 5432"   "$(POSTGIS_PORT=5433 ports)" 'target: 5432'
+expect_contains "  still bound to localhost"        "$(POSTGIS_PORT=5433 ports)" 'host_ip: 127.0.0.1'
+
 # --- bring the stack up, with the fixtures mounted --------------------------
 
 echo "==> postgres"

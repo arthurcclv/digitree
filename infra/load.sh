@@ -122,6 +122,9 @@ fi
 if [ "${FILES_PORT:-3080}" != "3080" ] || [ "$host" != localhost ]; then
   echo "and build the app with VITE_FILES_URL=http://${host}:${FILES_PORT:-3080}"
 fi
+if [ "${POSTGIS_PORT:-5432}" != "5432" ]; then
+  echo "the database is on localhost:${POSTGIS_PORT} (psql -h localhost -p ${POSTGIS_PORT} -U taipei taipei)"
+fi
 
 if [ "$splats_ok" = 0 ]; then
   echo

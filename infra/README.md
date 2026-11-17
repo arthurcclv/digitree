@@ -33,6 +33,11 @@ The `files` service is published on `127.0.0.1:3080` the same way, and
 `FILES_PORT` moves it: `FILES_PORT=3081 ./load.sh`, then
 `VITE_FILES_URL=http://localhost:3081` for the app.
 
+The database is published on `127.0.0.1:5432` for clients on the host (psql,
+QGIS). `POSTGIS_PORT` moves it: `POSTGIS_PORT=5433 ./load.sh`, then
+`psql -h localhost -p 5433 -U taipei taipei`. Nothing else needs telling, since
+Martin and the scripts reach the database inside Docker.
+
 Check what answers on the port first. Another web server on `:3000` makes the
 app fail with `Unimplemented type: 4`, because it gets back an HTML page where
 a tile should be.

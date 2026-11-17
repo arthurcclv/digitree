@@ -6,6 +6,27 @@ new entry — the old one stays, marked superseded.
 
 ---
 
+## 2026-11-10 — infra publishes PostGIS on `${POSTGIS_PORT:-5432}`
+
+**Decision.**
+- **`POSTGIS_PORT` moves the db's host port**, as `MARTIN_PORT` and
+  `FILES_PORT` do for theirs, for a machine whose `:5432` is taken (a local
+  Postgres). Only the host side moves: Postgres still listens on 5432 in its
+  container, and it stays bound to `127.0.0.1`.
+- **Nothing in the stack follows it.** Martin connects at `db:5432` on the
+  compose network (`martin.yaml`), and `load.sh` and `test/run.sh` run psql
+  through `docker compose exec`. Only clients on the host (psql, QGIS) use
+  the published port, so there is no app-side variable to match, unlike
+  `VITE_TILES_URL` / `VITE_FILES_URL`.
+
+**Rules out.** Moving the in-container port, binding beyond `127.0.0.1`, and
+making the credentials configurable. It is still a development fixture.
+
+**Revisit when** a script on the host needs the database directly. That
+script then reads `POSTGIS_PORT` too, or the port goes into a shared `.env`.
+
+---
+
 ## 2026-11-07 — the app fetches Martin and `files` directly; no proxy
 
 **Decision.** The `/tiles` and `/files` Vite proxies are removed, with
